@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "target": "ES2022",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useDefineForClassFields": true,
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@scenaairo/recommendation": ["./recommendation/src/index.ts"],
+      "@scenaairo/recommendation/*": ["./recommendation/src/*"],
+      "@scenaairo/shared": ["./shared/src/index.ts"],
+      "@scenaairo/shared/*": ["./shared/src/*"]
+    }
+  }
+}
