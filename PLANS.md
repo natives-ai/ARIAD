@@ -5,7 +5,7 @@ This is the mutable execution plan for agentic development.
 It translates the locked intent in `DISCOVERY.md`, `SPEC.md`, `AGENT_SYSTEM.md`, and `SCAFFOLD.md` into milestone-based implementation work.
 It must not override the immutable source-of-truth documents.
 
-## Mutability rule
+## Mutability rules
 - Routine execution updates are allowed here without human approval:
   - milestone status updates
   - task progress updates
