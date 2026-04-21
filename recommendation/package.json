@@ -15,9 +15,9 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src --max-warnings=0",
-    "test": "vitest run --exclude dist/**"
+    "build": "yarn run -T tsc -p tsconfig.json",
+    "typecheck": "yarn run -T tsc -p tsconfig.json --noEmit",
+    "lint": "yarn run -T eslint src --max-warnings=0",
+    "test": "yarn run -T vitest run --exclude dist/**"
   }
 }

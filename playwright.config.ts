@@ -9,13 +9,13 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "npm.cmd run dev:backend",
+      command: "yarn.cmd dev:backend",
       url: "http://127.0.0.1:3001/api/health",
       reuseExistingServer: true,
       timeout: 120000
     },
     {
-      command: "npm.cmd run dev --workspace @scenaairo/frontend -- --host 127.0.0.1 --port 4173",
+      command: "yarn.cmd dev:frontend --host 127.0.0.1 --port 4173",
       url: "http://127.0.0.1:4173",
       reuseExistingServer: true,
       timeout: 120000

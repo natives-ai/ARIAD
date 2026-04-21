@@ -27,7 +27,7 @@ echo.
 
 call :require_command node.exe
 if errorlevel 1 goto :fail
-call :require_command npm.cmd
+call :require_command yarn.cmd
 if errorlevel 1 goto :fail
 call :require_command powershell.exe
 if errorlevel 1 goto :fail

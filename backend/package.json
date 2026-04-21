@@ -9,16 +9,16 @@
     "dist"
   ],
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src --max-warnings=0",
-    "test": "vitest run --exclude src/**/*.integration.test.ts",
-    "integration": "vitest run --pool threads src/persistence/routes.integration.test.ts src/recommendation/routes.integration.test.ts"
+    "dev": "yarn run -T tsx watch src/server.ts",
+    "build": "yarn run -T tsc -p tsconfig.build.json",
+    "typecheck": "yarn run -T tsc -p tsconfig.json --noEmit",
+    "lint": "yarn run -T eslint src --max-warnings=0",
+    "test": "yarn run -T vitest run --exclude src/**/*.integration.test.ts",
+    "integration": "yarn run -T vitest run --pool threads src/persistence/routes.integration.test.ts src/recommendation/routes.integration.test.ts"
   },
   "dependencies": {
-    "@scenaairo/recommendation": "workspace:*",
-    "@scenaairo/shared": "workspace:*",
+    "@scenaairo/recommendation": "file:../recommendation",
+    "@scenaairo/shared": "file:../shared",
     "fastify": "^5.8.5"
   }
 }

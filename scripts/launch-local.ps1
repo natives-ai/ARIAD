@@ -87,7 +87,7 @@ function Ensure-Build {
   }
 
   Write-LauncherLog "Building SCENAAIRO..."
-  & npm.cmd run build 2>&1 | Tee-Object -FilePath $BuildLogPath
+  & yarn.cmd build 2>&1 | Tee-Object -FilePath $BuildLogPath
 
   if ($LASTEXITCODE -ne 0) {
     throw "Build failed. Check $BuildLogPath"
@@ -128,7 +128,7 @@ $StartedFrontend = $false
 if (Test-UrlReady $BackendHealthUrl) {
   Write-LauncherLog "Backend is already running."
 } else {
-  $BackendCommand = 'cd /d "{0}" && set "PORT={1}" && set "FRONTEND_ORIGIN={2}" && node backend/dist/server.js >> "{3}" 2>&1' -f $Root, $BackendPort, $FrontendOrigin, $BackendLogPath
+  $BackendCommand = 'cd /d "{0}" && set "PORT={1}" && set "FRONTEND_ORIGIN={2}" && yarn.cmd node backend/dist/server.js >> "{3}" 2>&1' -f $Root, $BackendPort, $FrontendOrigin, $BackendLogPath
   Start-LoggedCommand -Name "backend" -CommandLine $BackendCommand -PidPath $BackendPidPath | Out-Null
   $StartedBackend = $true
 }
@@ -141,7 +141,7 @@ if (-not (Wait-ForUrl -Url $BackendHealthUrl -Label "backend")) {
 if (Test-UrlReady $ServiceUrl) {
   Write-LauncherLog "Frontend service is already running."
 } else {
-  $FrontendCommand = 'cd /d "{0}" && set "SCENAAIRO_BACKEND_HOST={1}" && set "SCENAAIRO_BACKEND_PORT={2}" && set "SCENAAIRO_FRONTEND_HOST={3}" && set "SCENAAIRO_FRONTEND_PORT={4}" && node frontend/scripts/serve-dist.mjs >> "{5}" 2>&1' -f $Root, $BackendHost, $BackendPort, $FrontendHost, $FrontendPort, $FrontendLogPath
+  $FrontendCommand = 'cd /d "{0}" && set "SCENAAIRO_BACKEND_HOST={1}" && set "SCENAAIRO_BACKEND_PORT={2}" && set "SCENAAIRO_FRONTEND_HOST={3}" && set "SCENAAIRO_FRONTEND_PORT={4}" && yarn.cmd node frontend/scripts/serve-dist.mjs >> "{5}" 2>&1' -f $Root, $BackendHost, $BackendPort, $FrontendHost, $FrontendPort, $FrontendLogPath
   Start-LoggedCommand -Name "frontend" -CommandLine $FrontendCommand -PidPath $FrontendPidPath | Out-Null
   $StartedFrontend = $true
 }

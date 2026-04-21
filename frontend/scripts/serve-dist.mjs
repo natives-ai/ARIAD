@@ -107,7 +107,7 @@ function serveStaticFile(clientRequest, clientResponse) {
 
 if (!existsSync(join(distRoot, "service.html"))) {
   console.error("[SCENAAIRO] frontend/dist/service.html is missing.");
-  console.error("[SCENAAIRO] Run `npm run build` before starting the dist server.");
+  console.error("[SCENAAIRO] Run `yarn build` before starting the dist server.");
   process.exit(1);
 }
 

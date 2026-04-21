@@ -3,10 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "npm@11.6.1",
+  "packageManager": "yarn@4.1.1",
   "engines": {
-    "node": ">=24.0.0",
-    "npm": ">=11.0.0"
+    "node": ">=22.0.0",
+    "yarn": ">=4.1.1"
   },
   "workspaces": [
     "shared",
@@ -15,22 +15,19 @@
     "frontend"
   ],
   "scripts": {
-    "dev:frontend": "npm run dev --workspace @scenaairo/frontend -- --host 127.0.0.1 --port 5173",
-    "dev:backend": "npm run dev --workspace @scenaairo/backend",
+    "dev:frontend": "node scripts/dev-frontend.mjs",
+    "dev:backend": "node scripts/dev-backend.mjs",
     "host:local": "powershell -ExecutionPolicy Bypass -File scripts/launch-local.ps1",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "integration": "npm run integration --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
+    "typecheck": "yarn workspace @scenaairo/shared typecheck && yarn workspace @scenaairo/recommendation typecheck && yarn workspace @scenaairo/backend typecheck && yarn workspace @scenaairo/frontend typecheck",
+    "test": "yarn workspace @scenaairo/shared test && yarn workspace @scenaairo/recommendation test && yarn workspace @scenaairo/backend test && yarn workspace @scenaairo/frontend test",
+    "integration": "yarn workspace @scenaairo/backend integration",
+    "build": "yarn workspace @scenaairo/shared build && yarn workspace @scenaairo/recommendation build && yarn workspace @scenaairo/backend build && yarn workspace @scenaairo/frontend build",
     "e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.59.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

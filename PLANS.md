@@ -1099,3 +1099,23 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Warnings / blockers: Keyword-cloud refresh now guarantees a useful visible refresh by pinning currently selected words first and reordering the remaining suggestions behind them, but it still depends on the existing lightweight heuristic suggestion source rather than a larger paged recommendation inventory. Canvas recentering is intentionally viewport-local convenience behavior and is not persisted per episode.
 - Approval needed: `none`
 - Next step: If requested, the next smallest sensible slice is a dedicated viewport/usability pass that decides whether node creation, keyword-cloud opening, and search-driven focus should all share one canonical “bring into view” behavior.
+
+### 2026-04-21 / loop-056
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: root workspace, `frontend/`, `backend/`, `shared/`, `recommendation/`, `scripts/`, `PLANS.md`
+- What changed: Continued the user-directed Yarn-only migration. Removed the remaining package-manager split that made Yarn workspace scripts fail to find shared tool binaries by moving frontend testing-library ownership into the frontend workspace, refreshing the Yarn install state with `node-modules` linking, and converting each workspace script to call the root-owned toolchain through `yarn run -T ...` instead of bare `tsc` / `vite` / `vitest` / `eslint` / `tsx`. Also hardened the custom root dev wrappers so Windows no longer dies immediately on direct `yarn.cmd` spawning and instead routes through a `cmd.exe /c yarn.cmd ...` invocation with stable startup/error handling before compatibility fallback.
+- Tests run: `yarn install --mode=skip-build`; `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/backend typecheck`; `yarn workspace @scenaairo/shared typecheck`; `yarn workspace @scenaairo/recommendation typecheck`; `yarn typecheck`; attempted `yarn build`
+- Result: The Yarn workspace binary-resolution failure is fixed. `yarn workspace ... typecheck` and root `yarn typecheck` now succeed under Yarn without requiring per-workspace local tool copies.
+- Warnings / blockers: `yarn build` still fails in this sandboxed environment because Vite's config loading path hits a lower-level `spawn EPERM` inside the environment, which is separate from the package-manager wiring and also affects direct dev-server startup unless run outside the restricted sandbox. This loop stabilized the Yarn script topology; it did not eliminate the environment-level Vite/esbuild spawn restriction.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-057
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: root workspace, `PLANS.md`
+- What changed: Per the user's request, ran live Yarn dev-server verification outside the restricted sandbox against the current converted launchers instead of changing application code again. Proved the backend dev path responds on `http://127.0.0.1:3001/api/health` and the frontend dev path responds on `http://127.0.0.1:4173/service.html`, then shut both processes down after the checks.
+- Tests run: live `yarn.cmd dev:backend` readiness check with HTTP fetch of `http://127.0.0.1:3001/api/health`; live `yarn.cmd dev:frontend --host 127.0.0.1 --port 4173` readiness check with HTTP fetch of `http://127.0.0.1:4173/service.html`
+- Result: Both Yarn dev entrypoints now launch successfully outside the sandbox and answer on localhost. Backend returned `200` with `{"environment":"local","service":"backend","status":"ok"}`. Frontend returned `200` and the served HTML contains the `ARIAD` title marker.
+- Warnings / blockers: The dev proof required execution outside the restricted sandbox because this environment still produces low-level `spawn EPERM` failures for Vite/esbuild paths when run inside the sandbox. The Yarn migration work fixed script/tooling topology; it does not remove that sandbox-specific runtime limitation.
+- Approval needed: `none`
