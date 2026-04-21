@@ -1,3 +1,4 @@
+﻿// 이 파일은 워크스페이스 퍼시스턴스 상태 전환과 동기화 제어를 담당합니다.
 import type {
   AuthSession,
   CloudSyncOperation,
@@ -334,6 +335,48 @@ function getActiveEpisode(snapshot: StoryWorkspaceSnapshot) {
   );
 }
 
+function normalizeWorkspaceSnapshotObjectBindings(snapshot: StoryWorkspaceSnapshot) {
+  const fallbackEpisodeId = getActiveEpisode(snapshot)?.id ?? null;
+  const knownEpisodeIds = new Set(snapshot.episodes.map((episode) => episode.id));
+  const normalizedObjects = snapshot.objects
+    .map((object) => {
+      const episodeId =
+        object.episodeId && knownEpisodeIds.has(object.episodeId)
+          ? object.episodeId
+          : fallbackEpisodeId;
+
+      if (!episodeId) {
+        return null;
+      }
+
+      return {
+        ...object,
+        episodeId,
+        projectId: snapshot.project.id
+      };
+    })
+    .filter((object): object is StoryWorkspaceSnapshot["objects"][number] => object !== null);
+  const objectsById = new Map(normalizedObjects.map((object) => [object.id, object]));
+  const normalizedNodes = snapshot.nodes.map((node) => ({
+    ...node,
+    objectIds: sanitizeKeywords(
+      node.objectIds.filter((objectId) => {
+        const object = objectsById.get(objectId);
+        return (
+          object !== undefined &&
+          object.projectId === node.projectId
+        );
+      })
+    )
+  }));
+
+  return {
+    ...snapshot,
+    nodes: normalizedNodes,
+    objects: normalizedObjects
+  };
+}
+
 function getOrderedEpisodeNodes(snapshot: StoryWorkspaceSnapshot, episodeId: string) {
   return sortNodesByOrder(snapshot.nodes.filter((node) => node.episodeId === episodeId));
 }
@@ -462,7 +505,12 @@ export class WorkspacePersistenceController {
 
     const flushQueueOptions = {
       getRemoteSnapshot: () => this.remoteSnapshot,
+      loadPending: () => this.dependencies.local.getPendingSyncOperations(),
       onError: (error: Error) => {
+        if (error.message === "not_authenticated") {
+          return;
+        }
+
         this.patchState({
           lastError: error.message,
           syncStatus: "error"
@@ -487,6 +535,9 @@ export class WorkspacePersistenceController {
           lastError: null,
           syncStatus: "syncing"
         });
+      },
+      savePending: (operations: CloudSyncOperation[]) => {
+        this.dependencies.local.savePendingSyncOperations(operations);
       },
       syncProject: async (operations: CloudSyncOperation[]) => {
         const current = this.requireState();
@@ -623,8 +674,11 @@ export class WorkspacePersistenceController {
         return;
       }
 
-      this.remoteSnapshot = cloneSnapshot(response.snapshot);
-      const registry = this.persistWorkspace(response.snapshot, response.linkage);
+      const normalizedSnapshot = normalizeWorkspaceSnapshotObjectBindings(
+        response.snapshot
+      );
+      this.remoteSnapshot = cloneSnapshot(normalizedSnapshot);
+      const registry = this.persistWorkspace(normalizedSnapshot, response.linkage);
       const cloudProjectCount = await this.getCloudProjectCount(
         current.session.accountId
       );
@@ -636,7 +690,7 @@ export class WorkspacePersistenceController {
         linkage: cloneLinkage(response.linkage),
         registry,
         session: current.session,
-        snapshot: cloneSnapshot(response.snapshot),
+        snapshot: cloneSnapshot(normalizedSnapshot),
         syncStatus: "synced"
       });
     } catch (error) {
@@ -647,7 +701,19 @@ export class WorkspacePersistenceController {
     }
   }
 
+  // 인증된 클라우드 연동 상태에서만 즉시 동기화를 수행합니다.
   async flushNow() {
+    const current = this.state;
+
+    if (
+      !current ||
+      current.session.mode !== "authenticated" ||
+      current.session.accountId === null ||
+      !current.linkage?.cloudLinked
+    ) {
+      return;
+    }
+
     await this.flushQueue.flushNow();
   }
 
@@ -893,7 +959,16 @@ export class WorkspacePersistenceController {
           : current.snapshot.project.activeEpisodeId,
       updatedAt: timestamp
     };
-    const nextNodes = current.snapshot.nodes.filter((node) => node.episodeId !== episodeId);
+    const nextObjects = current.snapshot.objects.filter(
+      (object) => object.episodeId !== episodeId
+    );
+    const remainingObjectIds = new Set(nextObjects.map((object) => object.id));
+    const nextNodes = current.snapshot.nodes
+      .filter((node) => node.episodeId !== episodeId)
+      .map((node) => ({
+        ...node,
+        objectIds: node.objectIds.filter((objectId) => remainingObjectIds.has(objectId))
+      }));
     const nextDrawer = current.snapshot.temporaryDrawer.filter(
       (item) => item.episodeId !== episodeId
     );
@@ -901,6 +976,7 @@ export class WorkspacePersistenceController {
       ...current.snapshot,
       episodes: remainingEpisodes,
       nodes: nextNodes,
+      objects: nextObjects,
       project: nextProject,
       temporaryDrawer: nextDrawer
     };
@@ -914,6 +990,11 @@ export class WorkspacePersistenceController {
       ...createEpisodeOperations(
         current.snapshot.episodes,
         remainingEpisodes,
+        current.snapshot.project.id
+      ),
+      ...createObjectOperations(
+        current.snapshot.objects,
+        nextObjects,
         current.snapshot.project.id
       ),
       ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
@@ -1099,10 +1180,11 @@ export class WorkspacePersistenceController {
 
   async createObject(draft: StoryObjectDraft) {
     const current = this.requireState();
+    const activeEpisode = getActiveEpisode(current.snapshot);
     const name = sanitizeText(draft.name);
     const summary = sanitizeText(draft.summary);
 
-    if (!name) {
+    if (!name || !activeEpisode) {
       return null;
     }
 
@@ -1110,6 +1192,7 @@ export class WorkspacePersistenceController {
     const nextObject = {
       category: draft.category,
       createdAt: timestamp,
+      episodeId: activeEpisode.id,
       id: this.createId("object"),
       name,
       projectId: current.snapshot.project.id,
@@ -1211,8 +1294,15 @@ export class WorkspacePersistenceController {
 
   async attachObjectToNode(nodeId: string, objectId: string) {
     const current = this.requireState();
+    const targetNode = current.snapshot.nodes.find((node) => node.id === nodeId);
 
-    if (!current.snapshot.objects.some((object) => object.id === objectId)) {
+    if (!targetNode) {
+      return;
+    }
+
+    const targetObject = current.snapshot.objects.find((object) => object.id === objectId);
+
+    if (!targetObject || targetObject.projectId !== targetNode.projectId) {
       return;
     }
 
@@ -1276,6 +1366,90 @@ export class WorkspacePersistenceController {
         payload: updatedNode
       }
     ]);
+  }
+
+  // 에피소드 외부 참조 오브젝트를 현재 에피소드 소유로 고정합니다.
+  async localizeObjectReferencesForEpisode(episodeId: string) {
+    const current = this.requireState();
+    const episodeNodes = current.snapshot.nodes.filter((node) => node.episodeId === episodeId);
+
+    if (episodeNodes.length === 0) {
+      return false;
+    }
+
+    const objectsById = new Map(current.snapshot.objects.map((object) => [object.id, object]));
+    const sourceObjectIds = new Set(
+      episodeNodes.flatMap((node) => node.objectIds).filter((objectId) => {
+        const object = objectsById.get(objectId);
+        return (
+          object !== undefined &&
+          object.projectId === current.snapshot.project.id &&
+          object.episodeId !== episodeId
+        );
+      })
+    );
+
+    if (sourceObjectIds.size === 0) {
+      return false;
+    }
+
+    const timestamp = this.now();
+    const cloneIdBySourceId = new Map<string, string>();
+    const clonedObjects = [...sourceObjectIds].flatMap((sourceId) => {
+      const sourceObject = objectsById.get(sourceId);
+
+      if (!sourceObject) {
+        return [];
+      }
+
+      const cloneId = this.createId("object");
+      cloneIdBySourceId.set(sourceId, cloneId);
+
+      return [
+        {
+          ...sourceObject,
+          createdAt: timestamp,
+          episodeId,
+          id: cloneId,
+          updatedAt: timestamp
+        }
+      ];
+    });
+
+    if (clonedObjects.length === 0) {
+      return false;
+    }
+
+    const nextNodes = current.snapshot.nodes.map((node) => {
+      if (node.episodeId !== episodeId) {
+        return node;
+      }
+
+      return {
+        ...node,
+        objectIds: sanitizeKeywords(
+          node.objectIds.map((objectId) => cloneIdBySourceId.get(objectId) ?? objectId)
+        ),
+        updatedAt: timestamp
+      };
+    });
+    const nextObjects = [...current.snapshot.objects, ...clonedObjects];
+    const snapshot: StoryWorkspaceSnapshot = {
+      ...current.snapshot,
+      nodes: nextNodes,
+      objects: nextObjects
+    };
+
+    this.applyLocalMutation(snapshot, [
+      ...createObjectOperations(
+        current.snapshot.objects,
+        nextObjects,
+        current.snapshot.project.id
+      ),
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
+    ]);
+
+    return true;
   }
 
   async moveNode(nodeId: string, insertAtIndex: number) {
@@ -1676,23 +1850,29 @@ export class WorkspacePersistenceController {
       const snapshot = this.dependencies.local.getSnapshot(activeProjectId);
 
       if (snapshot) {
+        const normalizedSnapshot = normalizeWorkspaceSnapshotObjectBindings(snapshot);
         const linkage = this.dependencies.local.getLinkage(activeProjectId);
         const nextRegistry = upsertRegistryEntry(
           registry,
-          createRegistryEntry(snapshot, linkage, this.now())
+          createRegistryEntry(normalizedSnapshot, linkage, this.now())
         );
 
+        if (!snapshotsMatch(snapshot, normalizedSnapshot)) {
+          this.dependencies.local.saveSnapshot(normalizedSnapshot);
+        }
         this.dependencies.local.saveRegistry(nextRegistry);
 
         return {
           linkage,
           registry: nextRegistry,
-          snapshot
+          snapshot: normalizedSnapshot
         };
       }
     }
 
-    const snapshot = createSampleWorkspace(this.now(), this.createId);
+    const snapshot = normalizeWorkspaceSnapshotObjectBindings(
+      createSampleWorkspace(this.now(), this.createId)
+    );
     const nextRegistry = upsertRegistryEntry(
       registry,
       createRegistryEntry(snapshot, null, this.now())
@@ -1763,6 +1943,7 @@ export class WorkspacePersistenceController {
         nextLinkage = imported.linkage;
       }
 
+      nextSnapshot = normalizeWorkspaceSnapshotObjectBindings(nextSnapshot);
       this.remoteSnapshot = cloneSnapshot(nextSnapshot);
       const registry = this.persistWorkspace(nextSnapshot, nextLinkage);
       const cloudProjectCount = await this.getCloudProjectCount(session.accountId);
@@ -1777,6 +1958,8 @@ export class WorkspacePersistenceController {
         snapshot: cloneSnapshot(nextSnapshot),
         syncStatus: "synced"
       });
+
+      await this.flushNow();
     } catch (error) {
       this.patchState({
         lastError: this.toMessage(error),

@@ -615,6 +615,56 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("allows cross-episode object references and localizes them per episode on demand", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const firstEpisodeId = controller.getState()!.snapshot.project.activeEpisodeId;
+    const ownerObject = controller.getState()!.snapshot.objects[0]!;
+    const secondEpisodeId = (await controller.createEpisode())!;
+
+    await controller.selectEpisode(secondEpisodeId);
+    const secondEpisodeNodeId = (await controller.createNode("major", 0))!;
+
+    await controller.attachObjectToNode(secondEpisodeNodeId, ownerObject.id);
+
+    let state = controller.getState()!;
+    let secondEpisodeNode = state.snapshot.nodes.find((node) => node.id === secondEpisodeNodeId);
+
+    expect(secondEpisodeNode?.episodeId).toBe(secondEpisodeId);
+    expect(secondEpisodeNode?.objectIds).toContain(ownerObject.id);
+
+    await controller.localizeObjectReferencesForEpisode(secondEpisodeId);
+
+    state = controller.getState()!;
+    secondEpisodeNode = state.snapshot.nodes.find((node) => node.id === secondEpisodeNodeId);
+    const localizedObjectId = secondEpisodeNode?.objectIds[0] ?? null;
+    const localizedObject =
+      localizedObjectId !== null
+        ? state.snapshot.objects.find((object) => object.id === localizedObjectId) ?? null
+        : null;
+
+    expect(localizedObjectId).not.toBe(ownerObject.id);
+    expect(localizedObject?.episodeId).toBe(secondEpisodeId);
+    expect(localizedObject?.name).toBe(ownerObject.name);
+    expect(
+      state.snapshot.objects.some(
+        (object) => object.id === ownerObject.id && object.episodeId === firstEpisodeId
+      )
+    ).toBe(true);
+
+    controller.dispose();
+  });
+
   it("retries a failed sync without losing local state", async () => {
     const now = createClock();
     const storage = new MemoryStorage();

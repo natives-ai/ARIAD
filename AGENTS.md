@@ -1,4 +1,27 @@
-# AGENTS.md
+﻿# AGENTS.md
+
+---
+**Code Commenting Guideline**
+
+For all source files, classes, and functions in this project, please add a short and simple Korean comment as follows:
+
+- At the top of each file: one-line description of the file's purpose (in Korean)
+- For each class/function: one-line description of its role (in Korean)
+- Keep comments concise and focused; avoid unnecessary details
+
+Example:
+```ts
+// 이 파일은 사용자 인증 관련 기능을 담당합니다.
+
+// 사용자 정보를 저장하는 클래스
+class UserStore {
+	// 사용자 추가 함수
+	addUser(user) { ... }
+}
+```
+
+This guideline is for code readability and maintainability. Please follow it throughout the project.
+---
 
 ## Purpose
 This is the repo-level operating map for Codex. Keep it short. Use it to orient execution, not to replace the source design documents.

@@ -19,6 +19,7 @@
   "dependencies": {
     "@scenaairo/recommendation": "file:../recommendation",
     "@scenaairo/shared": "file:../shared",
-    "fastify": "^5.8.5"
+    "fastify": "^5.8.5",
+    "mysql2": "^3.15.2"
   }
 }

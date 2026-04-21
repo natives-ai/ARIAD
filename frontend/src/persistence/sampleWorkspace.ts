@@ -1,3 +1,4 @@
+// 이 파일은 초기 로컬 워크스페이스 샘플 데이터를 생성합니다.
 import type {
   StoryWorkspaceSnapshot,
   TemporaryDrawerItem
@@ -98,6 +99,7 @@ export function createSampleWorkspace(
       {
         category: "person",
         createdAt: now,
+        episodeId: activeEpisodeId,
         id: objectId,
         name: "Heroine's Mother",
         projectId,

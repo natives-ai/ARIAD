@@ -1,4 +1,6 @@
-﻿import {
+﻿// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
+import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -6,10 +8,8 @@
   type ChangeEvent,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
-  type WheelEvent as ReactWheelEvent
+  type PointerEvent as ReactPointerEvent
 } from "react";
-import { createPortal } from "react-dom";
-import type { ReactNode } from "react";
 import type { KeywordSuggestion } from "@scenaairo/recommendation";
 import type {
   StoryEpisode,
@@ -38,1035 +38,137 @@ import {
 import { RecommendationClient } from "../recommendation/client";
 import { StandaloneRecommendationClient } from "../recommendation/standaloneClient";
 import { createKeywordRecommendationRequest } from "../recommendation/request";
+import {
+  laneDefinitions,
+  initialStageWidth,
+  stageInnerLeft,
+  laneGap,
+  laneDividerNodePadding,
+  initialLaneDividerXs,
+  stageRightPadding,
+  minLaneWidth,
+  maxCanvasContentRight,
+  timelineRailWidth,
+  timelineStartY,
+  initialTimelineEndY,
+  timelineHandleHeight,
+  nodeCardWidth,
+  nodeCardHeight,
+  canvasBottomPadding,
+  minimumCanvasHeight,
+  emptyNodes,
+  objectCategoryOptions,
+  rootFolderScopeId
+} from "./workspace-shell/workspaceShell.constants";
+import {
+  toMessage,
+  describeCloudStatus,
+  formatObjectCategory,
+  renderViewportOverlay
+} from "./workspace-shell/workspaceShell.common";
+import {
+  computeLaneCanvasBounds,
+  getNodeSize,
+  getFallbackNodePlacementWithinBounds,
+  clampNodePlacement,
+  clampCanvasZoom,
+  resolveNodeOverlapPlacement,
+  getMentionPopoverPosition,
+  canStartCanvasPan,
+  hasCollapsedAncestor,
+  buildConnectionLines,
+  isEditableTarget,
+  isInteractiveTarget,
+  hasTextSelection,
+  getPasteInsertIndex,
+  getTimelineAnchorPositions,
+  snapMajorNodePlacementToTimelineAnchors
+} from "./workspace-shell/workspaceShell.canvas";
+import {
+  extractInlineKeywords,
+  buildInlineEditorText,
+  extractDisplayText,
+  extractObjectMentionNames,
+  getOpenObjectMentionQuery,
+  getObjectToken,
+  normalizeInlineObjectMentions,
+  getClosedObjectWordQuery,
+  renderTextWithObjectMentions,
+  buildDisplayedKeywordSuggestions,
+  toggleInlineKeywordToken,
+  removeInlineSelectionWithTokenBoundaries,
+  removeAdjacentInlineToken,
+  getObjectMentionSignature,
+  deriveNodeContentMode
+} from "./workspace-shell/workspaceShell.inlineEditor";
+import { cloneCopiedNodes } from "./workspace-shell/workspaceShell.node";
+// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
+// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
+import {
+  parseStoredStringArray,
+  parseStoredNodeSizeMap
+} from "./workspace-shell/workspaceShell.storage";
+import {
+  parseStoredFolderList,
+  parseStoredEpisodePinMap,
+  sanitizeSidebarFolders,
+  matchesEpisodeSearch,
+  SidebarItemIcon
+} from "./workspace-shell/workspaceShell.sidebar";
+import type {
+  DragPayload,
+  DetailEditorMode,
+  ObjectSortMode,
+  SidebarFolder,
+  EpisodePinMap,
+  NodeResizeDirection,
+  NodeSize,
+  ObjectMentionQuery
+} from "./workspace-shell/workspaceShell.types";
 
-const laneDefinitions: Array<{
-  description: string;
-  level: StoryNodeLevel;
-  title: string;
-}> = [
-  {
-    description: "Start to end anchors live in this lane.",
-    level: "major",
-    title: copy.workspace.majorLane
-  },
-  {
-    description: "Secondary beats inherit from the nearest major beat by default.",
-    level: "minor",
-    title: copy.workspace.minorLane
-  },
-  {
-    description: "Detail notes stay attached to the nearest minor beat.",
-    level: "detail",
-    title: copy.workspace.detailLane
-  }
-];
-
-const initialStageWidth = 1050;
-const stageInnerLeft = 42;
-const stageInnerRight = 1012;
-const stageTopPadding = 36;
-const laneGap = 56;
-const laneDividerNodePadding = 40;
-const initialLaneDividerXs = {
-  first: 355,
-  second: 700,
-  detailEdge: stageInnerRight
-};
-const stageRightPadding = initialStageWidth - stageInnerRight;
-const minLaneWidth = 220;
-const maxCanvasContentRight = 2200;
-const maxCanvasContentBottom = 2800;
-const timelineRailWidth = 15;
-const timelineStartY = 58;
-const initialTimelineEndY = 450;
-const timelineHandleHeight = 30;
-const timelineNodeSnapThreshold = 28;
-const nodeCardWidth = 268;
-const nodeCardHeight = 102;
-const nodeVerticalSpacing = 148;
-const laneContentStartY = 56;
-const canvasBottomPadding = 8;
-const minimumCanvasHeight = 220;
-const minCanvasZoom = 0.7;
-const maxCanvasZoom = 1.8;
-const keywordTokenStart = "\u2063";
-const keywordTokenEnd = "\u2064";
-const objectTokenStart = "\u2065";
-const objectTokenEnd = "\u2066";
-const emptyNodes: StoryNode[] = [];
-
-type DragPayload =
-  | {
-      kind: "draft";
-    }
-  | {
-      kind: "node";
-      level: StoryNodeLevel;
-      nodeId: string;
-    };
-
-type DetailEditorMode = "create-object" | "object";
-type ObjectSortMode =
-  | "name-asc"
-  | "name-desc"
-  | "oldest"
-  | "recent"
-  | "usage-asc"
-  | "usage-desc";
-
-interface SidebarFolder {
-  createdAt: string;
-  episodeIds: string[];
-  id: string;
-  isCollapsed: boolean;
-  isPinned: boolean;
-  name: string;
-  updatedAt: string;
+interface EpisodeCanvasHistoryState {
+  laneDividerXs: {
+    detailEdge: number;
+    first: number;
+    second: number;
+  };
+  nodeSizes: Record<string, NodeSize>;
+  timelineEndY: number;
 }
 
-type EpisodePinMap = Record<string, string[]>;
-type NodeResizeDirection = "diagonal" | "horizontal" | "vertical";
-
-interface NodeSize {
-  height: number;
-  width: number;
-}
-
-interface ObjectMentionQuery {
-  end: number;
-  mode: "mention" | "word";
-  query: string;
-  start: number;
-}
-
-const objectCategoryOptions: StoryObjectCategory[] = ["person", "place", "thing"];
-const rootFolderScopeId = "__root__";
-
-function toMessage(error: unknown) {
-  return error instanceof Error ? error.message : "recommendation_failed";
-}
-
-function describeCloudStatus(state: WorkspacePersistenceState) {
-  switch (state.syncStatus) {
-    case "booting":
-      return "Preparing the local cache and persistence registry.";
-    case "guest-local":
-      return state.linkage?.cloudLinked
-        ? "Guest mode is using the local working cache. Sign in to reconnect to the linked cloud project."
-        : copy.persistence.guestMode;
-    case "importing":
-      return "Importing local work into the account-backed canonical workspace.";
-    case "syncing":
-      return "Syncing the local working cache to the canonical cloud project.";
-    case "synced":
-      return `Synced to ${state.linkage?.linkedAccountId ?? state.session.accountId}. Local cache remains active for recovery.`;
-    case "error":
-      return `Local cache is still available, but cloud sync needs attention: ${state.lastError ?? "unknown_error"}.`;
-  }
-}
-
-function computeLaneCanvasBounds(
-  firstDividerX: number,
-  secondDividerX: number,
-  detailEdgeX: number
-) {
+function cloneLaneDividerState(value: EpisodeCanvasHistoryState["laneDividerXs"]) {
   return {
-    detail: {
-      left: secondDividerX + laneGap / 2,
-      right: detailEdgeX,
-      startY: laneContentStartY
-    },
-    major: {
-      left: stageInnerLeft,
-      right: firstDividerX - laneGap / 2,
-      startY: laneContentStartY
-    },
-    minor: {
-      left: firstDividerX + laneGap / 2,
-      right: secondDividerX - laneGap / 2,
-      startY: laneContentStartY
-    }
-  } satisfies Record<StoryNodeLevel, { left: number; right: number; startY: number }>;
-}
-
-function getNodeSize(
-  nodeSizes: Record<string, NodeSize>,
-  nodeId: string
-): NodeSize {
-  return nodeSizes[nodeId] ?? {
-    height: nodeCardHeight,
-    width: nodeCardWidth
+    detailEdge: value.detailEdge,
+    first: value.first,
+    second: value.second
   };
 }
 
-function getFallbackNodePlacementWithinBounds(
-  node: StoryNode,
-  orderedNodes: StoryNode[],
-  laneCanvasBounds: Record<StoryNodeLevel, { left: number; right: number; startY: number }>,
-  nodeSize: NodeSize
-) {
-  const laneNodes = orderedNodes.filter((entry) => entry.level === node.level);
-  const laneIndex = laneNodes.findIndex((entry) => entry.id === node.id);
-  const bounds = laneCanvasBounds[node.level];
-  const laneWidth = Math.max(nodeSize.width, bounds.right - bounds.left);
-  const defaultX =
-    node.level === "major"
-      ? getMajorLaneTimelineCenterX(laneCanvasBounds.major) - nodeSize.width / 2
-      : bounds.left + Math.max(18, (laneWidth - nodeSize.width) / 2);
-
-  return {
-    x:
-      node.level === "major"
-        ? Math.max(bounds.left, Math.min(node.canvasX ?? defaultX, bounds.right - nodeSize.width))
-        : Math.max(bounds.left, Math.min(node.canvasX ?? defaultX, maxCanvasContentRight - nodeSize.width)),
-    y: Math.max(
-      stageTopPadding,
-      Math.min(
-        node.canvasY ?? bounds.startY + Math.max(0, laneIndex) * nodeVerticalSpacing,
-        maxCanvasContentBottom - nodeSize.height
-      )
-    )
-  };
-}
-
-function clampNodePlacement(
-  level: StoryNodeLevel,
-  placement: {
-    x: number;
-    y: number;
-  },
-  stageHeight: number,
-  laneCanvasBounds: Record<StoryNodeLevel, { left: number; right: number; startY: number }>,
-  nodeSize: NodeSize
-) {
-  const bounds = laneCanvasBounds[level];
-
-  return {
-    x:
-      level === "major"
-        ? Math.max(bounds.left, Math.min(placement.x, bounds.right - nodeSize.width))
-        : Math.max(bounds.left, Math.min(placement.x, maxCanvasContentRight - nodeSize.width)),
-    y: Math.max(stageTopPadding, Math.min(placement.y, maxCanvasContentBottom - nodeSize.height))
-  };
-}
-
-function getMajorLaneTimelineCenterX(majorLaneBounds: {
-  left: number;
-  right: number;
-}) {
-  return majorLaneBounds.left + (majorLaneBounds.right - majorLaneBounds.left) / 2;
-}
-
-function formatObjectCategory(category: StoryObjectCategory) {
-  return category.charAt(0).toUpperCase() + category.slice(1);
-}
-
-function clampCanvasZoom(value: number) {
-  return Math.min(maxCanvasZoom, Math.max(minCanvasZoom, Number(value.toFixed(2))));
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getKeywordTokenPattern() {
-  return new RegExp(
-    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}`,
-    "g"
+function cloneNodeSizeState(nodeSizes: Record<string, NodeSize>) {
+  return Object.fromEntries(
+    Object.entries(nodeSizes).map(([nodeId, size]) => [nodeId, { ...size }])
   );
 }
 
-function getInlineKeywordToken(keyword: string) {
-  return `${keywordTokenStart}${keyword}${keywordTokenEnd}`;
-}
-
-function stripKeywordMarkers(value: string) {
-  return value.replace(getKeywordTokenPattern(), "$1");
-}
-
-function stripObjectMentionMarkers(value: string) {
-  return value
-    .replace(
-      new RegExp(
-        `${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}`,
-        "g"
-      ),
-      "$1"
-    )
-    .replace(/@([^@\n]+?)@/g, "$1");
-}
-
-function stripInlineFormattingMarkers(value: string) {
-  return stripObjectMentionMarkers(stripKeywordMarkers(value));
-}
-
-function extractInlineKeywords(value: string) {
-  const matches = value.matchAll(getKeywordTokenPattern());
-  const seenKeywords = new Set<string>();
-  const keywords: string[] = [];
-
-  for (const match of matches) {
-    const nextKeyword = match[1]?.trim();
-
-    if (!nextKeyword || seenKeywords.has(nextKeyword)) {
-      continue;
-    }
-
-    seenKeywords.add(nextKeyword);
-    keywords.push(nextKeyword);
-  }
-
-  return keywords;
-}
-
-function buildInlineEditorText(text: string, keywords: string[]) {
-  const normalizedText = normalizeInlineObjectMentions(text);
-
-  if (extractInlineKeywords(normalizedText).length > 0 || keywords.length === 0) {
-    return normalizedText;
-  }
-
-  const keywordPrefix = keywords.map(getInlineKeywordToken).join(" ");
-
-  return normalizedText.trim() ? `${keywordPrefix} ${normalizedText}` : keywordPrefix;
-}
-
-function extractDisplayText(value: string) {
-  return stripInlineFormattingMarkers(value).trim();
-}
-
-function extractObjectMentionNames(value: string) {
-  const matches = value.matchAll(
-    new RegExp(
-      `${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
-      "g"
-    )
-  );
-  const uniqueNames = new Set<string>();
-  const names: string[] = [];
-
-  for (const match of matches) {
-    const nextName = (match[1] ?? match[2])?.trim();
-
-    if (!nextName) {
-      continue;
-    }
-
-    const normalized = nextName.toLowerCase();
-
-    if (uniqueNames.has(normalized)) {
-      continue;
-    }
-
-    uniqueNames.add(normalized);
-    names.push(nextName);
-  }
-
-  return names;
-}
-
-function getOpenObjectMentionQuery(value: string, caretIndex: number): ObjectMentionQuery | null {
-  const beforeCaret = value.slice(0, caretIndex);
-  const mentionDelimiterIndexes = [...beforeCaret.matchAll(/@/g)].map((match) => match.index ?? -1);
-
-  if (mentionDelimiterIndexes.length === 0 || mentionDelimiterIndexes.length % 2 === 0) {
-    return null;
-  }
-
-  const start = mentionDelimiterIndexes.at(-1);
-
-  if (start === undefined || start < 0) {
-    return null;
-  }
-
-  const query = value.slice(start + 1, caretIndex);
-
-  if (query.includes("\n")) {
-    return null;
-  }
-
-  return {
-    end: caretIndex,
-    mode: "mention",
-    query,
-    start
-  };
-}
-
-function getObjectToken(name: string) {
-  return `${objectTokenStart}${name}${objectTokenEnd}`;
-}
-
-function normalizeInlineObjectMentions(value: string) {
-  return value.replace(/@([^@\n]+?)@/g, (_, name: string) => getObjectToken(name.trim()));
-}
-
-function getClosedObjectWordQuery(
-  value: string,
-  caretIndex: number,
-  objects: Array<{ name: string }>
-): ObjectMentionQuery | null {
-  const beforeCaret = value.slice(0, caretIndex);
-  const afterCaret = value.slice(caretIndex);
-  const trailingWhitespace = beforeCaret.match(/\s+$/)?.[0] ?? "";
-  const comparisonBefore = trailingWhitespace
-    ? beforeCaret.slice(0, -trailingWhitespace.length)
-    : beforeCaret;
-
-  if (!comparisonBefore || getOpenObjectMentionQuery(value, caretIndex)) {
-    return null;
-  }
-
-  const match = [...objects]
-    .sort((left, right) => right.name.length - left.name.length)
-    .find((object) => {
-      const objectName = object.name.toLowerCase();
-      const lowerBefore = comparisonBefore.toLowerCase();
-
-      if (!lowerBefore.endsWith(objectName)) {
-        return false;
-      }
-
-      const start = comparisonBefore.length - object.name.length;
-      const prevChar = start > 0 ? (comparisonBefore[start - 1] ?? "") : "";
-      const nextChar = afterCaret[0] ?? "";
-
-      return !/[A-Za-z0-9]/.test(prevChar) && !/[A-Za-z0-9]/.test(nextChar);
-    });
-
-  if (!match) {
-    return null;
-  }
-
-  return {
-    end: comparisonBefore.length,
-    mode: "word",
-    query: match.name,
-    start: comparisonBefore.length - match.name.length
-  };
-}
-
-function renderTextWithObjectMentions(value: string) {
-  const segments: ReactNode[] = [];
-  const inlineTokenPattern = new RegExp(
-    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}|${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
-    "g"
-  );
-  let lastIndex = 0;
-
-  for (const match of value.matchAll(inlineTokenPattern)) {
-    const matchIndex = match.index ?? 0;
-
-    if (matchIndex > lastIndex) {
-      segments.push(
-        <span key={`text-${lastIndex}`}>{value.slice(lastIndex, matchIndex)}</span>
-      );
-    }
-
-    if (match[1]) {
-      segments.push(
-        <span className="node-inline-keyword" key={`keyword-${matchIndex}`}>
-          {match[1]}
-        </span>
-      );
-    } else if (match[2] || match[3]) {
-      segments.push(
-        <span className="node-object-mention" key={`mention-${matchIndex}`}>
-          {match[2] ?? match[3]}
-        </span>
-      );
-    }
-
-    lastIndex = matchIndex + match[0].length;
-  }
-
-  if (lastIndex < value.length) {
-    segments.push(<span key={`text-${lastIndex}`}>{value.slice(lastIndex)}</span>);
-  }
-
-  return segments.length > 0 ? segments : stripInlineFormattingMarkers(value);
-}
-
-function buildDisplayedKeywordSuggestions(
-  selectedKeywords: string[],
-  suggestions: KeywordSuggestion[],
-  refreshCycle: number
-) {
-  const selectedLookup = new Set(selectedKeywords.map((keyword) => keyword.toLowerCase()));
-  const pinnedSuggestions = selectedKeywords.map((keyword) => {
-    const existingSuggestion =
-      suggestions.find(
-        (suggestion) => suggestion.label.toLowerCase() === keyword.toLowerCase()
-      ) ?? null;
-
-    return (
-      existingSuggestion ?? {
-        label: keyword,
-        reason: "Pinned from the current node selection."
-      }
-    );
-  });
-  const remainingSuggestions = suggestions.filter(
-    (suggestion) => !selectedLookup.has(suggestion.label.toLowerCase())
-  );
-
-  if (remainingSuggestions.length === 0) {
-    return pinnedSuggestions.slice(0, 25);
-  }
-
-  const rotation = refreshCycle > 0 ? refreshCycle % remainingSuggestions.length : 0;
-  const rotatedSuggestions =
-    rotation === 0
-      ? remainingSuggestions
-      : [
-          ...remainingSuggestions.slice(rotation),
-          ...remainingSuggestions.slice(0, rotation)
-        ];
-
-  return [...pinnedSuggestions, ...rotatedSuggestions].slice(0, 25);
-}
-
-function toggleInlineKeywordToken(
-  value: string,
-  keyword: string,
-  selectionStart: number,
-  selectionEnd: number
-) {
-  const token = getInlineKeywordToken(keyword);
-
-  if (value.includes(token)) {
-    const tokenIndex = value.indexOf(token);
-
-    if (tokenIndex === -1) {
-      return {
-        nextCaret: selectionStart,
-        nextText: value
-      };
-    }
-
-    let removeStart = tokenIndex;
-    let removeEnd = tokenIndex + token.length;
-
-    if (value[removeEnd] === " ") {
-      removeEnd += 1;
-    } else if (removeStart > 0 && value[removeStart - 1] === " ") {
-      removeStart -= 1;
-    }
-
-    return {
-      nextCaret: removeStart,
-      nextText: `${value.slice(0, removeStart)}${value.slice(removeEnd)}`
-    };
-  }
-
-  const prefix = value.slice(0, selectionStart);
-  const suffix = value.slice(selectionEnd);
-  const needsLeadingSpace = prefix.length > 0 && !/[\s\n]$/.test(prefix);
-  const needsTrailingSpace = suffix.length > 0 && !/^[\s\n]/.test(suffix);
-  const insertion = `${needsLeadingSpace ? " " : ""}${token}${needsTrailingSpace ? " " : ""}`;
-
-  return {
-    nextCaret: prefix.length + insertion.length,
-    nextText: `${prefix}${insertion}${suffix}`
-  };
-}
-
-function removeAdjacentInlineToken(
-  value: string,
-  caretIndex: number,
-  direction: "backward" | "forward"
-) {
-  const tokenPattern = new RegExp(
-    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}|${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
-    "g"
-  );
-
-  for (const match of value.matchAll(tokenPattern)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-    const touchesToken =
-      direction === "backward" ? caretIndex === end : caretIndex === start;
-
-    if (!touchesToken) {
-      continue;
-    }
-
-    let removeStart = start;
-    let removeEnd = end;
-
-    if (value[removeEnd] === " ") {
-      removeEnd += 1;
-    } else if (removeStart > 0 && value[removeStart - 1] === " ") {
-      removeStart -= 1;
-    }
-
-    return {
-      nextCaret: removeStart,
-      nextText: `${value.slice(0, removeStart)}${value.slice(removeEnd)}`
-    };
-  }
-
-  return null;
-}
-
-function getObjectMentionSignature(value: string) {
-  return extractObjectMentionNames(value)
-    .map((name) => name.toLowerCase())
-    .sort()
-    .join("\u0001");
-}
-
-function rectanglesOverlap(
-  leftPlacement: { x: number; y: number },
-  leftSize: NodeSize,
-  rightPlacement: { x: number; y: number },
-  rightSize: NodeSize,
-  gap = 18
-) {
-  return !(
-    leftPlacement.x + leftSize.width + gap <= rightPlacement.x ||
-    rightPlacement.x + rightSize.width + gap <= leftPlacement.x ||
-    leftPlacement.y + leftSize.height + gap <= rightPlacement.y ||
-    rightPlacement.y + rightSize.height + gap <= leftPlacement.y
-  );
-}
-
-function resolveNodeOverlapPlacement(
-  nodeId: string | null,
-  placement: { x: number; y: number },
-  nodeSize: NodeSize,
-  resolvedPlacements: Map<string, { x: number; y: number }>,
-  nodeSizes: Record<string, NodeSize>,
-  existingNodeIds?: Iterable<string>
-) {
-  const nextPlacement = { ...placement };
-  const candidateNodeIds =
-    existingNodeIds !== undefined ? [...existingNodeIds] : [...resolvedPlacements.keys()];
-  let guard = 0;
-
-  while (guard < 200) {
-    const collision = candidateNodeIds.find((otherId) => {
-      if (nodeId !== null && otherId === nodeId) {
-        return false;
-      }
-
-      const otherPlacement = resolvedPlacements.get(otherId);
-
-      if (!otherPlacement) {
-        return false;
-      }
-
-      return rectanglesOverlap(
-        nextPlacement,
-        nodeSize,
-        otherPlacement,
-        getNodeSize(nodeSizes, otherId)
-      );
-    });
-
-    if (!collision) {
-      return nextPlacement;
-    }
-
-    const otherPlacement = resolvedPlacements.get(collision);
-
-    if (!otherPlacement) {
-      return nextPlacement;
-    }
-
-    const otherSize = getNodeSize(nodeSizes, collision);
-    nextPlacement.y = otherPlacement.y + otherSize.height + 18;
-    guard += 1;
-  }
-
-  return nextPlacement;
-}
-
-function getMentionPopoverPosition(rect: DOMRect) {
-  const maxLeft = Math.max(16, window.innerWidth - 280);
-  const maxTop = Math.max(16, window.innerHeight - 220);
-
-  return {
-    left: Math.min(Math.max(12, rect.left), maxLeft),
-    top: Math.min(rect.bottom + 10, maxTop)
-  };
-}
-
-function canStartCanvasPan(target: EventTarget | null) {
-  return (
-    target instanceof Element &&
-    target.closest(
-      "button, input, textarea, select, a, [role='button'], .node-card, .recommendation-panel, .detail-editor"
-    ) === null
-  );
-}
-
-function cloneCopiedNodes(nodes: StoryNode[]) {
-  return nodes.map((node) => ({
-    ...node,
-    keywords: [...node.keywords],
-    objectIds: [...node.objectIds]
-  }));
-}
-
-function deriveNodeContentMode(text: string, keywords: string[]) {
-  if (stripInlineFormattingMarkers(text).trim()) {
-    return "text";
-  }
-
-  if (keywords.length > 0) {
-    return "keywords";
-  }
-
-  return "empty";
-}
-
-function hasCollapsedAncestor(node: StoryNode, nodesById: Map<string, StoryNode>) {
-  let parentId = node.parentId;
-
-  while (parentId) {
-    const parentNode = nodesById.get(parentId);
-
-    if (!parentNode) {
-      return false;
-    }
-
-    if (parentNode.isCollapsed) {
-      return true;
-    }
-
-    parentId = parentNode.parentId;
-  }
-
-  return false;
-}
-
-function buildConnectionLines(
-  nodes: StoryNode[],
-  nodePlacements: Map<string, { x: number; y: number }>,
-  nodeSizes: Record<string, NodeSize>
-) {
-  const nodesById = new Map(nodes.map((node) => [node.id, node]));
-
-  return nodes.flatMap((node) => {
-    if (node.parentId === null) {
-      return [];
-    }
-
-    const parentNode = nodesById.get(node.parentId);
-    const parentPlacement = nodePlacements.get(node.parentId);
-    const childPlacement = nodePlacements.get(node.id);
-
-    if (!parentNode || !parentPlacement || !childPlacement) {
-      return [];
-    }
-
-    const parentSize = getNodeSize(nodeSizes, parentNode.id);
-    const childSize = getNodeSize(nodeSizes, node.id);
-    const startX = parentPlacement.x + parentSize.width;
-    const endX = childPlacement.x;
-    const startY = parentPlacement.y + parentSize.height / 2;
-    const endY = childPlacement.y + childSize.height / 2;
-    const bendDistance = Math.max(34, Math.abs(endX - startX) * 0.36);
-    const curveDirection = endX >= startX ? 1 : -1;
-    const firstCurveX = startX + bendDistance * curveDirection;
-    const secondCurveX = endX - bendDistance * curveDirection;
-
-    return [
-      {
-        childId: node.id,
-        id: `${parentNode.id}-${node.id}`,
-        endX,
-        endY,
-        path: `M ${startX} ${startY} C ${firstCurveX} ${startY}, ${secondCurveX} ${endY}, ${endX} ${endY}`,
-        startX,
-        startY
-      }
-    ];
-  });
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable ||
-      target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "SELECT")
-  );
-}
-
-function isInteractiveTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    target.closest("button, input, textarea, select, a, [role='button']") !== null
-  );
-}
-
-function hasTextSelection(target: HTMLTextAreaElement | HTMLInputElement) {
-  return (target.selectionStart ?? 0) !== (target.selectionEnd ?? 0);
-}
-
-function getPasteInsertIndex(nodes: StoryNode[], selectedNodeId: string | null) {
-  if (!selectedNodeId) {
-    return nodes.length;
-  }
-
-  const subtreeNodes = collectSubtreeNodes(nodes, selectedNodeId);
-  const lastSubtreeNodeId = subtreeNodes.at(-1)?.id ?? selectedNodeId;
-  const lastSubtreeIndex = nodes.findIndex((node) => node.id === lastSubtreeNodeId);
-
-  return lastSubtreeIndex === -1 ? nodes.length : lastSubtreeIndex + 1;
-}
-
-function parseStoredStringArray(value: string | null) {
-  if (!value) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-
-    return Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseStoredNodeSizeMap(value: string | null) {
-  if (!value) {
-    return {} as Record<string, NodeSize>;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
-
-    return Object.fromEntries(
-      Object.entries(parsed)
-        .map(([nodeId, size]) => {
-          if (!size || typeof size !== "object") {
-            return null;
-          }
-
-          const width = Number((size as { width?: unknown }).width);
-          const height = Number((size as { height?: unknown }).height);
-
-          if (!Number.isFinite(width) || !Number.isFinite(height)) {
-            return null;
-          }
-
-          return [
-            nodeId,
-            {
-              height: Math.max(nodeCardHeight, height),
-              width: Math.max(nodeCardWidth, width)
-            } satisfies NodeSize
-          ];
-        })
-        .filter((entry): entry is [string, NodeSize] => entry !== null)
-    );
-  } catch {
-    return {} as Record<string, NodeSize>;
-  }
-}
-
-function sanitizeNodeSizeMap(
-  nodeSizes: Record<string, NodeSize>,
+function getEpisodeCanvasHistorySignature(
+  episodeId: string | null,
   nodes: StoryNode[]
 ) {
-  const validNodeIds = new Set(nodes.map((node) => node.id));
-
-  return Object.fromEntries(
-    Object.entries(nodeSizes)
-      .filter(([nodeId]) => validNodeIds.has(nodeId))
-      .map(([nodeId, size]) => [
-        nodeId,
-        {
-          height: Math.max(nodeCardHeight, size.height),
-          width: Math.max(nodeCardWidth, size.width)
-        } satisfies NodeSize
-      ])
-  );
-}
-
-function getTimelineAnchorPositions(
-  timelineEndY: number,
-  majorLaneBounds: {
-    left: number;
-    right: number;
-  },
-  majorNodeSize: NodeSize
-) {
-  const startNodeY = Math.max(stageTopPadding, timelineStartY);
-  const endNodeY = Math.max(startNodeY + 48, timelineEndY - majorNodeSize.height);
-  const railCenterX = getMajorLaneTimelineCenterX(majorLaneBounds);
-
-  return {
-    endNodeBottomY: timelineEndY,
-    endNodeY,
-    railCenterX,
-    snappedNodeX: railCenterX - majorNodeSize.width / 2,
-    startNodeY
-  };
-}
-
-function snapMajorNodePlacementToTimelineAnchors(
-  level: StoryNodeLevel,
-  placement: { x: number; y: number },
-  timelineAnchors: ReturnType<typeof getTimelineAnchorPositions>,
-  nodeSize: NodeSize
-) {
-  if (level !== "major") {
-    return placement;
+  if (!episodeId) {
+    return null;
   }
 
-  const alignedPlacement = {
-    ...placement,
-    x: timelineAnchors.railCenterX - nodeSize.width / 2
-  };
-  const clampedY = Math.max(
-    timelineAnchors.startNodeY,
-    Math.min(alignedPlacement.y, timelineAnchors.endNodeY)
-  );
-  const startDistance = Math.abs(clampedY - timelineAnchors.startNodeY);
-  const endDistance = Math.abs(
-    clampedY + nodeSize.height - timelineAnchors.endNodeBottomY
-  );
+  const nodeSignature = nodes
+    .map(
+      (node) =>
+        `${node.id}:${node.orderIndex}:${node.parentId ?? ""}:${node.level}:${node.canvasX ?? ""}:${node.canvasY ?? ""}`
+    )
+    .join("|");
 
-  if (startDistance <= timelineNodeSnapThreshold && startDistance <= endDistance) {
-    return {
-      ...alignedPlacement,
-      y: timelineAnchors.startNodeY
-    };
-  }
-
-  if (endDistance <= timelineNodeSnapThreshold) {
-    return {
-      ...alignedPlacement,
-      y: timelineAnchors.endNodeY
-    };
-  }
-
-  return {
-    ...alignedPlacement,
-    y: clampedY
-  };
+  return `${episodeId}::${nodeSignature}`;
 }
 
-function parseStoredFolderList(value: string | null) {
-  if (!value) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed
-      .filter((entry): entry is SidebarFolder => {
-        if (!entry || typeof entry !== "object") {
-          return false;
-        }
-
-        const candidate = entry as Partial<SidebarFolder>;
-
-        return (
-          typeof candidate.id === "string" &&
-          typeof candidate.name === "string" &&
-          Array.isArray(candidate.episodeIds) &&
-          typeof candidate.createdAt === "string" &&
-          typeof candidate.updatedAt === "string"
-        );
-      })
-      .map((folder) => ({
-        ...folder,
-        episodeIds: folder.episodeIds.filter((entry): entry is string => typeof entry === "string"),
-        isCollapsed: folder.isCollapsed ?? false,
-        isPinned: folder.isPinned ?? false
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function parseStoredEpisodePinMap(value: string | null) {
-  if (!value) {
-    return {} satisfies EpisodePinMap;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-
-    if (!parsed || typeof parsed !== "object") {
-      return {} satisfies EpisodePinMap;
-    }
-
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).map(([key, entry]) => [
-        key,
-        Array.isArray(entry)
-          ? entry.filter((value): value is string => typeof value === "string")
-          : []
-      ])
-    );
-  } catch {
-    return {} satisfies EpisodePinMap;
-  }
-}
-
-function sanitizeSidebarFolders(folders: SidebarFolder[], episodes: StoryEpisode[]) {
-  const validEpisodeIds = new Set(episodes.map((episode) => episode.id));
-  const seenEpisodeIds = new Set<string>();
-
-  return folders.map((folder) => {
-    const episodeIds = folder.episodeIds.filter((episodeId) => {
-      if (!validEpisodeIds.has(episodeId) || seenEpisodeIds.has(episodeId)) {
-        return false;
-      }
-
-      seenEpisodeIds.add(episodeId);
-      return true;
-    });
-
-    return {
-      ...folder,
-      episodeIds
-    };
-  });
-}
-
-function matchesEpisodeSearch(episode: StoryEpisode, query: string) {
-  if (!query.trim()) {
-    return true;
-  }
-
-  const normalizedQuery = query.trim().toLowerCase();
-
-  return (
-    episode.title.toLowerCase().includes(normalizedQuery) ||
-    episode.objective.toLowerCase().includes(normalizedQuery) ||
-    episode.endpoint.toLowerCase().includes(normalizedQuery)
-  );
-}
-
-function SidebarItemIcon({ kind }: { kind: "episode" | "folder" }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={`sidebar-item-icon sidebar-item-icon-${kind}`}
-    />
-  );
-}
-
-function renderViewportOverlay(content: ReactNode) {
-  return createPortal(content, document.body);
-}
-
+// 이 컴포넌트는 워크스페이스 화면 전체를 렌더링합니다.
 export function WorkspaceShell() {
   const isDrawerUiEnabled = false;
   const [env] = useState(() => loadFrontendEnv());
@@ -1094,6 +196,13 @@ export function WorkspaceShell() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [draftVisible, setDraftVisible] = useState(false);
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
+  const [activeNodeDragPreview, setActiveNodeDragPreview] = useState<{
+    nodeId: string;
+    placement: {
+      x: number;
+      y: number;
+    };
+  } | null>(null);
   const [rewireNodeId, setRewireNodeId] = useState<string | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -1197,6 +306,7 @@ export function WorkspaceShell() {
   const nodeMenuButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousSelectedNodeIdentityRef = useRef<string | null>(null);
   const previousActiveEpisodeIdRef = useRef<string | null>(null);
+  const skipNextAutoHeightSyncRef = useRef(false);
   const copiedNodeTreeRef = useRef<{
     nodes: StoryNode[];
     rootId: string | null;
@@ -1214,11 +324,40 @@ export function WorkspaceShell() {
   const pendingMentionObjectIdsRef = useRef(new Map<string, Promise<string | null>>());
   const nodePlacementsRef = useRef(new Map<string, { x: number; y: number }>());
   const visibleNodesRef = useRef<StoryNode[]>(emptyNodes);
+  const laneCanvasBoundsRef = useRef<
+    Record<StoryNodeLevel, { left: number; right: number; startY: number }> | null
+  >(null);
   const nodeSizesRef = useRef<Record<string, NodeSize>>({});
+  const timelineAnchorsRef = useRef<ReturnType<typeof getTimelineAnchorPositions> | null>(null);
+  const laneDividerXsRef = useRef(laneDividerXs);
+  const stageHeightRef = useRef(0);
+  const timelineEndYRef = useRef(timelineEndY);
+  const episodeCanvasHistoryRef = useRef<Record<string, EpisodeCanvasHistoryState>>({});
+  const majorAnchorNodeIdsByEpisodeRef = useRef<
+    Record<string, { endId: string | null; startId: string | null }>
+  >({});
   const endMajorNodeIdRef = useRef<string | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
-  const contentMinHeightsRef = useRef<Record<string, number>>({});
+  const moveNodeFreelyRef = useRef<
+    ((
+      nodeId: string,
+      level: StoryNodeLevel,
+      placement: {
+        x: number;
+        y: number;
+      }
+    ) => Promise<void>) | null
+  >(null);
+  const activeNodeDragPreviewRef = useRef<{
+    nodeId: string;
+    placement: {
+      x: number;
+      y: number;
+    };
+  } | null>(null);
+  const suppressNodeClickRef = useRef<string | null>(null);
   const autoNodeHeightsRef = useRef<Record<string, number>>({});
+  const isNodeResizingRef = useRef(false);
   const canvasDragStateRef = useRef<
     | {
         kind: "divider";
@@ -1234,6 +373,7 @@ export function WorkspaceShell() {
         initialHeight: number;
         initialWidth: number;
         kind: "node-resize";
+        level: StoryNodeLevel;
         nodeId: string;
         pointerStartX: number;
         pointerStartY: number;
@@ -1251,6 +391,16 @@ export function WorkspaceShell() {
         scrollLeft: number;
         scrollTop: number;
       }
+    | {
+        kind: "node-drag" | "node-drag-pending";
+        level: StoryNodeLevel;
+        nodeId: string;
+        nodeSize: NodeSize;
+        pointerOffsetX: number;
+        pointerOffsetY: number;
+        pointerStartX: number;
+        pointerStartY: number;
+      }
     | null
   >(null);
 
@@ -1265,18 +415,58 @@ export function WorkspaceShell() {
     };
   }, [controller]);
 
+  // 브라우저 생명주기 이벤트에서 동기화 플러시를 시도합니다.
+  useEffect(() => {
+    function flushOnLifecycleEvent() {
+      void controller.flushNow();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        flushOnLifecycleEvent();
+      }
+    }
+
+    window.addEventListener("pagehide", flushOnLifecycleEvent);
+    window.addEventListener("beforeunload", flushOnLifecycleEvent);
+    window.addEventListener("online", flushOnLifecycleEvent);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pagehide", flushOnLifecycleEvent);
+      window.removeEventListener("beforeunload", flushOnLifecycleEvent);
+      window.removeEventListener("online", flushOnLifecycleEvent);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [controller]);
+
+  const activeProjectId = state?.snapshot.project.id ?? null;
+  const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
+
   useEffect(() => {
     if (!state) {
       return;
     }
 
+    const scopedEpisodeIds = new Set(
+      activeEpisodeId
+        ? (
+            sidebarFolders.find((folder) => folder.episodeIds.includes(activeEpisodeId))
+              ?.episodeIds ?? [activeEpisodeId]
+          )
+        : []
+    );
+    const scopedObjects = activeEpisodeId
+      ? state.snapshot.objects.filter((object) => scopedEpisodeIds.has(object.episodeId))
+      : state.snapshot.objects;
+
     if (
       selectedObjectId === null ||
-      !state.snapshot.objects.some((object) => object.id === selectedObjectId)
+      !scopedObjects.some((object) => object.id === selectedObjectId)
     ) {
-      setSelectedObjectId(state.snapshot.objects[0]?.id ?? null);
+      setSelectedObjectId(scopedObjects[0]?.id ?? null);
     }
-  }, [selectedObjectId, state]);
+  }, [activeEpisodeId, selectedObjectId, sidebarFolders, state]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1284,9 +474,6 @@ export function WorkspaceShell() {
       String(isSidebarCollapsed)
     );
   }, [env.storagePrefix, isSidebarCollapsed]);
-
-  const activeProjectId = state?.snapshot.project.id ?? null;
-  const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -1345,6 +532,7 @@ export function WorkspaceShell() {
     setNodeSizes(parseStoredNodeSizeMap(window.localStorage.getItem(key)));
   }, [activeEpisodeId, env.storagePrefix]);
 
+  // undo 복원 시 같은 노드 id의 크기를 되살리기 위해 삭제된 엔트리를 즉시 정리하지 않습니다.
   useEffect(() => {
     if (!activeEpisodeId) {
       return;
@@ -1387,19 +575,6 @@ export function WorkspaceShell() {
       setFolderEpisodePins(sanitizedPins);
     }
   }, [folderEpisodePins, sidebarFolders, state]);
-
-  useEffect(() => {
-    if (!state || !activeEpisodeId) {
-      return;
-    }
-
-    const episodeNodes = state.snapshot.nodes.filter((node) => node.episodeId === activeEpisodeId);
-    const sanitizedNodeSizes = sanitizeNodeSizeMap(nodeSizes, episodeNodes);
-
-    if (JSON.stringify(sanitizedNodeSizes) !== JSON.stringify(nodeSizes)) {
-      setNodeSizes(sanitizedNodeSizes);
-    }
-  }, [activeEpisodeId, nodeSizes, state]);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -1668,17 +843,29 @@ export function WorkspaceShell() {
       if (dragState.kind === "node-resize") {
         const deltaX = (event.clientX - dragState.pointerStartX) / canvasZoom;
         const deltaY = (event.clientY - dragState.pointerStartY) / canvasZoom;
-        const minContentHeight =
-          contentMinHeightsRef.current[dragState.nodeId] ?? nodeCardHeight;
+        // 현재 분할선 상태와 이웃 레인 최소 폭을 반영해 레벨별 최대 너비를 제한합니다.
+        const maxSecondDividerX = maxCanvasContentRight - minLaneWidth - laneGap / 2;
+        const maxMajorLaneWidth =
+          maxCanvasContentRight - stageInnerLeft - minLaneWidth * 2 - laneGap * 2;
+        const maxMinorOrDetailLaneWidth =
+          maxSecondDividerX - effectiveFirstDividerXRef.current - laneGap;
+        const maxAllowedLaneWidth =
+          dragState.level === "major" ? maxMajorLaneWidth : maxMinorOrDetailLaneWidth;
+        const maxResizableNodeWidth = Math.max(
+          nodeCardWidth,
+          maxAllowedLaneWidth - laneDividerNodePadding * 2
+        );
         const nextHeight =
           dragState.direction === "horizontal"
             ? dragState.initialHeight
-            : Math.max(minContentHeight, dragState.initialHeight + deltaY);
+            : Math.max(nodeCardHeight, dragState.initialHeight + deltaY);
         const nextWidth =
           dragState.direction === "vertical"
             ? dragState.initialWidth
-            : Math.max(nodeCardWidth, dragState.initialWidth + deltaX);
-        const nodePlacement = nodePlacementsRef.current.get(dragState.nodeId);
+            : Math.min(
+                maxResizableNodeWidth,
+                Math.max(nodeCardWidth, dragState.initialWidth + deltaX)
+              );
 
         setNodeSizes((current) => ({
           ...current,
@@ -1688,34 +875,107 @@ export function WorkspaceShell() {
           }
         }));
 
-        if (nodePlacement) {
-          const nextLowestBottom = Math.max(
-            0,
-            ...visibleNodesRef.current.map((node) => {
-              const placement =
-                node.id === dragState.nodeId
-                  ? nodePlacement
-                  : nodePlacementsRef.current.get(node.id);
-              const size =
-                node.id === dragState.nodeId
-                  ? {
-                      height: nextHeight,
-                      width: nextWidth
-                    }
-                  : getNodeSize(nodeSizesRef.current, node.id);
+        return;
+      }
 
-              return (placement?.y ?? 0) + size.height;
-            })
-          );
-          const nextBottom = nodePlacement.y + nextHeight;
-          const nextTimelineEnd =
-            dragState.nodeId === endMajorNodeIdRef.current
-              ? Math.max(nextLowestBottom, nextBottom)
-              : nextLowestBottom;
+      if (dragState.kind === "node-drag-pending" || dragState.kind === "node-drag") {
+        const deltaX = event.clientX - dragState.pointerStartX;
+        const deltaY = event.clientY - dragState.pointerStartY;
 
-          setTimelineEndY(Math.max(timelineStartY + 120, nextTimelineEnd));
+        if (
+          dragState.kind === "node-drag-pending" &&
+          Math.hypot(deltaX, deltaY) < 6
+        ) {
+          return;
         }
 
+        const activeDragState =
+          dragState.kind === "node-drag-pending"
+            ? {
+                ...dragState,
+                kind: "node-drag" as const
+              }
+            : dragState;
+        const currentLaneCanvasBounds = laneCanvasBoundsRef.current;
+        const currentTimelineAnchors = timelineAnchorsRef.current;
+
+        if (dragState.kind === "node-drag-pending") {
+          canvasDragStateRef.current = activeDragState;
+          suppressNodeClickRef.current = dragState.nodeId;
+        }
+
+        if (!currentLaneCanvasBounds || !currentTimelineAnchors) {
+          return;
+        }
+
+        const stageRect = canvasStageRef.current?.getBoundingClientRect();
+
+        if (!stageRect) {
+          return;
+        }
+
+        const stagePoint = {
+          stageRect,
+          x: (event.clientX - stageRect.left) / canvasZoom,
+          y: (event.clientY - stageRect.top) / canvasZoom
+        };
+
+        const previewPlacement = snapMajorNodePlacementToTimelineAnchors(
+          activeDragState.level,
+          clampNodePlacement(
+            activeDragState.level,
+            {
+              x: stagePoint.x - activeDragState.pointerOffsetX,
+              y: stagePoint.y - activeDragState.pointerOffsetY
+            },
+            Math.max(
+              stageHeightRef.current,
+              stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
+            ),
+            currentLaneCanvasBounds,
+            activeDragState.nodeSize
+          ),
+          activeDragState.level === "major" && activeDragState.nodeId === endMajorNodeIdRef.current
+            ? getTimelineAnchorPositions(
+                Math.max(
+                  timelineStartY + 120,
+                  stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
+                ),
+                currentLaneCanvasBounds.major,
+                activeDragState.nodeSize
+              )
+            : currentTimelineAnchors,
+          activeDragState.nodeSize
+        );
+
+        updateNodeDragPreview({
+          nodeId: activeDragState.nodeId,
+          placement: previewPlacement
+        });
+        setTimelineEndY(
+          Math.max(
+            timelineStartY + 120,
+            Math.max(
+              0,
+              ...visibleNodesRef.current.map((node) => {
+                const placement =
+                  node.id === activeDragState.nodeId
+                    ? previewPlacement
+                    : nodePlacementsRef.current.get(node.id);
+                const size =
+                  node.id === activeDragState.nodeId
+                    ? activeDragState.nodeSize
+                    : getNodeSize(nodeSizesRef.current, node.id);
+
+                return (placement?.y ?? 0) + size.height;
+              })
+            )
+          )
+        );
+        return;
+      }
+
+      if (dragState.kind !== "timeline-end") {
         return;
       }
 
@@ -1727,6 +987,35 @@ export function WorkspaceShell() {
       const dragState = canvasDragStateRef.current;
       canvasDragStateRef.current = null;
       setIsCanvasPanning(false);
+      const activeNodeDragPreview = activeNodeDragPreviewRef.current;
+
+      if (dragState?.kind === "node-resize") {
+        isNodeResizingRef.current = false;
+      }
+
+      if (dragState?.kind === "node-drag" || dragState?.kind === "node-drag-pending") {
+        updateNodeDragPreview(null);
+
+        if (
+          dragState.kind === "node-drag" &&
+          activeNodeDragPreview &&
+          activeNodeDragPreview.nodeId === dragState.nodeId
+        ) {
+          void moveNodeFreelyRef.current?.(
+            dragState.nodeId,
+            dragState.level,
+            activeNodeDragPreview.placement
+          );
+        }
+
+        if (dragState.kind === "node-drag") {
+          window.requestAnimationFrame(() => {
+            if (suppressNodeClickRef.current === dragState.nodeId) {
+              suppressNodeClickRef.current = null;
+            }
+          });
+        }
+      }
 
       if (dragState?.kind === "rewire-drag") {
         if (
@@ -1745,7 +1034,18 @@ export function WorkspaceShell() {
 
       if (dragState?.kind === "node-resize" && selectedNodeIdRef.current === dragState.nodeId) {
         window.requestAnimationFrame(() => {
-          syncSelectedNodeInputHeight(dragState.nodeId, selectedNodeInputRef.current);
+          syncSelectedNodeInputHeight(dragState.nodeId, selectedNodeInputRef.current, {
+            preserveManualHeight: dragState.direction !== "horizontal"
+          });
+          const nextLowestBottom = Math.max(
+            0,
+            ...visibleNodesRef.current.map((node) => {
+              const placement = nodePlacementsRef.current.get(node.id);
+              const size = getNodeSize(nodeSizesRef.current, node.id);
+              return (placement?.y ?? 0) + size.height;
+            })
+          );
+          setTimelineEndY(Math.max(timelineStartY + 120, nextLowestBottom));
         });
       }
     }
@@ -1761,6 +1061,61 @@ export function WorkspaceShell() {
     };
   }, [canvasZoom, controller]);
 
+  useEffect(() => {
+    const viewport = canvasViewportRef.current;
+
+    if (!viewport) {
+      return;
+    }
+    const viewportElement = viewport;
+
+    // 캔버스 내부 요소 위의 Ctrl/Cmd + 휠 입력을 캔버스 줌으로 처리합니다.
+    function handleCanvasViewportWheel(event: WheelEvent) {
+      if (!(event.ctrlKey || event.metaKey)) {
+        return;
+      }
+
+      if (!(event.target instanceof Node) || !viewportElement.contains(event.target)) {
+        return;
+      }
+
+      event.preventDefault();
+      const viewportRect = viewportElement.getBoundingClientRect();
+      const pointerOffsetX = event.clientX - viewportRect.left + viewportElement.scrollLeft;
+      const pointerOffsetY = event.clientY - viewportRect.top + viewportElement.scrollTop;
+      const stagePointX = pointerOffsetX / canvasZoom;
+      const stagePointY = pointerOffsetY / canvasZoom;
+      const nextZoom = clampCanvasZoom(canvasZoom - event.deltaY * 0.0015);
+
+      if (nextZoom === canvasZoom) {
+        return;
+      }
+
+      setCanvasZoom(nextZoom);
+
+      window.requestAnimationFrame(() => {
+        const nextPointerOffsetX = stagePointX * nextZoom;
+        const nextPointerOffsetY = stagePointY * nextZoom;
+        viewportElement.scrollLeft = Math.max(
+          0,
+          nextPointerOffsetX - (event.clientX - viewportRect.left)
+        );
+        viewportElement.scrollTop = Math.max(
+          0,
+          nextPointerOffsetY - (event.clientY - viewportRect.top)
+        );
+      });
+    }
+
+    viewportElement.addEventListener("wheel", handleCanvasViewportWheel, {
+      passive: false
+    });
+
+    return () => {
+      viewportElement.removeEventListener("wheel", handleCanvasViewportWheel);
+    };
+  }, [canvasZoom, state !== null]);
+
   const orderedNodes =
     state && activeEpisodeId
       ? sortNodesByOrder(
@@ -1771,22 +1126,124 @@ export function WorkspaceShell() {
     state && activeEpisodeId
       ? state.snapshot.temporaryDrawer.filter((item) => item.episodeId === activeEpisodeId)
       : [];
+  const activeFolder =
+    activeEpisodeId
+      ? sidebarFolders.find((folder) => folder.episodeIds.includes(activeEpisodeId)) ?? null
+      : null;
+  const scopedEpisodeIds = new Set(
+    activeFolder?.episodeIds ?? (activeEpisodeId ? [activeEpisodeId] : [])
+  );
+  const activeEpisodeObjects =
+    state && activeEpisodeId
+      ? state.snapshot.objects.filter((object) => scopedEpisodeIds.has(object.episodeId))
+      : [];
+  const episodesById = new Map(
+    (state?.snapshot.episodes ?? []).map((episode) => [episode.id, episode])
+  );
   const nodesById = new Map(orderedNodes.map((node) => [node.id, node]));
   const selectedNode =
     (selectedNodeId ? nodesById.get(selectedNodeId) : null) ?? orderedNodes[0] ?? null;
   const selectedNodeIdentity = selectedNodeId ?? orderedNodes[0]?.id ?? null;
-  const objectsById = new Map((state?.snapshot.objects ?? []).map((object) => [object.id, object]));
+  const objectsById = new Map(activeEpisodeObjects.map((object) => [object.id, object]));
   const selectedObject =
     state === null
       ? null
       : (selectedObjectId ? objectsById.get(selectedObjectId) ?? null : null) ||
-        state.snapshot.objects.at(0) ||
+        activeEpisodeObjects.at(0) ||
         null;
+  const selectedObjectEpisodeTitle = selectedObject
+    ? (episodesById.get(selectedObject.episodeId)?.title ?? copy.workspace.objectEpisodeMissing)
+    : null;
   const isAuthenticated = state ? state.session.mode === "authenticated" : false;
   const isBusy =
     state === null
       ? true
       : state.syncStatus === "booting" || state.syncStatus === "importing";
+  const activeEpisodeCanvasHistorySignature = getEpisodeCanvasHistorySignature(
+    activeEpisodeId,
+    orderedNodes
+  );
+
+  useEffect(() => {
+    laneDividerXsRef.current = laneDividerXs;
+  }, [laneDividerXs]);
+
+  useEffect(() => {
+    timelineEndYRef.current = timelineEndY;
+  }, [timelineEndY]);
+
+  useEffect(() => {
+    if (!activeEpisodeCanvasHistorySignature) {
+      return;
+    }
+
+    episodeCanvasHistoryRef.current[activeEpisodeCanvasHistorySignature] = {
+      laneDividerXs: cloneLaneDividerState(laneDividerXs),
+      nodeSizes: cloneNodeSizeState(nodeSizes),
+      timelineEndY
+    };
+  }, [activeEpisodeCanvasHistorySignature, laneDividerXs, nodeSizes, timelineEndY]);
+
+  const restoreCanvasUiFromSnapshotHistory = useCallback(() => {
+    const snapshot = controller.getState()?.snapshot;
+
+    if (!snapshot) {
+      return;
+    }
+
+    const historyEpisodeId =
+      snapshot.project.activeEpisodeId ??
+      snapshot.episodes.find((episode) => episode.id === snapshot.project.activeEpisodeId)?.id ??
+      snapshot.episodes[0]?.id ??
+      null;
+
+    if (!historyEpisodeId) {
+      return;
+    }
+
+    const historyNodes = sortNodesByOrder(
+      snapshot.nodes.filter((node) => node.episodeId === historyEpisodeId)
+    );
+    const historySignature = getEpisodeCanvasHistorySignature(
+      historyEpisodeId,
+      historyNodes
+    );
+
+    if (!historySignature) {
+      return;
+    }
+
+    const storedState = episodeCanvasHistoryRef.current[historySignature];
+
+    if (!storedState) {
+      return;
+    }
+
+    if (
+      JSON.stringify(storedState.laneDividerXs) !==
+      JSON.stringify(laneDividerXsRef.current)
+    ) {
+      setLaneDividerXs(cloneLaneDividerState(storedState.laneDividerXs));
+    }
+
+    if (storedState.timelineEndY !== timelineEndYRef.current) {
+      setTimelineEndY(storedState.timelineEndY);
+    }
+
+    if (JSON.stringify(storedState.nodeSizes) !== JSON.stringify(nodeSizesRef.current)) {
+      setNodeSizes(cloneNodeSizeState(storedState.nodeSizes));
+    }
+  }, [controller]);
+
+  const runUndo = useCallback(async () => {
+    await controller.undo();
+    restoreCanvasUiFromSnapshotHistory();
+  }, [controller, restoreCanvasUiFromSnapshotHistory]);
+
+  const runRedo = useCallback(async () => {
+    await controller.redo();
+    restoreCanvasUiFromSnapshotHistory();
+  }, [controller, restoreCanvasUiFromSnapshotHistory]);
 
   useEffect(() => {
     if (previousActiveEpisodeIdRef.current === activeEpisodeId) {
@@ -1827,6 +1284,7 @@ export function WorkspaceShell() {
     }
 
     previousSelectedNodeIdentityRef.current = selectedNodeIdentity;
+    skipNextAutoHeightSyncRef.current = true;
 
     const nextSelectedNode = selectedNodeId
       ? orderedNodes.find((node) => node.id === selectedNodeId) || orderedNodes[0] || null
@@ -1879,6 +1337,11 @@ export function WorkspaceShell() {
       return;
     }
 
+    if (skipNextAutoHeightSyncRef.current) {
+      skipNextAutoHeightSyncRef.current = false;
+      return;
+    }
+
     const animationId = window.requestAnimationFrame(() => {
       syncSelectedNodeInputHeight(selectedNode.id, selectedNodeInputRef.current);
     });
@@ -1907,6 +1370,12 @@ export function WorkspaceShell() {
     function handleGlobalKeyDown(event: KeyboardEvent) {
       const key = event.key.toLowerCase();
       const usesModifier = event.ctrlKey || event.metaKey;
+      const viewport = canvasViewportRef.current;
+      const targetElement = event.target instanceof Element ? event.target : null;
+      const isCanvasEventTarget =
+        targetElement !== null &&
+        viewport !== null &&
+        viewport.contains(targetElement);
 
       if (event.key === "Escape") {
         if (deleteEpisodeId !== null) {
@@ -2003,6 +1472,7 @@ export function WorkspaceShell() {
       const isSelectedNodeInputTarget =
         event.target instanceof HTMLTextAreaElement &&
         event.target.classList.contains("node-inline-input");
+      const canUseCanvasShortcuts = isCanvasEventTarget || isSelectedNodeInputTarget;
       const selectedNodeInputElement = isSelectedNodeInputTarget
         ? event.target
         : selectedNodeInputRef.current;
@@ -2015,11 +1485,47 @@ export function WorkspaceShell() {
         selectedNode !== null &&
         !inlineEditorHasSelection &&
         ((key === "c" && usesModifier) ||
-          (key === "v" && usesModifier && copiedNodeTreeRef.current !== null) ||
-          (key === "z" && usesModifier) ||
-          (key === "y" && usesModifier));
+          (key === "v" && usesModifier && copiedNodeTreeRef.current !== null));
+
+      // 인라인 편집 포커스에서는 텍스트 전용 undo/redo를 브라우저 기본 동작으로 유지합니다.
+      if (isSelectedNodeInputTarget && usesModifier && (key === "z" || key === "y")) {
+        return;
+      }
+
+      if (
+        usesModifier &&
+        !canUseCanvasShortcuts &&
+        (key === "z" ||
+          key === "y" ||
+          key === "c" ||
+          key === "v" ||
+          key === "+" ||
+          key === "-" ||
+          key === "=" ||
+          key === "0")
+      ) {
+        return;
+      }
 
       if ((isEditableTarget(event.target) && !canUseNodeShortcutFromInlineEditor) || isBusy) {
+        return;
+      }
+
+      if (usesModifier && (key === "+" || key === "=")) {
+        event.preventDefault();
+        setCanvasZoom((current) => clampCanvasZoom(current + 0.1));
+        return;
+      }
+
+      if (usesModifier && key === "-") {
+        event.preventDefault();
+        setCanvasZoom((current) => clampCanvasZoom(current - 0.1));
+        return;
+      }
+
+      if (usesModifier && key === "0") {
+        event.preventDefault();
+        setCanvasZoom(1);
         return;
       }
 
@@ -2027,9 +1533,9 @@ export function WorkspaceShell() {
         event.preventDefault();
 
         if (event.shiftKey) {
-          void controller.redo();
+          void runRedo();
         } else {
-          void controller.undo();
+          void runUndo();
         }
 
         return;
@@ -2037,7 +1543,7 @@ export function WorkspaceShell() {
 
       if (usesModifier && key === "y") {
         event.preventDefault();
-        void controller.redo();
+        void runRedo();
         return;
       }
 
@@ -2124,6 +1630,8 @@ export function WorkspaceShell() {
     renamingFolderId,
     renamingEpisodeId,
     rewireNodeId,
+    runRedo,
+    runUndo,
     selectedNode,
     state
   ]);
@@ -2151,91 +1659,47 @@ export function WorkspaceShell() {
   );
   const visibleNodes = orderedNodes.filter((node) => !hasCollapsedAncestor(node, nodesById));
   const rewireNode = rewireNodeId ? nodesById.get(rewireNodeId) ?? null : null;
+  const majorLaneRequiredWidth = Math.max(
+    minLaneWidth,
+    ...visibleNodes
+      .filter((node) => node.level === "major")
+      .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
+  );
+  const minorLaneRequiredWidth = Math.max(
+    minLaneWidth,
+    ...visibleNodes
+      .filter((node) => node.level === "minor")
+      .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
+  );
+  const detailLaneRequiredWidth = Math.max(
+    minLaneWidth,
+    ...visibleNodes
+      .filter((node) => node.level === "detail")
+      .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
+  );
   const autoFirstDividerX = Math.max(
     initialLaneDividerXs.first,
-    stageInnerLeft +
-      Math.max(
-        minLaneWidth,
-        ...visibleNodes
-          .filter((node) => node.level === "major")
-          .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
-      ) +
-      laneGap / 2
+    stageInnerLeft + majorLaneRequiredWidth + laneGap / 2
   );
   const effectiveFirstDividerX = autoFirstDividerX;
-  const baseLaneCanvasBounds = computeLaneCanvasBounds(
-    effectiveFirstDividerX,
-    laneDividerXs.second,
-    minimumVisibleDetailEdge
+  const autoSecondDividerX = Math.max(
+    effectiveFirstDividerX + minLaneWidth + laneGap,
+    effectiveFirstDividerX + laneGap + minorLaneRequiredWidth
   );
-  const baseTimelineAnchors = getTimelineAnchorPositions(
-    timelineEndY,
-    baseLaneCanvasBounds.major,
-    {
-      height: nodeCardHeight,
-      width: nodeCardWidth
-    }
+  const maxSecondDividerX = maxCanvasContentRight - minLaneWidth - laneGap / 2;
+  const effectiveSecondDividerX = Math.min(
+    maxSecondDividerX,
+    Math.max(laneDividerXs.second, autoSecondDividerX)
   );
-  const baseNodePlacements = new Map(
-    visibleNodes.map((node) => {
-      const nodeSize = getNodeSize(nodeSizes, node.id);
-      const placement = getFallbackNodePlacementWithinBounds(
-        node,
-        orderedNodes,
-        baseLaneCanvasBounds,
-        nodeSize
-      );
-
-      return [
-        node.id,
-        node.level === "major"
-          ? snapMajorNodePlacementToTimelineAnchors(
-              node.level,
-              placement,
-              baseTimelineAnchors,
-              nodeSize
-            )
-          : placement
-      ];
-    })
+  const autoDetailEdgeX = Math.max(
+    minimumVisibleDetailEdge,
+    effectiveSecondDividerX + minLaneWidth + laneGap / 2,
+    effectiveSecondDividerX + laneGap / 2 + detailLaneRequiredWidth
   );
-  const autoSecondDividerX = Math.min(
-    maxCanvasContentRight - minLaneWidth - laneGap / 2,
-    Math.max(
-      effectiveFirstDividerX + minLaneWidth + laneGap,
-      ...visibleNodes
-        .filter((node) => node.level === "minor")
-        .map((node) => {
-          const placement = baseNodePlacements.get(node.id);
-          const nodeSize = getNodeSize(nodeSizes, node.id);
-          return (
-            (placement?.x ?? baseLaneCanvasBounds.minor.left) +
-            nodeSize.width +
-            laneDividerNodePadding
-          );
-        })
-    )
-  );
-  const effectiveSecondDividerX = Math.max(laneDividerXs.second, autoSecondDividerX);
-  const autoDetailEdgeX = Math.min(
+  const effectiveDetailEdgeX = Math.min(
     maxCanvasContentRight,
-    Math.max(
-      minimumVisibleDetailEdge,
-      effectiveSecondDividerX + minLaneWidth + laneGap / 2,
-      ...visibleNodes
-        .filter((node) => node.level === "detail")
-        .map((node) => {
-          const placement = baseNodePlacements.get(node.id);
-          const nodeSize = getNodeSize(nodeSizes, node.id);
-          return (
-            (placement?.x ?? baseLaneCanvasBounds.detail.left) +
-            nodeSize.width +
-            laneDividerNodePadding
-          );
-        })
-    )
+    Math.max(laneDividerXs.detailEdge, autoDetailEdgeX)
   );
-  const effectiveDetailEdgeX = Math.max(laneDividerXs.detailEdge, autoDetailEdgeX);
   const laneCanvasBounds = computeLaneCanvasBounds(
     effectiveFirstDividerX,
     effectiveSecondDividerX,
@@ -2255,39 +1719,105 @@ export function WorkspaceShell() {
       width: nodeCardWidth
     }
   );
+  const orderedMajorNodes = orderedNodes.filter((node) => node.level === "major");
+  const majorNodeIds = new Set(orderedMajorNodes.map((node) => node.id));
+  const persistedMajorAnchors =
+    activeEpisodeId ? majorAnchorNodeIdsByEpisodeRef.current[activeEpisodeId] : undefined;
+  const lockedStartMajorNodeId =
+    persistedMajorAnchors?.startId && majorNodeIds.has(persistedMajorAnchors.startId)
+      ? persistedMajorAnchors.startId
+      : null;
+  const lockedEndMajorNodeId =
+    persistedMajorAnchors?.endId && majorNodeIds.has(persistedMajorAnchors.endId)
+      ? persistedMajorAnchors.endId
+      : null;
+  const lockedMajorAnchorNodeIds = new Set(
+    [lockedStartMajorNodeId, lockedEndMajorNodeId].filter(
+      (nodeId): nodeId is string => nodeId !== null
+    )
+  );
   const nodePlacements = new Map<string, { x: number; y: number }>();
+  const visibleNodeIdsByLevel = {
+    detail: visibleNodes.filter((entry) => entry.level === "detail").map((entry) => entry.id),
+    major: visibleNodes.filter((entry) => entry.level === "major").map((entry) => entry.id),
+    minor: visibleNodes.filter((entry) => entry.level === "minor").map((entry) => entry.id)
+  } satisfies Record<StoryNodeLevel, string[]>;
 
-  for (const node of visibleNodes) {
-    const nodeSize = getNodeSize(nodeSizes, node.id);
+  // 이 함수는 major 시작/끝 앵커 노드의 기준 배치를 계산합니다.
+  function getAnchoredMajorPlacement(node: StoryNode, nodeSize: NodeSize) {
     const fallbackPlacement = getFallbackNodePlacementWithinBounds(
       node,
       orderedNodes,
       laneCanvasBounds,
       nodeSize
     );
-    const snappedPlacement =
-      node.level === "major"
-        ? snapMajorNodePlacementToTimelineAnchors(
-            node.level,
-            fallbackPlacement,
-            timelineAnchors,
-            nodeSize
-          )
-        : fallbackPlacement;
-
-    nodePlacements.set(
-      node.id,
-      resolveNodeOverlapPlacement(
-        node.id,
-        snappedPlacement,
-        nodeSize,
-        nodePlacements,
-        nodeSizes,
-        visibleNodes
-          .filter((entry) => entry.level === node.level)
-          .map((entry) => entry.id)
-      )
+    const snappedPlacement = snapMajorNodePlacementToTimelineAnchors(
+      node.level,
+      fallbackPlacement,
+      timelineAnchors,
+      nodeSize
     );
+    const alignedMajorAnchorX = timelineAnchors.railCenterX - nodeSize.width / 2;
+    const alignedMajorEndAnchorY = Math.max(
+      timelineAnchors.startNodeY + 48,
+      timelineAnchors.endNodeBottomY - nodeSize.height
+    );
+
+    if (node.id === lockedStartMajorNodeId) {
+      return {
+        ...snappedPlacement,
+        x: alignedMajorAnchorX,
+        y: timelineAnchors.startNodeY
+      };
+    }
+
+    if (node.id === lockedEndMajorNodeId) {
+      return {
+        ...snappedPlacement,
+        x: alignedMajorAnchorX,
+        y: alignedMajorEndAnchorY
+      };
+    }
+
+    return snappedPlacement;
+  }
+
+  for (const node of visibleNodes) {
+    if (node.level !== "major" || !lockedMajorAnchorNodeIds.has(node.id)) {
+      continue;
+    }
+
+    const nodeSize = getNodeSize(nodeSizes, node.id);
+    nodePlacements.set(node.id, getAnchoredMajorPlacement(node, nodeSize));
+  }
+
+  for (const node of visibleNodes) {
+    const nodeSize = getNodeSize(nodeSizes, node.id);
+
+    if (node.level === "major" && lockedMajorAnchorNodeIds.has(node.id)) {
+      continue;
+    }
+
+    const fallbackPlacement = getFallbackNodePlacementWithinBounds(
+      node,
+      orderedNodes,
+      laneCanvasBounds,
+      nodeSize
+    );
+    const alignedPlacement =
+      node.level === "major"
+        ? getAnchoredMajorPlacement(node, nodeSize)
+        : fallbackPlacement;
+    const resolvedPlacement = resolveNodeOverlapPlacement(
+      node.id,
+      alignedPlacement,
+      nodeSize,
+      nodePlacements,
+      nodeSizes,
+      visibleNodeIdsByLevel[node.level]
+    );
+
+    nodePlacements.set(node.id, resolvedPlacement);
   }
   const majorLaneTimelineLocalCenterX =
     timelineAnchors.railCenterX - laneCanvasBounds.major.left;
@@ -2378,6 +1908,20 @@ export function WorkspaceShell() {
       x: (clientX - stageRect.left) / canvasZoom,
       y: (clientY - stageRect.top) / canvasZoom
     };
+  }
+
+  // 이 함수는 드래그 중인 노드의 미리보기 위치를 함께 갱신합니다.
+  function updateNodeDragPreview(
+    preview: {
+      nodeId: string;
+      placement: {
+        x: number;
+        y: number;
+      };
+    } | null
+  ) {
+    activeNodeDragPreviewRef.current = preview;
+    setActiveNodeDragPreview(preview);
   }
 
   function centerCanvasViewportOnRegion(
@@ -2516,6 +2060,12 @@ export function WorkspaceShell() {
   function beginCanvasPan(event: ReactMouseEvent<HTMLElement>) {
     const viewport = canvasViewportRef.current;
 
+    if (viewport && canStartCanvasPan(event.target)) {
+      viewport.focus({
+        preventScroll: true
+      });
+    }
+
     if (
       !viewport ||
       draftVisible ||
@@ -2534,39 +2084,6 @@ export function WorkspaceShell() {
       scrollTop: viewport.scrollTop
     };
     setIsCanvasPanning(true);
-  }
-
-  function handleCanvasViewportWheel(event: ReactWheelEvent<HTMLElement>) {
-    if (!(event.ctrlKey || event.metaKey)) {
-      return;
-    }
-
-    const viewport = canvasViewportRef.current;
-
-    if (!viewport) {
-      return;
-    }
-
-    event.preventDefault();
-    const viewportRect = viewport.getBoundingClientRect();
-    const pointerOffsetX = event.clientX - viewportRect.left + viewport.scrollLeft;
-    const pointerOffsetY = event.clientY - viewportRect.top + viewport.scrollTop;
-    const stagePointX = pointerOffsetX / canvasZoom;
-    const stagePointY = pointerOffsetY / canvasZoom;
-    const nextZoom = clampCanvasZoom(canvasZoom - event.deltaY * 0.0015);
-
-    if (nextZoom === canvasZoom) {
-      return;
-    }
-
-    setCanvasZoom(nextZoom);
-
-    window.requestAnimationFrame(() => {
-      const nextPointerOffsetX = stagePointX * nextZoom;
-      const nextPointerOffsetY = stagePointY * nextZoom;
-      viewport.scrollLeft = Math.max(0, nextPointerOffsetX - (event.clientX - viewportRect.left));
-      viewport.scrollTop = Math.max(0, nextPointerOffsetY - (event.clientY - viewportRect.top));
-    });
   }
 
   function maybeExtendTimelineForDraggedNode(
@@ -2612,6 +2129,10 @@ export function WorkspaceShell() {
   }
 
   function beginTimelineEndDrag(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (isSingleMajorAnchorNode) {
+      return;
+    }
+
     const stageRect = canvasStageRef.current?.getBoundingClientRect();
 
     if (!stageRect) {
@@ -2626,21 +2147,88 @@ export function WorkspaceShell() {
     };
   }
 
+  // 이 함수는 노드 본문 드래그를 포인터 기반으로 시작합니다.
+  function beginNodeDrag(
+    nodeId: string,
+    level: StoryNodeLevel,
+    event: ReactPointerEvent<HTMLElement>
+  ) {
+    if (
+      event.button !== 0 ||
+      isBusy ||
+      isNodeResizingRef.current ||
+      isInteractiveTarget(event.target)
+    ) {
+      return;
+    }
+
+    const node = nodesById.get(nodeId);
+
+    if (!node || node.isFixed) {
+      return;
+    }
+
+    const stagePoint = getStagePointFromClient(event.clientX, event.clientY);
+
+    if (!stagePoint) {
+      return;
+    }
+
+    const nodeSize = getNodeSize(nodeSizes, nodeId);
+    const placement =
+      nodePlacements.get(nodeId) ??
+      getFallbackNodePlacementWithinBounds(node, orderedNodes, laneCanvasBounds, nodeSize);
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setDragPayload(null);
+    setSelectedNodeId(nodeId);
+    rewireHoverTargetIdRef.current = null;
+    setRewireHoverTargetId(null);
+    setRewirePreviewPoint(null);
+    setRewireNodeId(null);
+    canvasDragStateRef.current = {
+      kind: "node-drag-pending",
+      level,
+      nodeId,
+      nodeSize,
+      pointerOffsetX: stagePoint.x - placement.x,
+      pointerOffsetY: stagePoint.y - placement.y,
+      pointerStartX: event.clientX,
+      pointerStartY: event.clientY
+    };
+  }
+
   function beginNodeResize(
     nodeId: string,
     direction: NodeResizeDirection,
-    event: ReactMouseEvent<HTMLButtonElement>
+    event: ReactPointerEvent<HTMLButtonElement>
   ) {
+    if (event.button !== 0 || isBusy) {
+      return;
+    }
+
+    const node = nodesById.get(nodeId);
+
+    if (!node || node.isFixed) {
+      return;
+    }
+
     const nodeSize = getNodeSize(nodeSizes, nodeId);
 
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    isNodeResizingRef.current = true;
+    setDragPayload(null);
     setSelectedNodeId(nodeId);
     canvasDragStateRef.current = {
       direction,
       initialHeight: nodeSize.height,
       initialWidth: nodeSize.width,
       kind: "node-resize",
+      level: node.level,
       nodeId,
       pointerStartX: event.clientX,
       pointerStartY: event.clientY
@@ -2675,8 +2263,23 @@ export function WorkspaceShell() {
   async function syncObjectMentionsForNode(nodeId: string, rawText: string) {
     const mentionNames = extractObjectMentionNames(rawText);
     const liveSnapshot = controller.getState()?.snapshot ?? snapshot;
+    const currentNode =
+      liveSnapshot.nodes.find((node) => node.id === nodeId) ??
+      nodesById.get(nodeId) ??
+      null;
+    const targetEpisodeId = currentNode?.episodeId ?? liveSnapshot.project.activeEpisodeId;
+    const scopeEpisodeIds = new Set(
+      targetEpisodeId
+        ? (
+            sidebarFolders.find((folder) => folder.episodeIds.includes(targetEpisodeId))
+              ?.episodeIds ?? [targetEpisodeId]
+          )
+        : []
+    );
     const existingObjectIdsByName = new Map(
-      liveSnapshot.objects.map((object) => [object.name.toLowerCase(), object.id])
+      liveSnapshot.objects
+        .filter((object) => scopeEpisodeIds.has(object.episodeId))
+        .map((object) => [object.name.toLowerCase(), object.id])
     );
     const nextObjectIds: string[] = [];
 
@@ -2714,10 +2317,6 @@ export function WorkspaceShell() {
       }
     }
 
-    const currentNode =
-      controller.getState()?.snapshot.nodes.find((node) => node.id === nodeId) ??
-      nodesById.get(nodeId) ??
-      null;
     const currentObjectIds = currentNode?.objectIds ?? [];
 
     for (const objectId of currentObjectIds) {
@@ -2751,7 +2350,7 @@ export function WorkspaceShell() {
     const caretIndex = input.selectionStart ?? value.length;
     const nextQuery =
       getOpenObjectMentionQuery(value, caretIndex) ??
-      getClosedObjectWordQuery(value, caretIndex, snapshot.objects);
+      getClosedObjectWordQuery(value, caretIndex, activeEpisodeObjects);
 
     setObjectMentionQuery(nextQuery);
 
@@ -2767,23 +2366,45 @@ export function WorkspaceShell() {
 
   function syncSelectedNodeInputHeight(
     nodeId: string,
-    input: HTMLTextAreaElement | null
+    input: HTMLTextAreaElement | null,
+    options?: {
+      preserveManualHeight?: boolean;
+    }
   ) {
     if (!input) {
       return;
     }
 
-    input.style.height = "0px";
-    input.style.height = `${Math.max(28, input.scrollHeight)}px`;
+    if (input.dataset.nodeId && input.dataset.nodeId !== nodeId) {
+      return;
+    }
 
-    const editorHeight = input.closest(".node-inline-editor")?.scrollHeight ?? input.scrollHeight;
-    const requiredHeight = Math.max(nodeCardHeight, Math.ceil(editorHeight + 30));
-    contentMinHeightsRef.current[nodeId] = requiredHeight;
+    // 표시 텍스트 높이를 기준으로 입력 영역과 카드 높이를 동기화합니다.
+    const inputShell = input.closest(".node-inline-input-shell");
+    const previewElement = inputShell?.querySelector<HTMLElement>(".node-inline-preview");
+    input.style.height = "0px";
+    const inputContentHeight = input.scrollHeight;
+    const visualTextHeight = previewElement?.scrollHeight ?? 0;
+    const stableVisualTextHeight =
+      visualTextHeight > 0 && visualTextHeight <= inputContentHeight + 4 ? visualTextHeight : 0;
+    const nextInputHeight = Math.max(28, inputContentHeight, stableVisualTextHeight);
+    input.style.height = `${nextInputHeight}px`;
+
+    // 텍스트 영역 외 카드 크롬(패딩/헤더) 높이를 보정합니다.
+    const nodeFrameVerticalPadding = 42;
+    const requiredHeight = Math.max(
+      nodeCardHeight,
+      Math.ceil(nextInputHeight + nodeFrameVerticalPadding)
+    );
 
     setNodeSizes((current) => {
       const existing = getNodeSize(current, nodeId);
       const previousAutoHeight = autoNodeHeightsRef.current[nodeId] ?? nodeCardHeight;
       const isAutoSized = Math.abs(existing.height - previousAutoHeight) <= 1;
+
+      if (options?.preserveManualHeight && !isAutoSized) {
+        return current;
+      }
 
       if (!isAutoSized && requiredHeight <= existing.height) {
         return current;
@@ -2865,6 +2486,21 @@ export function WorkspaceShell() {
     );
 
     if (createdNodeId) {
+      if (level === "major" && orderedNodes.every((node) => node.level !== "major")) {
+        const timelineSpanHeight = Math.max(
+          nodeCardHeight,
+          Math.ceil(Math.max(120, effectiveTimelineEndY - timelineStartY))
+        );
+
+        setNodeSizes((current) => ({
+          ...current,
+          [createdNodeId]: {
+            height: timelineSpanHeight,
+            width: nodeCardWidth
+          }
+        }));
+      }
+
       shouldFocusSelectedNodeRef.current = true;
       setSelectedNodeId(createdNodeId);
       setInlineNodeTextDraft("");
@@ -2951,6 +2587,7 @@ export function WorkspaceShell() {
     setSelectedNodeId(nodeId);
     setRewireNodeId(null);
   }
+  moveNodeFreelyRef.current = moveNodeFreely;
 
   async function handleLaneClick(
     level: StoryNodeLevel,
@@ -3010,6 +2647,40 @@ export function WorkspaceShell() {
 
     await moveNodeFreely(dragPayload.nodeId, dragPayload.level, placement);
     setDragPayload(null);
+  }
+
+  // 이 함수는 노드 삭제 후 남은 배치 기준으로 타임라인/캔버스 높이를 자연스럽게 줄입니다.
+  async function deleteNodeTreeAndAdjustCanvas(nodeId: string) {
+    const subtreeIds = new Set(collectSubtreeNodes(orderedNodes, nodeId).map((node) => node.id));
+
+    await controller.deleteNodeTree(nodeId);
+
+    const remainingNodes = orderedNodes.filter((node) => !subtreeIds.has(node.id));
+    const remainingNodesById = new Map(remainingNodes.map((node) => [node.id, node]));
+    const remainingVisibleNodes = remainingNodes.filter(
+      (node) => !hasCollapsedAncestor(node, remainingNodesById)
+    );
+    const remainingLowestBottom = Math.max(
+      0,
+      ...remainingVisibleNodes.map((node) => {
+        const nodeSize = getNodeSize(nodeSizes, node.id);
+        const placement =
+          nodePlacements.get(node.id) ??
+          getFallbackNodePlacementWithinBounds(
+            node,
+            remainingNodes,
+            laneCanvasBounds,
+            nodeSize
+          );
+
+        return placement.y + nodeSize.height;
+      })
+    );
+    const nextTimelineEndY = Math.max(timelineStartY + 120, remainingLowestBottom);
+
+    if (nextTimelineEndY < timelineEndY) {
+      setTimelineEndY(nextTimelineEndY);
+    }
   }
 
   async function persistInlineNodeContent(
@@ -3105,12 +2776,12 @@ export function WorkspaceShell() {
     }
   }
   const objectUsageCounts = new Map(
-    snapshot.objects.map((object) => [
+    activeEpisodeObjects.map((object) => [
       object.id,
       orderedNodes.filter((node) => node.objectIds.includes(object.id)).length
     ])
   );
-  const filteredObjects = snapshot.objects.filter((object) => {
+  const filteredObjects = activeEpisodeObjects.filter((object) => {
     const query = objectSearchQuery.trim().toLowerCase();
 
     if (!query) {
@@ -3157,7 +2828,7 @@ export function WorkspaceShell() {
   const objectMentionSuggestions =
     objectMentionQuery === null
       ? []
-      : snapshot.objects
+      : activeEpisodeObjects
           .filter((object) =>
             objectMentionQuery.mode === "word"
               ? object.name.toLowerCase() === objectMentionQuery.query.trim().toLowerCase()
@@ -3174,14 +2845,13 @@ export function WorkspaceShell() {
     keywordSuggestions,
     keywordRefreshCycle
   );
-  const orderedMajorNodes = orderedNodes.filter((node) => node.level === "major");
-  const startMajorNodeId =
+  const visualStartMajorNodeId =
     orderedMajorNodes.find((node) => {
       const placement = nodePlacements.get(node.id);
 
       return placement ? Math.abs(placement.y - timelineAnchors.startNodeY) <= 0.5 : false;
     })?.id ?? null;
-  const endMajorNodeId =
+  const visualEndMajorNodeId =
     [...orderedMajorNodes]
       .reverse()
       .find((node) => {
@@ -3194,24 +2864,60 @@ export function WorkspaceShell() {
             ) <= 0.5
           : false;
       })?.id ?? null;
+  let startMajorNodeId = lockedStartMajorNodeId ?? visualStartMajorNodeId;
+  let endMajorNodeId = lockedEndMajorNodeId ?? visualEndMajorNodeId;
+
+  if (!startMajorNodeId) {
+    startMajorNodeId = orderedMajorNodes[0]?.id ?? null;
+  }
+
+  if (!endMajorNodeId) {
+    endMajorNodeId = orderedMajorNodes.at(-1)?.id ?? startMajorNodeId;
+  }
+
+  if (
+    startMajorNodeId &&
+    endMajorNodeId &&
+    startMajorNodeId === endMajorNodeId &&
+    orderedMajorNodes.length > 1
+  ) {
+    endMajorNodeId =
+      [...orderedMajorNodes].reverse().find((node) => node.id !== startMajorNodeId)?.id ??
+      endMajorNodeId;
+  }
+
+  if (activeEpisodeId) {
+    majorAnchorNodeIdsByEpisodeRef.current[activeEpisodeId] = {
+      endId: endMajorNodeId,
+      startId: startMajorNodeId
+    };
+  }
+  const isSingleMajorAnchorNode =
+    startMajorNodeId !== null && startMajorNodeId === endMajorNodeId;
 
   nodePlacementsRef.current = nodePlacements;
   visibleNodesRef.current = visibleNodes;
+  laneCanvasBoundsRef.current = laneCanvasBounds;
   nodeSizesRef.current = nodeSizes;
+  timelineAnchorsRef.current = timelineAnchors;
   endMajorNodeIdRef.current = endMajorNodeId;
+  stageHeightRef.current = stageHeight;
   selectedNodeIdRef.current = selectedNodeId;
 
   const renderedNodes = visibleNodes.map((node) => {
     const nodeSize = getNodeSize(nodeSizes, node.id);
     const isSelected = selectedNode?.id === node.id;
+    const isDragging = activeNodeDragPreview?.nodeId === node.id;
     const isRewireSource = rewireNode?.id === node.id;
     const isRewireTarget = candidateParentIds.has(node.id);
     const isHoveredRewireTarget = rewireHoverTargetId === node.id;
     const isStartMajorNode = node.id === startMajorNodeId;
     const isEndMajorNode = node.id === endMajorNodeId;
     const placement =
-      nodePlacements.get(node.id) ??
-      getFallbackNodePlacementWithinBounds(node, orderedNodes, laneCanvasBounds, nodeSize);
+      activeNodeDragPreview?.nodeId === node.id
+        ? activeNodeDragPreview.placement
+        : (nodePlacements.get(node.id) ??
+          getFallbackNodePlacementWithinBounds(node, orderedNodes, laneCanvasBounds, nodeSize));
     const activeKeywords = isSelected ? selectedAiKeywords : node.keywords;
     const displayText = isSelected ? inlineNodeTextDraft : node.text;
     const hasVisibleKeywords = activeKeywords.length > 0;
@@ -3222,11 +2928,16 @@ export function WorkspaceShell() {
 
     return (
       <article
-        className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNode?.id === node.id ? " has-keyword-cloud" : ""}`}
+        className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNode?.id === node.id ? " has-keyword-cloud" : ""}`}
         data-testid={`node-${node.id}`}
-        draggable={!isBusy && !node.isFixed}
+        draggable={false}
         key={node.id}
         onClick={() => {
+          if (suppressNodeClickRef.current === node.id) {
+            suppressNodeClickRef.current = null;
+            return;
+          }
+
           if (isRewireTarget && rewireNode) {
             void controller.rewireNode(rewireNode.id, node.id);
             setSelectedNodeId(rewireNode.id);
@@ -3249,27 +2960,8 @@ export function WorkspaceShell() {
           setSelectedNodeId(node.id);
           centerCanvasViewportOnNode(node.id);
         }}
-        onDragEnd={() => {
-          setDragPayload(null);
-        }}
-        onDragStart={(event) => {
-          if (node.isFixed) {
-            event.preventDefault();
-            return;
-          }
-
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", node.id);
-          setSelectedNodeId(node.id);
-          rewireHoverTargetIdRef.current = null;
-          setRewireHoverTargetId(null);
-          setRewirePreviewPoint(null);
-          setRewireNodeId(null);
-          setDragPayload({
-            kind: "node",
-            level: node.level,
-            nodeId: node.id
-          });
+        onPointerDown={(event) => {
+          beginNodeDrag(node.id, node.level, event);
         }}
         ref={(element) => {
           if (element) {
@@ -3368,6 +3060,7 @@ export function WorkspaceShell() {
                 </div>
                 <textarea
                   className="node-inline-input"
+                  data-node-id={node.id}
                   onBlur={() => {
                     void persistInlineNodeContent(node, inlineNodeTextDraft, activeKeywords);
                   }}
@@ -3424,6 +3117,34 @@ export function WorkspaceShell() {
                     }
 
                     if (
+                      selectionStart !== selectionEnd &&
+                      (event.key === "Backspace" || event.key === "Delete")
+                    ) {
+                      const removableSelection = removeInlineSelectionWithTokenBoundaries(
+                        inlineNodeTextDraft,
+                        selectionStart,
+                        selectionEnd
+                      );
+
+                      if (removableSelection) {
+                        event.preventDefault();
+                        setInlineNodeTextDraft(removableSelection.nextText);
+                        setSelectedAiKeywords(extractInlineKeywords(removableSelection.nextText));
+                        syncInlineObjectMentions(node.id, removableSelection.nextText);
+
+                        window.requestAnimationFrame(() => {
+                          selectedNodeInputRef.current?.focus();
+                          selectedNodeInputRef.current?.setSelectionRange(
+                            removableSelection.nextCaret,
+                            removableSelection.nextCaret
+                          );
+                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+                        });
+                        return;
+                      }
+                    }
+
+                    if (
                       activeMentionSuggestion &&
                       (event.key === "Enter" ||
                         event.key === "Tab" ||
@@ -3460,7 +3181,6 @@ export function WorkspaceShell() {
                   }}
                   onKeyUp={(event) => {
                     updateObjectMentionQueryFromInput(event.currentTarget);
-                    syncSelectedNodeInputHeight(node.id, event.currentTarget);
                   }}
                   placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
                   ref={selectedNodeInputRef}
@@ -3480,12 +3200,12 @@ export function WorkspaceShell() {
             <p className="node-simple-text is-placeholder">{displayText}</p>
           ) : null}
         </div>
-        {isSelected ? (
+        {isSelected && !node.isFixed ? (
           <>
             <button
               aria-label="Resize horizontally"
               className="node-resize-handle node-resize-handle-horizontal"
-              onMouseDown={(event) => {
+              onPointerDown={(event) => {
                 beginNodeResize(node.id, "horizontal", event);
               }}
               type="button"
@@ -3493,7 +3213,7 @@ export function WorkspaceShell() {
             <button
               aria-label="Resize vertically"
               className="node-resize-handle node-resize-handle-vertical"
-              onMouseDown={(event) => {
+              onPointerDown={(event) => {
                 beginNodeResize(node.id, "vertical", event);
               }}
               type="button"
@@ -3501,7 +3221,7 @@ export function WorkspaceShell() {
             <button
               aria-label="Resize diagonally"
               className="node-resize-handle node-resize-handle-diagonal"
-              onMouseDown={(event) => {
+              onPointerDown={(event) => {
                 beginNodeResize(node.id, "diagonal", event);
               }}
               type="button"
@@ -3599,13 +3319,13 @@ export function WorkspaceShell() {
             hoveredTarget !== null ? getNodeSize(nodeSizes, hoveredTarget.id) : null;
           const startX =
             hoveredPlacement && hoveredSize
-              ? hoveredPlacement.x + hoveredSize.width
+              ? hoveredPlacement.x + hoveredSize.width / 2
               : rewirePreviewPoint.x;
           const startY =
             hoveredPlacement && hoveredSize
               ? hoveredPlacement.y + hoveredSize.height / 2
               : rewirePreviewPoint.y;
-          const endX = sourcePlacement.x;
+          const endX = sourcePlacement.x + sourceSize.width / 2;
           const endY = sourcePlacement.y + sourceSize.height / 2;
           const bendDistance = Math.max(34, Math.abs(endX - startX) * 0.36);
           const curveDirection = endX >= startX ? 1 : -1;
@@ -4026,6 +3746,14 @@ export function WorkspaceShell() {
               void saveObjectDetails();
             }}
           >
+            {folderIdByEpisodeId.has(selectedObject.episodeId) ? (
+              <div className="field-stack">
+                <span>{copy.workspace.objectEpisode}</span>
+                <span>
+                  {selectedObjectEpisodeTitle ?? copy.workspace.objectEpisodeMissing}
+                </span>
+              </div>
+            ) : null}
             <label className="field-stack">
               <span>{copy.workspace.objectName}</span>
               <input
@@ -4238,7 +3966,14 @@ export function WorkspaceShell() {
     setFolderPickerPosition(null);
   }
 
-  function dissolveEpisodeFromFolder(episodeId: string) {
+  async function dissolveEpisodeFromFolder(
+    episodeId: string,
+    options?: { skipLocalization?: boolean }
+  ) {
+    if (!options?.skipLocalization) {
+      await controller.localizeObjectReferencesForEpisode(episodeId);
+    }
+
     setSidebarFolders((current) =>
       current.map((folder) => ({
         ...folder,
@@ -4251,16 +3986,23 @@ export function WorkspaceShell() {
     setFolderPickerPosition(null);
   }
 
-  function toggleEpisodeInFolderPicker(folderId: string, episodeId: string) {
+  async function toggleEpisodeInFolderPicker(folderId: string, episodeId: string) {
+    const targetFolder = sidebarFolders.find((folder) => folder.id === folderId) ?? null;
+    const isAlreadyInFolder = targetFolder?.episodeIds.includes(episodeId) ?? false;
+
+    if (isAlreadyInFolder) {
+      await controller.localizeObjectReferencesForEpisode(episodeId);
+    }
+
     setSidebarFolders((current) => {
       const timestamp = new Date().toISOString();
-      const targetFolder = current.find((folder) => folder.id === folderId);
-      const isAlreadyInFolder = targetFolder?.episodeIds.includes(episodeId) ?? false;
+      const nextTargetFolder = current.find((folder) => folder.id === folderId);
+      const nextAlreadyInFolder = nextTargetFolder?.episodeIds.includes(episodeId) ?? false;
 
       return current.map((folder) => {
         const nextEpisodeIds = folder.episodeIds.filter((entry) => entry !== episodeId);
 
-        if (folder.id === folderId && !isAlreadyInFolder) {
+        if (folder.id === folderId && !nextAlreadyInFolder) {
           nextEpisodeIds.unshift(episodeId);
         }
 
@@ -4346,7 +4088,15 @@ export function WorkspaceShell() {
     setFolderRenameDraft("");
   }
 
-  function deleteFolder(folderId: string) {
+  async function deleteFolder(folderId: string) {
+    const deletedFolder = sidebarFolders.find((folder) => folder.id === folderId) ?? null;
+
+    if (deletedFolder) {
+      for (const episodeId of deletedFolder.episodeIds) {
+        await controller.localizeObjectReferencesForEpisode(episodeId);
+      }
+    }
+
     setSidebarFolders((current) => current.filter((folder) => folder.id !== folderId));
     setFolderEpisodePins((current) => {
       const next = { ...current };
@@ -4414,7 +4164,9 @@ export function WorkspaceShell() {
     const deleted = await controller.deleteEpisode(deleteEpisodeTarget.id);
 
     if (deleted) {
-      dissolveEpisodeFromFolder(deleteEpisodeTarget.id);
+      await dissolveEpisodeFromFolder(deleteEpisodeTarget.id, {
+        skipLocalization: true
+      });
       setFolderEpisodePins((current) =>
         Object.fromEntries(
           Object.entries(current).map(([scopeId, entries]) => [
@@ -4431,6 +4183,7 @@ export function WorkspaceShell() {
     setFolderPickerPosition(null);
   }
 
+  // 사이드바 에피소드 항목을 렌더링하는 함수
   function renderEpisodeItem(episode: StoryEpisode, scopeId: string) {
     const isActive = episode.id === activeEpisode?.id;
     const isPinned = getScopedPinnedEpisodes(scopeId).includes(episode.id);
@@ -4500,9 +4253,9 @@ export function WorkspaceShell() {
             </div>
           </form>
         ) : (
-          <div className="sidebar-story-shell">
+          <div className={`sidebar-story-shell${isActive ? " is-active" : ""}`}>
             <button
-              className="sidebar-episode-link"
+              className={`sidebar-episode-link${isActive ? " is-active" : ""}`}
               onClick={() => {
                 void selectEpisodeFromSidebar(episode.id);
               }}
@@ -4580,7 +4333,7 @@ export function WorkspaceShell() {
                         <button
                           className="button-secondary"
                           onClick={() => {
-                            dissolveEpisodeFromFolder(episode.id);
+                            void dissolveEpisodeFromFolder(episode.id);
                           }}
                           type="button"
                         >
@@ -4627,12 +4380,14 @@ export function WorkspaceShell() {
     );
   }
 
+  // 사이드바 폴더 항목을 렌더링하는 함수
   function renderFolderItem(folder: SidebarFolder & { visibleEpisodes: StoryEpisode[] }) {
     const isRenaming = renamingFolderId === folder.id;
     const isSorting = sortingFolderId === folder.id;
+    const isActive = activeFolder?.id === folder.id;
 
     return (
-      <li className="sidebar-folder-item" key={folder.id}>
+      <li className={`sidebar-folder-item${isActive ? " is-active" : ""}`} key={folder.id}>
         {isRenaming ? (
           <form
             className="sidebar-episode-rename"
@@ -4663,9 +4418,9 @@ export function WorkspaceShell() {
             </div>
           </form>
         ) : (
-          <div className="sidebar-folder-card">
+          <div className={`sidebar-folder-card${isActive ? " is-active" : ""}`}>
             <button
-              className="sidebar-folder-button"
+              className={`sidebar-folder-button${isActive ? " is-active" : ""}`}
               onClick={() => {
                 setSidebarFolders((current) =>
                   current.map((entry) =>
@@ -4783,7 +4538,7 @@ export function WorkspaceShell() {
                     <button
                       className="button-secondary"
                       onClick={() => {
-                        deleteFolder(folder.id);
+                        void deleteFolder(folder.id);
                       }}
                       type="button"
                     >
@@ -4813,7 +4568,7 @@ export function WorkspaceShell() {
                           }`}
                           key={`${folder.id}-${episodeOption.id}`}
                           onClick={() => {
-                            toggleEpisodeInFolderPicker(folder.id, episodeOption.id);
+                            void toggleEpisodeInFolderPicker(folder.id, episodeOption.id);
                           }}
                           type="button"
                         >
@@ -5406,8 +5161,8 @@ export function WorkspaceShell() {
           <section
             className={`canvas-viewport${isCanvasPanning ? " is-panning" : ""}`}
             onMouseDown={beginCanvasPan}
-            onWheel={handleCanvasViewportWheel}
             ref={canvasViewportRef}
+            tabIndex={0}
           >
           <div
             className="canvas-stage-zoom-shell"
@@ -5605,6 +5360,7 @@ export function WorkspaceShell() {
                         <button
                           aria-label="Move timeline end"
                           className="timeline-end-handle"
+                          disabled={isSingleMajorAnchorNode}
                           onMouseDown={(event) => {
                             beginTimelineEndDrag(event);
                           }}
@@ -5732,7 +5488,7 @@ export function WorkspaceShell() {
             aria-label={copy.persistence.undo}
             disabled={!state.history.canUndo || isBusy}
             onClick={() => {
-              void controller.undo();
+              void runUndo();
             }}
             type="button"
           >
@@ -5749,7 +5505,7 @@ export function WorkspaceShell() {
             aria-label={copy.persistence.redo}
             disabled={!state.history.canRedo || isBusy}
             onClick={() => {
-              void controller.redo();
+              void runRedo();
             }}
             type="button"
           >
@@ -5836,7 +5592,7 @@ export function WorkspaceShell() {
               </button>
               <button
                 onClick={() => {
-                  void controller.deleteNodeTree(deleteTarget.id);
+                  void deleteNodeTreeAndAdjustCanvas(deleteTarget.id);
                   setDeleteTargetId(null);
                   setSelectedNodeId(null);
                   setRewireNodeId(null);
@@ -5886,5 +5642,4 @@ export function WorkspaceShell() {
     </div>
   );
 }
-
 

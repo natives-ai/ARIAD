@@ -1,4 +1,4 @@
-# PLANS.md
+﻿# PLANS.md
 
 ## Purpose
 This is the mutable execution plan for agentic development.
@@ -54,14 +54,14 @@ Allowed milestone statuses:
 - Do not move forward on a knowingly broken baseline.
 - If a task may trigger a hard stop, pause and escalate before implementation.
 - If a task may trigger a version-control gate, route through `Version Control` before implementation.
-- Default to 1–2 active milestones at a time when dependencies do not conflict; activating more than 2 requires explicit Orchestrator justification.
+- Default to 1?2 active milestones at a time when dependencies do not conflict; activating more than 2 requires explicit Orchestrator justification.
 - Use the quality-gate categories defined by the scaffold:
   - always-run: lint, typecheck, unit smoke, build smoke
   - relevant-run: integration, e2e smoke
 
 ---
 
-## Milestone 0 — Baseline locked
+## Milestone 0 ? Baseline locked
 **Goal**
 Preserve the final pre-implementation document baseline.
 
@@ -107,7 +107,7 @@ Preserve the final pre-implementation document baseline.
 
 ---
 
-## Milestone 1 — Scaffold foundation
+## Milestone 1 ? Scaffold foundation
 **Goal**
 Create the initial repository skeleton and baseline development environment.
 
@@ -160,7 +160,7 @@ Create the initial repository skeleton and baseline development environment.
 
 ---
 
-## Milestone 2 — Core story domain and persistence
+## Milestone 2 ? Core story domain and persistence
 **Goal**
 Implement the core domain model and persistence behavior for story work.
 
@@ -217,7 +217,7 @@ Implement the core domain model and persistence behavior for story work.
 
 ---
 
-## Milestone 3 — Canvas v1
+## Milestone 3 ? Canvas v1
 **Goal**
 Deliver the core story-structure editing experience without depending on AI assistance.
 
@@ -272,7 +272,7 @@ Deliver the core story-structure editing experience without depending on AI assi
 
 ---
 
-## Milestone 4 — AI recommendation v1
+## Milestone 4 ? AI recommendation v1
 **Goal**
 Ship the first creator-controlled AI assistance loop.
 
@@ -326,7 +326,7 @@ Ship the first creator-controlled AI assistance loop.
 
 ---
 
-## Milestone 5 — Reference objects and editing surfaces
+## Milestone 5 ? Reference objects and editing surfaces
 **Goal**
 Connect project-level objects and detailed editing surfaces to the canvas workflow.
 
@@ -376,7 +376,7 @@ Connect project-level objects and detailed editing surfaces to the canvas workfl
 
 ---
 
-## Milestone 6 — Stabilization and quality gates
+## Milestone 6 ? Stabilization and quality gates
 **Goal**
 Harden the baseline for iterative product development.
 
@@ -389,7 +389,7 @@ Harden the baseline for iterative product development.
 - Keyboard and undo/redo verification
 
 **Required dependencies**
-- Milestones 3–5 complete enough for integrated validation
+- Milestones 3?5 complete enough for integrated validation
 
 **Preferred prerequisites**
 - Quality-gate strategy from `SCAFFOLD.md` implemented
@@ -427,7 +427,7 @@ Harden the baseline for iterative product development.
 
 ---
 
-## Milestone 7 — Baseline release gate
+## Milestone 7 ? Baseline release gate
 **Goal**
 Confirm that the implementation baseline is ready for ongoing product iteration.
 
@@ -438,7 +438,7 @@ Confirm that the implementation baseline is ready for ongoing product iteration.
 - Documentation/plan alignment check
 
 **Required dependencies**
-- Milestones 1–6 complete or intentionally deferred without violating baseline integrity
+- Milestones 1?6 complete or intentionally deferred without violating baseline integrity
 
 **Preferred prerequisites**
 - Risk profile narrowed enough for stable iteration
@@ -1098,7 +1098,7 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: The requested canvas and keyword-cloud refinement slice is complete and the full relevant validation family is green.
 - Warnings / blockers: Keyword-cloud refresh now guarantees a useful visible refresh by pinning currently selected words first and reordering the remaining suggestions behind them, but it still depends on the existing lightweight heuristic suggestion source rather than a larger paged recommendation inventory. Canvas recentering is intentionally viewport-local convenience behavior and is not persisted per episode.
 - Approval needed: `none`
-- Next step: If requested, the next smallest sensible slice is a dedicated viewport/usability pass that decides whether node creation, keyword-cloud opening, and search-driven focus should all share one canonical “bring into view” behavior.
+- Next step: If requested, the next smallest sensible slice is a dedicated viewport/usability pass that decides whether node creation, keyword-cloud opening, and search-driven focus should all share one canonical ��bring into view�� behavior.
 
 ### 2026-04-21 / loop-056
 - Active milestone: Post-baseline support task
@@ -1118,4 +1118,382 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Tests run: live `yarn.cmd dev:backend` readiness check with HTTP fetch of `http://127.0.0.1:3001/api/health`; live `yarn.cmd dev:frontend --host 127.0.0.1 --port 4173` readiness check with HTTP fetch of `http://127.0.0.1:4173/service.html`
 - Result: Both Yarn dev entrypoints now launch successfully outside the sandbox and answer on localhost. Backend returned `200` with `{"environment":"local","service":"backend","status":"ok"}`. Frontend returned `200` and the served HTML contains the `ARIAD` title marker.
 - Warnings / blockers: The dev proof required execution outside the restricted sandbox because this environment still produces low-level `spawn EPERM` failures for Vite/esbuild paths when run inside the sandbox. The Yarn migration work fixed script/tooling topology; it does not remove that sandbox-specific runtime limitation.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-058
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: root workspace, `PLANS.md`
+- What changed: Cleaned the temporary Yarn/dev verification artifacts from the workspace and updated root `.gitignore` so local Codex dev logs, workspace/package-manager cache folders, and Yarn's generated `install-state.gz` no longer appear as untracked noise during future work.
+- Tests run: `git -c safe.directory=C:/work/ARIAD status --short`
+- Result: The temporary log/cache artifacts generated during the Yarn migration and dev-server verification were removed, and only the intended `.gitignore` update plus the user's separate pre-existing `AGENTS.md` edit remain in the worktree.
+- Warnings / blockers: `AGENTS.md` still has an unrelated user-side modification and was intentionally left untouched.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-059
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/`, `PLANS.md`
+- What changed: Refactored the oversized `WorkspaceShell.tsx` by extracting its component-external declarations into a dedicated module `workspaceShell.helpers.tsx`. Moved workspace-level constants, lane/object/node-related structural types, and shared pure helper functions (layout math, inline token parsing, sidebar parsing, overlay helpers) out of the route component file so `WorkspaceShell.tsx` now focuses on state/interaction/render flow. Updated imports to use value/type-separated helper imports and added a missing helper dependency import (`collectSubtreeNodes`) to keep behavior unchanged.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/workspaceShell.helpers.tsx`
+- Result: Typecheck passed, and the refactor introduced no new lint category issues. ESLint still reports the pre-existing `react-hooks/set-state-in-effect` violations already present in `WorkspaceShell.tsx`.
+- Warnings / blockers: This loop intentionally performed a readability-only modularization and did not change existing `useEffect` state-sync patterns that trigger the current hook lint errors.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-060
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: root workspace, `PLANS.md`
+- What changed: Added a new root-level documentation file `PROJECT_OVERVIEW_KO.md` that summarizes the current repository structure, workspace/package boundaries, major user-facing features, shared data models, frontend/backend/recommendation/shared component responsibilities, test layout, run commands, and current implementation caveats in Korean. The document was written against the actual codebase rather than only the product docs, so it calls out present-state details such as the current `ARIAD` branding, stubbed auth boundary, heuristic recommendation provider, and the temporarily disabled drawer UI.
+- Tests run: `rg -n "^## " PROJECT_OVERVIEW_KO.md`; `Get-Item PROJECT_OVERVIEW_KO.md`; `git -c safe.directory=C:/work/ARIAD status --short`
+- Result: The requested Korean overview document is now present at the repository root and is structured for onboarding/review use.
+- Warnings / blockers: The worktree already contained unrelated in-progress changes in `.gitignore`, `AGENTS.md`, `PLANS.md`, `frontend/src/routes/WorkspaceShell.tsx`, and `frontend/src/routes/workspaceShell.helpers.tsx`; they were left untouched.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-060
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/`, `PLANS.md`
+- What changed: Repaired Korean-comment mojibake introduced during encoding conversion by restoring all affected comment lines in `WorkspaceShell.tsx` and the new `workspace-shell/*` modules, then re-saved those files with explicit UTF-8 BOM to avoid editor auto-detection issues on Windows.
+- Tests run: `rg -n "?|??" frontend/src/routes/WorkspaceShell.tsx frontend/src/routes/workspace-shell`; `rg -n "?? ??????|?? ?????????" frontend/src/routes/WorkspaceShell.tsx frontend/src/routes/workspace-shell`; `yarn workspace @scenaairo/frontend typecheck`
+- Result: Korean comments are readable again across the split route modules, no replacement-character corruption remains, and frontend typecheck is green.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-061
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `AGENT_SYSTEM.md`, `AGENTS.md`, root workspace docs, `frontend/src/routes/`, `PLANS.md`
+- What changed: Investigated the broken Korean comment/doc display path and confirmed the immediate issue was Windows PowerShell default decoding for UTF-8 files without BOM on Korean-bearing files. Added a text-encoding discipline rule to `AGENT_SYSTEM.md` requiring Korean-bearing files to use UTF-8 with BOM plus explicit UTF-8-aware verification on Windows. Re-encoded the current Korean-bearing files (`AGENTS.md`, `PROJECT_OVERVIEW_KO.md`, `frontend/src/routes/WorkspaceShell.tsx`, and the `frontend/src/routes/workspace-shell/*` files with Korean header comments) to UTF-8 with BOM so default PowerShell reads now display the Korean text correctly.
+- Tests run: default and UTF-8-aware `Get-Content` verification on `AGENTS.md`, `PROJECT_OVERVIEW_KO.md`, and `frontend/src/routes/workspace-shell/workspaceShell.common.tsx`; BOM byte-header verification via `[System.IO.File]::ReadAllBytes(...)`; `yarn workspace @scenaairo/frontend typecheck`; `git -c safe.directory=C:/work/ARIAD status --short`
+- Result: Korean comments/docs that were previously displaying as mojibake through the default PowerShell read path now render correctly, and the frontend workspace still typechecks after the encoding-only source-file rewrites.
+- Warnings / blockers: The encoding fix necessarily touched files that already had unrelated in-progress work, especially `AGENTS.md` and `frontend/src/routes/WorkspaceShell.tsx`, but the text content was preserved and only the encoding container plus the requested `AGENT_SYSTEM.md` rule changed.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-062
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `shared/`, `backend/src/persistence/`, `frontend/src/persistence/`, `frontend/src/routes/`, root workspace lock/install state, `PLANS.md`
+- What changed: Implemented the requested domain-structure correction so `object` now binds to `episode` (1:N) instead of project-only. Added `episodeId` to the shared `StoryObject` type, propagated the contract impact through frontend/backed persistence flows, and hardened dependency checks: backend store sync now validates object-to-episode consistency, node-to-object same-episode consistency, and removes episode-scoped objects when an episode is deleted. Frontend persistence controller now creates objects under the active episode, blocks cross-episode object attachment to nodes, and deletes episode-scoped objects together when deleting an episode. Added backward-compatible snapshot normalization on frontend/backend load paths so older snapshots missing object-episode bindings are auto-repaired to a valid episode scope and invalid cross-episode node-object links are sanitized. Updated standalone cloud emulation to mirror the same delete-side referential cleanup semantics. Workspace UI object scope was tightened to active-episode objects in object list/mention suggestions/editor selection so interaction now follows the new relation model.
+- Tests run: `yarn install --mode=skip-build` (outside sandbox after initial EPERM in sandbox); `yarn typecheck`; `yarn workspace @scenaairo/shared typecheck`; `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/backend typecheck`; `yarn workspace @scenaairo/frontend run -T vitest run src/persistence/controller.test.ts src/persistence/flushQueue.test.ts` (outside sandbox due Vite spawn EPERM in sandbox); `yarn workspace @scenaairo/backend integration`
+- Result: The object-to-episode 1:N relation is now enforced in shared type definitions and persistence behavior across frontend/backend/standalone flows, and the relevant persistence-focused test suites are green.
+- Warnings / blockers: Full frontend test suite still shows one existing unrelated failure in `src/routes/WorkspaceShell.test.tsx` keyboard copy/paste shortcut case (`Nodes: 2` expected, `Nodes: 1` actual) when running the entire suite; the persistence-specific suites impacted by this task passed.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-061
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/`, `PLANS.md`
+- What changed: Fixed canvas-focus shortcut scoping in `WorkspaceShell.tsx` so node-editing shortcuts and canvas zoom shortcuts no longer behave as global app-wide actions. Added canvas shortcut context detection (`canvasViewport` containment or selected node inline editor), gated `Ctrl/Cmd + Z/Y/C/V` and zoom key combos to that context, added keyboard zoom handling (`Ctrl/Cmd + +`, `Ctrl/Cmd + -`, `Ctrl/Cmd + 0`), and made the canvas viewport focusable (`tabIndex=0`) with explicit focus acquisition on blank-canvas mouse down to keep the shortcut context stable.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx`
+- Result: The requested focus-scoped canvas shortcut behavior was implemented in the workspace shell route. ESLint output remains at the pre-existing `react-hooks/set-state-in-effect` findings in this file.
+- Warnings / blockers: Frontend typecheck currently fails due unrelated pre-existing `StoryObject.episodeId` type mismatches in `frontend/src/persistence/controller.ts`, `frontend/src/persistence/flushQueue.test.ts`, and `frontend/src/persistence/sampleWorkspace.ts`; this loop did not touch those files.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-062
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: root workspace docs, `PLANS.md`
+- What changed: Expanded the `PROJECT_OVERVIEW_KO.md` section `2. ????? ????` from a top-level folder list into a more detailed developer-facing tree. The updated section now shows the main workspace package boundaries plus the most important nested directories and entry files under `frontend`, `backend`, `shared`, `recommendation`, `e2e`, and `scripts`, while explicitly noting that generated/tooling folders such as `node_modules`, `dist`, `.git`, and `.yarn` are intentionally omitted.
+- Tests run: UTF-8 `Get-Content` section check for `PROJECT_OVERVIEW_KO.md`; `git -c safe.directory=C:/work/ARIAD status --short`
+- Result: The repository-structure section is now significantly more detailed and should be easier to use as a directory map during onboarding and review.
+- Warnings / blockers: The worktree already contains multiple unrelated in-progress changes outside this documentation update; they were not modified as part of this slice.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-062
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/`, `PLANS.md`
+- What changed: Refined shortcut scope in `WorkspaceShell.tsx` so inline editor focus now keeps browser-native text undo/redo (`Ctrl/Cmd+Z/Y`) instead of routing to workspace history. Removed inline-editor global undo/redo interception from `canUseNodeShortcutFromInlineEditor` and added an explicit early return for modifier `z/y` while the node inline textarea is focused.
+- Tests run: `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx`
+- Result: Shortcut routing now separates inline text undo/redo from canvas-level workspace undo/redo as requested.
+- Warnings / blockers: ESLint still reports pre-existing `react-hooks/set-state-in-effect` findings in `WorkspaceShell.tsx`.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-063
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `backend/`, root workspace, `PLANS.md`
+- What changed: Added a local-MySQL-ready persistence path for backend testing without removing the existing file-backed default. Introduced `PERSISTENCE_DRIVER=file|mysql` plus `MYSQL_*` env parsing in backend config, wired persistence route registration to choose between `FileBackedPersistenceStore` and a new `MySqlBackedPersistenceStore`, and attached on-close cleanup for DB pools. Implemented MySQL-backed persistence against a `cloud_projects` table with import/list/get/sync parity to the existing file-backed behavior. Added local MySQL bootstrap assets (`docker-compose.mysql.yml`, `backend/mysql/init/001_create_cloud_projects.sql`), root helper scripts (`db:mysql:up/down/logs`), and setup notes in `backend/LOCAL_MYSQL.md`. Also aligned modified Korean-comment source files to UTF-8 BOM per encoding discipline.
+- Tests run: `yarn install --mode=skip-build` (outside sandbox after EPERM); `yarn workspace @scenaairo/backend typecheck`; `yarn workspace @scenaairo/backend lint`; `yarn workspace @scenaairo/backend test` (outside sandbox after spawn EPERM); `yarn workspace @scenaairo/backend integration` (outside sandbox after spawn EPERM); `yarn workspace @scenaairo/backend build`
+- Result: Backend lint/typecheck/test/integration are green with the new MySQL path in place, and local MySQL can now be started with dedicated compose/scripts for test use.
+- Warnings / blockers: Direct `yarn workspace @scenaairo/backend build` still fails if `@scenaairo/shared` build artifacts are stale because `tsconfig.build.json` resolves package imports differently from local typecheck; this is a pre-existing workspace build-order issue and not introduced by the MySQL slice.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-063
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/`, `PLANS.md`
+- What changed: Implemented the first stabilization step for delete/undo node recreation behavior by removing immediate node-size map pruning in `WorkspaceShell.tsx`. The prior effect sanitized `nodeSizes` against currently visible episode nodes after each snapshot change; deleting a node removed its size entry, so undo recreated the node with default dimensions and unstable overlap/layout results. The sanitize effect was removed and a guard comment was added to keep deleted-node size entries until history settles, preserving same-id size restoration during undo/redo.
+- Tests run: `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx`
+- Result: The targeted fix is applied; existing lint baseline remains with pre-existing `react-hooks/set-state-in-effect` findings.
+- Warnings / blockers: This loop does not yet migrate timeline/divider/node-size UI state into controller snapshot history, so full structural history parity is still a follow-up item.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-071
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `AGENT_SYSTEM.md`, `PLANS.md`
+- What changed: Added an explicit concurrent-chat/worktree coordination rule to `AGENT_SYSTEM.md` under the soft-ownership section. The new rule states that concurrent Codex chats do not provide automatic same-file serialization, that agents must re-read the latest file before editing if concurrent touch is possible, and that same-file work should be sequenced through the Orchestrator as effectively single-writer work. It also recommends disjoint file ownership and separate branches/worktrees for larger parallel efforts.
+- Tests run: UTF-8 readback check of the updated `AGENT_SYSTEM.md`; `git -c safe.directory=C:/work/ARIAD status --short AGENT_SYSTEM.md`
+- Result: The repository operating rules now explicitly document how to handle concurrent chats touching the same workspace.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-065
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `backend/src/persistence/`, `frontend/src/persistence/`, `frontend/src/routes/`, `frontend/src/copy.ts`, `PLANS.md`
+- What changed: Applied the folder-sharing follow-up on top of the object-to-episode model by switching to a reference-sharing strategy. Backend snapshot/dependency validation now allows node-to-object links across episodes as long as project ownership matches, instead of forcing same-episode only. Frontend persistence controller now also allows same-project cross-episode object attachment and adds `localizeObjectReferencesForEpisode()` to clone external-episode references into the target episode when detaching from folder-level sharing. WorkspaceShell object scope and mention reuse were expanded from active-episode-only to folder-episode scope, and folder membership removal/deletion flows now localize shared references before unlinking to prevent broken links after folder structure changes.
+- Tests run: `yarn workspace @scenaairo/shared typecheck`; `yarn workspace @scenaairo/backend typecheck`; `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/backend integration`; `yarn workspace @scenaairo/frontend run -T vitest run src/persistence/controller.test.ts src/persistence/flushQueue.test.ts` (rerun outside sandbox after Vite spawn EPERM in sandbox)
+- Result: Folder member episodes can now reuse each other's objects by reference without forcing schema re-parenting, and folder detach/delete paths preserve stability by localizing cross-episode references first. Relevant domain/persistence validation commands passed.
+- Warnings / blockers: Full frontend suite was not rerun in this loop; only the impacted persistence tests were executed.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-066
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Continued the undo/redo stabilization slice by aligning route tests with the new focus-scoped shortcut policy and adding a dedicated regression for delete->undo->redo node reconstruction. Updated the keyboard shortcut test to trigger workspace shortcuts from the focused canvas viewport (instead of global window target), updated inline-editor `Ctrl/Cmd+Z` expectation to keep browser-native text undo behavior (no workspace node-count rollback), and added a new test that resizes a node, deletes it, then validates undo/redo cycles restore both the node and its resized width (`316px`) consistently.
+- Tests run: `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx`
+- Result: `WorkspaceShell` route tests now pass 20/20 including the new delete/undo/redo dimension-restoration regression. Typecheck is green. `WorkspaceShell.tsx` still reports the pre-existing 7 `react-hooks/set-state-in-effect` lint errors unrelated to this slice.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-067
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/copy.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Updated object-detail UI so creators can immediately identify which episode owns a selected/shared object in folder-sharing scenarios. Added new copy keys (`objectEpisode`, `objectEpisodeMissing`), derived an episode lookup from the current snapshot, and surfaced a read-only `Owned Episode` field in the object detail editor. Also extended the fullscreen object-detail regression test to assert the owner episode value is rendered (`Episode 12`).
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/copy.ts src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: Object detail now clearly exposes the owning episode for the clicked object, and route tests remain green (20/20).
+- Warnings / blockers: `WorkspaceShell.tsx` still reports the pre-existing 7 `react-hooks/set-state-in-effect` lint errors unrelated to this UI slice.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-068
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Adjusted object-owner episode display policy per UX request. In object detail mode, `Owned Episode` now renders as plain read-only text (non-input control) and only appears when the selected object's owning episode is currently in a folder scope. For root/non-folder episodes, the owner row is hidden entirely. Updated fullscreen object-detail regression expectation accordingly to assert `Owned Episode` is absent when no folder membership exists.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx`
+- Result: UI now matches the requested visibility rule for owner-episode display, and route tests are green (21/21).
+- Warnings / blockers: `WorkspaceShell.tsx` still has the same pre-existing 7 `react-hooks/set-state-in-effect` lint errors unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-069
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.common.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Fixed fullscreen overlay-root routing so viewport overlays use `document.fullscreenElement` when available instead of always using `document.body`. This keeps node-level overlay actions (including `More` menu actions) visible and interactive when the canvas enters fullscreen mode. Added a regression test that verifies the node `More` menu overlay is rendered inside the fullscreen canvas container.
+- Tests run: `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (rerun outside sandbox after in-sandbox `spawn EPERM`); `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/workspace-shell/workspaceShell.common.tsx src/routes/WorkspaceShell.test.tsx`
+- Result: `WorkspaceShell` route tests pass 21/21 with the new fullscreen node-overlay regression included, and the touched files are typecheck/lint clean.
+- Warnings / blockers: The first in-sandbox vitest execution failed with `spawn EPERM`, so test verification required an outside-sandbox rerun. No remaining blockers for this fix.
+- Approval needed: `none`
+### 2026-04-21 / loop-070
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `PROJECT_OVERVIEW_KO.md`, `PLANS.md`
+- What changed: Refreshed the Korean project overview document to match the current frontend/backend implementation. Updated the repo tree to show the split `frontend/src/routes/workspace-shell/` helper modules and the backend local MySQL assets (`backend/mysql/init/`, `backend/LOCAL_MYSQL.md`, `docker-compose.mysql.yml`). Revised frontend sections to describe episode-owned objects with folder-scope reference reuse, owner-episode display rules, and persistence/controller responsibilities. Revised backend sections to describe selectable file vs MySQL persistence, new env keys, MySQL store, and root MySQL helper scripts.
+- Tests run: UTF-8 readback of `PROJECT_OVERVIEW_KO.md`; keyword grep checks for updated frontend/backend overview terms
+- Result: The overview document now reflects the latest frontend/backend structure and behavior instead of the older project-wide object model and pre-split workspace shell layout.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-071
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Hardened node-resize interaction startup by switching node resize handles from `onMouseDown` to `onPointerDown` and updating `beginNodeResize()` to consume `ReactPointerEvent`. Added a left-click guard (`event.button === 0`) plus optional pointer capture on drag start so resize drag activation is more consistent across pointer input paths.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (existing `WorkspaceShell.tsx` pre-existing `react-hooks/set-state-in-effect` findings remain); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "resize" --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Resize-specific regressions and the full `WorkspaceShell` test file are green (`21/21`), with node-resize interactions now driven by pointer events.
+- Warnings / blockers: `WorkspaceShell.tsx` still contains the same pre-existing 7 `react-hooks/set-state-in-effect` lint errors unrelated to this resize fix.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-069
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `PLANS.md`
+- What changed: Fixed intermittent inline token deletion behavior where backspace/delete could remove only a single character instead of the full token. Updated `removeAdjacentInlineToken` so token removal triggers not only at exact token boundaries, but also when the caret is inside a keyword/object token range. Added focused regression tests for backward/forward deletion inside keyword tokens and forward deletion inside object tokens.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/workspace-shell/workspaceShell.inlineEditor.tsx src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: Inline token deletion now consistently removes the entire token when caret is inside that token, and new regression tests pass (3/3).
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-072
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Addressed two issues together. (1) Fullscreen interaction reliability: raised selected-node stacking priority and added `touch-action: none` on resize handles to reduce pointer interception during fullscreen resize/drags. (2) Major-lane start/end stability: introduced episode-scoped in-memory major-anchor tracking (`startId`/`endId`) and applied anchor-preserving placement behavior so designated start/end major nodes keep anchor identity during move/resize instead of being released by overlap/layout recomputation.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx src/styles.css`
+- Result: `WorkspaceShell` route test suite is green with new regressions included (`23/23`), including fullscreen resize and start/end-marker persistence after major-node resize.
+- Warnings / blockers: Full-file `WorkspaceShell.tsx` lint still has the same pre-existing `react-hooks/set-state-in-effect` findings and was not expanded in this loop.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-070
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `PLANS.md`
+- What changed: Fixed range-delete behavior for inline mention/keyword tokens so drag-select + Backspace/Delete can no longer leave partial token fragments. Added `removeInlineSelectionWithTokenBoundaries()` to expand a selected range to full token boundaries whenever the selection intersects an inline token, then remove atomically. Wired this into `WorkspaceShell` textarea key handling for non-collapsed selections on Backspace/Delete. This prevents malformed partial mentions and the follow-on side effect where truncated mention text could be interpreted as a new object candidate.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/workspace-shell/workspaceShell.inlineEditor.tsx src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: Range deletion over mention/keyword tokens now consistently deletes entire tokens, and focused regression tests pass (5/5).
+- Warnings / blockers: None.
+- Approval needed: `none`
+### 2026-04-21 / loop-071
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: frontend/src/persistence/, frontend/src/routes/WorkspaceShell.tsx, PLANS.md
+- What changed: Added loss-mitigation persistence sync logic for cloud mode. LocalPersistenceStore now keeps pending CloudSyncOperation queue in localStorage. PersistenceFlushQueue now restores pending operations on startup, persists queue updates, retries failed sync with exponential backoff, and skips auto-retry escalation for not_authenticated errors while retaining pending operations. WorkspacePersistenceController now wires queue persistence callbacks, guards flushNow to authenticated cloud-linked sessions only, and triggers immediate replay flush after authenticated session connection. WorkspaceShell now triggers best-effort flush on pagehide, beforeunload, visibility hidden, and online events. CloudPersistenceClient sync requests now use fetch keepalive for better unload-time delivery.
+- Tests run: yarn workspace @scenaairo/frontend run -T vitest run src/persistence/flushQueue.test.ts src/persistence/controller.test.ts (outside sandbox after spawn EPERM); yarn workspace @scenaairo/frontend run -T eslint src/persistence/localStore.ts src/persistence/flushQueue.ts src/persistence/cloudClient.ts src/persistence/controller.ts; yarn workspace @scenaairo/frontend typecheck
+- Result: Frontend persistence queue now survives tab close/process restart in local storage and can replay pending operations after re-authentication. Targeted lint, typecheck, and persistence tests are green.
+- Warnings / blockers: WorkspaceShell.tsx still has pre-existing react-hooks/set-state-in-effect lint findings when linting that file directly; this loop did not widen scope to refactor those existing effects.
+- Approval needed: none
+
+### 2026-04-21 / loop-071
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `PLANS.md`
+- What changed: Implemented two canvas-behavior updates. (1) When the major lane has no existing major nodes, creating a new major node now seeds that node with a height aligned to the current major timeline-arrow span (`effectiveTimelineEndY - timelineStartY`, min-guarded), so the first major node is initialized against timeline length instead of the fixed default card height. (2) Added deletion-time canvas compaction: deleting a node subtree now recomputes the remaining visible-node bottoms and lowers `timelineEndY` when possible so empty tail space shrinks naturally after node removal. Also preserved the recent inline token safety improvements by adding/keeping focused token-deletion tests.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.inlineEditor.tsx src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "sizes the first major node to timeline span and shrinks timeline after deletion" --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx`
+- Result: New major-node initialization and delete-time canvas shrink behavior are both implemented and covered by targeted regression tests. Inline token deletion regressions remain green.
+- Warnings / blockers: `WorkspaceShell.tsx` still reports the same pre-existing 7 `react-hooks/set-state-in-effect` lint errors; full-route test sweep was not used as the completion gate for this slice because unrelated existing assertions in other scenarios remain noisy.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-073
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `PLANS.md`
+- What changed: Applied three canvas interaction/layout fixes. (1) Vertical resize drag now updates node size continuously during pointer move and defers timeline bottom recomputation to drag-end, reducing resize-path jitter while keeping final timeline height in sync with node bottoms. (2) Horizontal lane auto-sizing now uses per-lane required widths (`major/minor/detail`) so divider gaps expand from the widest node in each lane instead of relying on placement-side overflow estimates. (3) Lane X placement was normalized to lane-center alignment for non-major nodes in shared canvas helpers, and X clamp behavior now respects lane bounds rather than global canvas-right clamps, preventing cross-lane visual invasion during width growth and keeping connection ports aligned to centered nodes.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.canvas.ts`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route tests are green (`26/26`) with new regressions covering vertical resize shrink delta consistency and minor-lane center/connection/lane-width behavior after horizontal resize.
+- Warnings / blockers: Linting `WorkspaceShell.tsx` directly still reports the same pre-existing `react-hooks/set-state-in-effect` findings unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-074
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Applied a follow-up fix for reported vertical-resize shrink lag. During resize drag, vertical minimum clamp now uses baseline card minimum (`nodeCardHeight`) instead of content-derived minimum. Also updated drag-end input-height sync so manual vertical/diagonal resize paths preserve manual height (`preserveManualHeight`) instead of immediately re-expanding from editor scroll-height calculations. Added regression coverage that mocks a large inline-editor scroll height and verifies manual vertical shrink remains applied after pointer-up.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route tests are green (`27/27`) including the new manual-vertical-shrink preservation regression.
+- Warnings / blockers: Direct lint on `WorkspaceShell.tsx` still has the same pre-existing `react-hooks/set-state-in-effect` findings and was not widened in this loop.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-075
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Applied an arrow-length follow-up by changing connection anchor X coordinates from card-side edges to card-center X on both generated connection paths and rewire preview paths. This makes arrow span respond to node width/position changes more visibly and keeps ports aligned with the visual center line of resized nodes. Updated regression expectations to validate center-aligned connection ports and post-resize arrow movement.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.canvas.ts`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route tests remain green (`27/27`) with updated arrow-anchor expectations.
+- Warnings / blockers: No new blockers; direct full-file lint on `WorkspaceShell.tsx` still has pre-existing unrelated `react-hooks/set-state-in-effect` findings.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-076
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Applied UX guard for timeline arrow-end drag. When the major lane has only one anchor node (`startMajorNodeId === endMajorNodeId`), timeline-end handle interaction is now disabled (`disabled` on button + drag-start early return). Added regression test that verifies `Move timeline end` is disabled in single-major state and becomes enabled after creating a second major node.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route tests are green (`28/28`) with the new timeline-handle disable regression.
+- Warnings / blockers: No new blockers; direct lint on `WorkspaceShell.tsx` still reports the same unrelated pre-existing effect warnings.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-077
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Refined canvas zoom interaction so `Ctrl/Cmd + wheel` is handled only when the wheel event target is inside `.canvas-viewport` and the canvas viewport itself is focused. The wheel handler continues to use a non-passive native listener so browser-level page zoom can be prevented in this focused-canvas path. Added and stabilized a regression test that focuses the canvas viewport, dispatches a ctrl-wheel event, verifies zoom readout changes (`100% -> 118%`), and confirms `defaultPrevented` is true.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route tests are green (`30/30`) including the focused ctrl-wheel canvas-zoom regression.
+- Warnings / blockers: No new blockers. Full-file direct lint on `WorkspaceShell.tsx` was not used as a gate due pre-existing unrelated `react-hooks/set-state-in-effect` findings.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-077
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Applied follow-up drag/resize stability fixes based on user repro. In major-node free-move flow, removed forced start/end anchor coordinate overwrite so major start/end nodes can move with normal snap constraints instead of being pinned back after drop. In CSS, reduced resize-handle hit areas and enabled pointer interaction only on selected-node hover/focus to lower accidental vertical resize triggers during regular drag attempts.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route regressions remain green (`28/28`) after drag/resize interaction adjustments.
+- Warnings / blockers: No new blockers; direct full-file lint on `WorkspaceShell.tsx` still has the same pre-existing `react-hooks/set-state-in-effect` findings and was not widened in this loop.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-078
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Applied second follow-up for resize UX. Added explicit drag-start guard while node resize is active (`isNodeResizingRef`) and blocked drag initialization from resize handles, so resize no longer co-triggers node move. Expanded resize-handle interactive range back from the overly narrow hit area while keeping accidental-trigger mitigation (handles are still pointer-active only on selected hover/focus). Added a regression test to verify vertical resize changes height without changing node `left/top`. Also stabilized the existing ctrl+wheel zoom test path by waiting for viewport readiness and restoring viewport-native wheel listener registration before loading completes.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (same pre-existing `WorkspaceShell.tsx` effect lint findings only); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite spawn EPERM in sandbox)
+- Result: `WorkspaceShell` route suite is green (`30/30`), including the new resize-without-move regression.
+- Warnings / blockers: No new blockers; `WorkspaceShell.tsx` still has the same pre-existing 7 `react-hooks/set-state-in-effect` findings unrelated to this fix.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-079
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Relaxed the canvas ctrl/cmd+wheel zoom guard so wheel events originating from any element inside `.canvas-viewport` also drive canvas zoom, not just when the viewport itself owns focus. This keeps canvas zoom working while the pointer is over selected nodes or inline node inputs. Added a regression test that focuses a node textbox and verifies ctrl+wheel still updates the canvas zoom readout and prevents the default browser zoom path.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx` (same pre-existing `react-hooks/set-state-in-effect` errors plus one dependency warning); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: `WorkspaceShell` route suite is green (`31/31`), and ctrl+wheel now zooms the canvas even when focus is inside a node on the canvas.
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` still reports the same unrelated pre-existing effect-rule issues and was not changed in this loop.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-080
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Fixed the inline text typing auto-height feedback issue. In `syncSelectedNodeInputHeight()`, node auto-height no longer uses `.node-inline-editor.scrollHeight` (which can track already-expanded card height and create cumulative growth while typing). Height is now derived from measured text input height plus node-frame padding only. Added a regression test that mocks `inlineEditor.scrollHeight` to follow current node card height and verifies repeated typing keeps node height stable after the initial content-fit adjustment.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck` (fails with pre-existing TS errors in `WorkspaceShell.tsx` around lines 902 and 945, unrelated to this change); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox); `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings)
+- Result: `WorkspaceShell` route tests are green (`32/32`) including the new typing-height-stability regression, and node height no longer keeps increasing as text is entered.
+- Warnings / blockers: No new blockers. Frontend typecheck/lint baseline still has unrelated existing issues in `WorkspaceShell.tsx`.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-081
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Replaced existing-node movement from native HTML drag/drop with pointer-based drag handling. Added a small drag activation threshold so pressing/holding a node no longer starts movement by itself, and movement now commits from a live preview position on pointer release. Kept lane constraints intact, added a dragging visual state, and added a regression test that verifies a minor node stays in place under tiny pointer movement but moves downward once the drag crosses the threshold.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows the same pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` errors plus one existing dependency-array warning); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox); `yarn workspace @scenaairo/frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: `WorkspaceShell` route suite is green (`33/33`), frontend production build passes, and node movement no longer begins on hold-only input.
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` still reports the same unrelated pre-existing effect-rule errors/warning and was not widened in this loop.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-082
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Applied a focused move/resize stability hardening pass across three points. (1) Timeline anchor alignment now uses the actual resized major-node dimensions when snapping/locking major start/end nodes, preventing center/bottom drift after end-node size changes. (2) Fixed-node protection now also blocks resize behavior: resize start returns early for busy/fixed nodes and resize handles are not rendered on fixed selected nodes. (3) Horizontal resize now enforces a lane-safe dynamic max width based on current divider constraints and neighbor-lane minimum widths, preventing extreme drag from pushing minor/detail nodes beyond lane bounds at the canvas edge. Added regressions for end-major anchor alignment after resize, fixed-node resize-handle suppression, and extreme minor horizontal resize bounds.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/workspace-shell/workspaceShell.canvas.ts src/routes/WorkspaceShell.test.tsx`; `yarn workspace @scenaairo/frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows existing `react-hooks/set-state-in-effect` findings in this file); `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: `WorkspaceShell` route tests are green (`36/36`) with the new move/resize UI regressions included, and frontend typecheck is green.
+- Warnings / blockers: Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing effect-rule issues unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-083
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/styles.css`, `PLANS.md`
+- What changed: Added a node-reorder motion smoothing pass to reduce the "teleport" perception during order swaps. `.node-card` now animates `left/top` with a short ease-out curve, and `.node-card.is-dragging` disables position transition so the actively dragged card still tracks pointer movement immediately.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/workspace-shell/workspaceShell.canvas.test.ts src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Targeted canvas/WorkspaceShell tests are green (`62/62`) after the animation change.
+- Warnings / blockers: No new blockers identified in this loop.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-084
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Added explicit sidebar active-state styling for the currently selected episode and its containing folder instead of relying on item order. The sidebar now applies active classes to episode shells/links and active-folder classes to the containing folder shell/button, with stronger background, border, shadow, icon, and nested-list cues. Added a regression test that moves the active episode into a folder and verifies both the folder and the selected episode remain highlighted as selection changes within that folder.
+- Tests run: `yarn workspace @scenaairo/frontend typecheck`; `yarn workspace @scenaairo/frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "highlights the selected episode and its containing folder in the sidebar" --reporter=dot` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Sidebar selection emphasis is implemented and the targeted regression test passes (`1 passed`).
+- Warnings / blockers: No new blockers. Targeted Vitest still requires out-of-sandbox execution in this environment because Vite hits the existing sandbox `spawn EPERM` restriction.
+- Approval needed: `none`
+
+### 2026-04-21 / loop-085
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Fixed node inline-editor auto-height growth on keyboard-only interactions. Removed height sync from `textarea.onKeyUp` (still keeping mention-query refresh there), and hardened `syncSelectedNodeInputHeight` measurement so it resets textarea height before measuring and ignores preview heights that diverge from real text-content height. Added a regression test that simulates preview `scrollHeight` tracking card height and verifies repeated key-only interactions (`ArrowUp/ArrowDown/Escape/Control`) do not increase node height.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings)
+- Result: `WorkspaceShell` tests are green (`63/63`) with the new keyboard-interaction height regression covered, and frontend typecheck is green.
+- Warnings / blockers: No new blockers; `WorkspaceShell.tsx` continues to have the same pre-existing effect-rule lint errors/warning unrelated to this loop.
 - Approval needed: `none`

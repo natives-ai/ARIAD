@@ -963,6 +963,7 @@ __metadata:
     "@scenaairo/recommendation": "file:../recommendation"
     "@scenaairo/shared": "file:../shared"
     fastify: "npm:^5.8.5"
+    mysql2: "npm:^3.15.2"
   languageName: unknown
   linkType: soft
 
@@ -984,15 +985,15 @@ __metadata:
 
 "@scenaairo/recommendation@file:../recommendation::locator=%40scenaairo%2Fbackend%40workspace%3Abackend":
   version: 0.0.0
-  resolution: "@scenaairo/recommendation@file:../recommendation#../recommendation::hash=57a5bb&locator=%40scenaairo%2Fbackend%40workspace%3Abackend"
-  checksum: 10c0/a29e48946f45bc9e01e9969be7d7e56d260705bc05e24239b3cf911d95e0f87c9710ae791a8c6733ee462633977affd436cbb8e7dd6a5816dabc951482c44e25
+  resolution: "@scenaairo/recommendation@file:../recommendation#../recommendation::hash=2c3be1&locator=%40scenaairo%2Fbackend%40workspace%3Abackend"
+  checksum: 10c0/191487e7f4d724b058adb0539087a5916726823569c3915d27bca8290a3bce7688884349e06e3adc03ae08dcc2935d6e09aa26aba4127cc510721589a0cd47fb
   languageName: node
   linkType: hard
 
 "@scenaairo/recommendation@file:../recommendation::locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend":
   version: 0.0.0
-  resolution: "@scenaairo/recommendation@file:../recommendation#../recommendation::hash=57a5bb&locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend"
-  checksum: 10c0/a29e48946f45bc9e01e9969be7d7e56d260705bc05e24239b3cf911d95e0f87c9710ae791a8c6733ee462633977affd436cbb8e7dd6a5816dabc951482c44e25
+  resolution: "@scenaairo/recommendation@file:../recommendation#../recommendation::hash=2c3be1&locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend"
+  checksum: 10c0/191487e7f4d724b058adb0539087a5916726823569c3915d27bca8290a3bce7688884349e06e3adc03ae08dcc2935d6e09aa26aba4127cc510721589a0cd47fb
   languageName: node
   linkType: hard
 
@@ -1004,15 +1005,15 @@ __metadata:
 
 "@scenaairo/shared@file:../shared::locator=%40scenaairo%2Fbackend%40workspace%3Abackend":
   version: 0.0.0
-  resolution: "@scenaairo/shared@file:../shared#../shared::hash=acb652&locator=%40scenaairo%2Fbackend%40workspace%3Abackend"
-  checksum: 10c0/14fac2a85870bb292b2646ec301d0c65545138e64c1b238292c03e977471a5ff3c721079ea23579228f7c124e643d4087234c1f420d23ecf73ee468c1c4fc1a2
+  resolution: "@scenaairo/shared@file:../shared#../shared::hash=387889&locator=%40scenaairo%2Fbackend%40workspace%3Abackend"
+  checksum: 10c0/561b755168039a07d2d92f0ea14fb75ee329f8e156c96a7b3081954fd147e28b421dd2db152ee5b300b86a84156b4d39cb221152c2256a282a9b30455c0383f3
   languageName: node
   linkType: hard
 
 "@scenaairo/shared@file:../shared::locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend":
   version: 0.0.0
-  resolution: "@scenaairo/shared@file:../shared#../shared::hash=acb652&locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend"
-  checksum: 10c0/14fac2a85870bb292b2646ec301d0c65545138e64c1b238292c03e977471a5ff3c721079ea23579228f7c124e643d4087234c1f420d23ecf73ee468c1c4fc1a2
+  resolution: "@scenaairo/shared@file:../shared#../shared::hash=387889&locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend"
+  checksum: 10c0/561b755168039a07d2d92f0ea14fb75ee329f8e156c96a7b3081954fd147e28b421dd2db152ee5b300b86a84156b4d39cb221152c2256a282a9b30455c0383f3
   languageName: node
   linkType: hard
 
@@ -1544,6 +1545,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"aws-ssl-profiles@npm:^1.1.2":
+  version: 1.1.2
+  resolution: "aws-ssl-profiles@npm:1.1.2"
+  checksum: 10c0/e5f59a4146fe3b88ad2a84f814886c788557b80b744c8cbcb1cbf8cf5ba19cc006a7a12e88819adc614ecda9233993f8f1d1f3b612cbc2f297196df9e8f4f66e
+  languageName: node
+  linkType: hard
+
 "balanced-match@npm:^1.0.0":
   version: 1.0.2
   resolution: "balanced-match@npm:1.0.2"
@@ -1771,6 +1779,13 @@ __metadata:
   version: 0.1.4
   resolution: "deep-is@npm:0.1.4"
   checksum: 10c0/7f0ee496e0dff14a573dc6127f14c95061b448b87b995fc96c017ce0a1e66af1675e73f1d6064407975bc4ea6ab679497a29fff7b5b9c4e99cb10797c1ad0b4c
+  languageName: node
+  linkType: hard
+
+"denque@npm:^2.1.0":
+  version: 2.1.0
+  resolution: "denque@npm:2.1.0"
+  checksum: 10c0/f9ef81aa0af9c6c614a727cb3bd13c5d7db2af1abf9e6352045b86e85873e629690f6222f4edd49d10e4ccf8f078bbeec0794fafaf61b659c0589d0c511ec363
   languageName: node
   linkType: hard
 
@@ -2290,6 +2305,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"generate-function@npm:^2.3.1":
+  version: 2.3.1
+  resolution: "generate-function@npm:2.3.1"
+  dependencies:
+    is-property: "npm:^1.0.2"
+  checksum: 10c0/4645cf1da90375e46a6f1dc51abc9933e5eafa4cd1a44c2f7e3909a30a4e9a1a08c14cd7d5b32da039da2dba2a085e1ed4597b580c196c3245b2d35d8bc0de5d
+  languageName: node
+  linkType: hard
+
 "gensync@npm:^1.0.0-beta.2":
   version: 1.0.0-beta.2
   resolution: "gensync@npm:1.0.0-beta.2"
@@ -2487,6 +2511,13 @@ __metadata:
   version: 1.0.1
   resolution: "is-potential-custom-element-name@npm:1.0.1"
   checksum: 10c0/b73e2f22bc863b0939941d369486d308b43d7aef1f9439705e3582bfccaa4516406865e32c968a35f97a99396dac84e2624e67b0a16b0a15086a785e16ce7db9
+  languageName: node
+  linkType: hard
+
+"is-property@npm:^1.0.2":
+  version: 1.0.2
+  resolution: "is-property@npm:1.0.2"
+  checksum: 10c0/33ab65a136e4ba3f74d4f7d9d2a013f1bd207082e11cedb160698e8d5394644e873c39668d112a402175ccbc58a087cef87198ed46829dbddb479115a0257283
   languageName: node
   linkType: hard
 
@@ -2777,6 +2808,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"long@npm:^5.3.2":
+  version: 5.3.2
+  resolution: "long@npm:5.3.2"
+  checksum: 10c0/7130fe1cbce2dca06734b35b70d380ca3f70271c7f8852c922a7c62c86c4e35f0c39290565eca7133c625908d40e126ac57c02b1b1a4636b9457d77e1e60b981
+  languageName: node
+  linkType: hard
+
 "lru-cache@npm:^11.0.0, lru-cache@npm:^11.1.0, lru-cache@npm:^11.2.1, lru-cache@npm:^11.2.7":
   version: 11.3.5
   resolution: "lru-cache@npm:11.3.5"
@@ -2790,6 +2828,13 @@ __metadata:
   dependencies:
     yallist: "npm:^3.0.2"
   checksum: 10c0/89b2ef2ef45f543011e38737b8a8622a2f8998cddf0e5437174ef8f1f70a8b9d14a918ab3e232cb3ba343b7abddffa667f0b59075b2b80e6b4d63c3de6127482
+  languageName: node
+  linkType: hard
+
+"lru.min@npm:^1.1.0, lru.min@npm:^1.1.4":
+  version: 1.1.4
+  resolution: "lru.min@npm:1.1.4"
+  checksum: 10c0/d9cce4d9988ced2b2dd199f47016adefda27e8405a7f63b86a54e574d254bb0099ff9e91846b0c20379348e7a03d6f4de8b8f8cdfd5265b36eb3ec07bcf72f96
   languageName: node
   linkType: hard
 
@@ -2943,6 +2988,33 @@ __metadata:
   version: 2.1.3
   resolution: "ms@npm:2.1.3"
   checksum: 10c0/d924b57e7312b3b63ad21fc5b3dc0af5e78d61a1fc7cfb5457edaf26326bf62be5307cc87ffb6862ef1c2b33b0233cdb5d4f01c4c958cc0d660948b65a287a48
+  languageName: node
+  linkType: hard
+
+"mysql2@npm:^3.15.2":
+  version: 3.22.2
+  resolution: "mysql2@npm:3.22.2"
+  dependencies:
+    aws-ssl-profiles: "npm:^1.1.2"
+    denque: "npm:^2.1.0"
+    generate-function: "npm:^2.3.1"
+    iconv-lite: "npm:^0.7.2"
+    long: "npm:^5.3.2"
+    lru.min: "npm:^1.1.4"
+    named-placeholders: "npm:^1.1.6"
+    sql-escaper: "npm:^1.3.3"
+  peerDependencies:
+    "@types/node": ">= 8"
+  checksum: 10c0/50110a2506c33c5902680a01a5e5fe9de76f1f126dd92e30633de9bb196d908644e2bb2971c8e61aab84dedb2de197ea4a78801aa2dc2815f1a105d9f686284f
+  languageName: node
+  linkType: hard
+
+"named-placeholders@npm:^1.1.6":
+  version: 1.1.6
+  resolution: "named-placeholders@npm:1.1.6"
+  dependencies:
+    lru.min: "npm:^1.1.0"
+  checksum: 10c0/65b7ffaf932a371602e4153808601e8f377d7fc85fa15b491ee821418e52ab4950155b840803a6eaf3d5b94d6e8aedc1bee723475541cb4713feb3544dca9336
   languageName: node
   linkType: hard
 
@@ -3584,6 +3656,13 @@ __metadata:
   version: 4.2.0
   resolution: "split2@npm:4.2.0"
   checksum: 10c0/b292beb8ce9215f8c642bb68be6249c5a4c7f332fc8ecadae7be5cbdf1ea95addc95f0459ef2e7ad9d45fd1064698a097e4eb211c83e772b49bc0ee423e91534
+  languageName: node
+  linkType: hard
+
+"sql-escaper@npm:^1.3.3":
+  version: 1.3.3
+  resolution: "sql-escaper@npm:1.3.3"
+  checksum: 10c0/aa6545685745f4d457a6993cd7b442ac39d54aae6780d15e5ed1ff929f298f6c10562b9e09ddcbedcdf5c3601161e5ee39d3e8d435b1d168775f121946d1bf44
   languageName: node
   linkType: hard
 

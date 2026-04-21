@@ -1,3 +1,4 @@
+// 이 파일은 백엔드 파일 기반 퍼시스턴스 저장소 동작을 구현합니다.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -70,12 +71,52 @@ function sortDrawer(items: TemporaryDrawerItem[]): TemporaryDrawerItem[] {
 }
 
 function normalizeSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
+  const clonedSnapshot = cloneSnapshot(snapshot);
+  const fallbackEpisodeId =
+    clonedSnapshot.episodes.find(
+      (episode) => episode.id === clonedSnapshot.project.activeEpisodeId
+    )?.id ??
+    clonedSnapshot.episodes[0]?.id ??
+    null;
+  const knownEpisodeIds = new Set(clonedSnapshot.episodes.map((episode) => episode.id));
+  const normalizedObjects = clonedSnapshot.objects
+    .map((object) => {
+      const episodeId =
+        object.episodeId && knownEpisodeIds.has(object.episodeId)
+          ? object.episodeId
+          : fallbackEpisodeId;
+
+      if (!episodeId) {
+        return null;
+      }
+
+      return {
+        ...object,
+        episodeId,
+        projectId: clonedSnapshot.project.id
+      };
+    })
+    .filter((object): object is StoryObject => object !== null);
+  const objectsById = new Map(normalizedObjects.map((object) => [object.id, object]));
+  const normalizedNodes = clonedSnapshot.nodes.map((node) => ({
+    ...node,
+    objectIds: [...new Set(
+      node.objectIds.filter((objectId) => {
+        const object = objectsById.get(objectId);
+        return (
+          object !== undefined &&
+          object.projectId === node.projectId
+        );
+      })
+    )]
+  }));
+
   return {
-    ...cloneSnapshot(snapshot),
-    episodes: sortEpisodes(snapshot.episodes),
-    objects: sortObjects(snapshot.objects),
-    nodes: sortNodes(snapshot.nodes),
-    temporaryDrawer: sortDrawer(snapshot.temporaryDrawer)
+    ...clonedSnapshot,
+    episodes: sortEpisodes(clonedSnapshot.episodes),
+    objects: sortObjects(normalizedObjects),
+    nodes: sortNodes(normalizedNodes),
+    temporaryDrawer: sortDrawer(clonedSnapshot.temporaryDrawer)
   };
 }
 
@@ -91,6 +132,15 @@ function ensureEpisodeExists(snapshot: StoryWorkspaceSnapshot, episodeId: Entity
   }
 }
 
+function ensureObjectDependencies(snapshot: StoryWorkspaceSnapshot, object: StoryObject) {
+  ensureEpisodeExists(snapshot, object.episodeId);
+  const episode = snapshot.episodes.find((entry) => entry.id === object.episodeId);
+
+  if (!episode || episode.projectId !== object.projectId) {
+    throw new Error("object_episode_project_mismatch");
+  }
+}
+
 function ensureNodeDependencies(snapshot: StoryWorkspaceSnapshot, node: StoryNode) {
   ensureEpisodeExists(snapshot, node.episodeId);
 
@@ -98,12 +148,16 @@ function ensureNodeDependencies(snapshot: StoryWorkspaceSnapshot, node: StoryNod
     throw new Error("missing_parent_node_dependency");
   }
 
-  if (
-    node.objectIds.some(
-      (objectId) => !snapshot.objects.some((entry) => entry.id === objectId)
-    )
-  ) {
-    throw new Error("missing_object_dependency");
+  for (const objectId of node.objectIds) {
+    const object = snapshot.objects.find((entry) => entry.id === objectId);
+
+    if (!object) {
+      throw new Error("missing_object_dependency");
+    }
+
+    if (object.projectId !== node.projectId) {
+      throw new Error("object_project_mismatch");
+    }
   }
 }
 
@@ -286,16 +340,32 @@ export class FileBackedPersistenceStore {
         switch (operation.kind) {
           case "project":
             throw new Error("project_delete_not_supported");
-          case "episode":
+          case "episode": {
+            const removedObjectIds = new Set(
+              snapshot.objects
+                .filter((object) => object.episodeId === operation.entityId)
+                .map((object) => object.id)
+            );
             snapshot = {
               ...snapshot,
               episodes: removeById(snapshot.episodes, operation.entityId),
-              nodes: snapshot.nodes.filter((node) => node.episodeId !== operation.entityId),
+              nodes: snapshot.nodes
+                .filter((node) => node.episodeId !== operation.entityId)
+                .map((node) => ({
+                  ...node,
+                  objectIds: node.objectIds.filter(
+                    (objectId) => !removedObjectIds.has(objectId)
+                  )
+                })),
+              objects: snapshot.objects.filter(
+                (object) => object.episodeId !== operation.entityId
+              ),
               temporaryDrawer: snapshot.temporaryDrawer.filter(
                 (item) => item.episodeId !== operation.entityId
               )
             };
             break;
+          }
           case "object":
             snapshot = {
               ...snapshot,
@@ -345,6 +415,7 @@ export class FileBackedPersistenceStore {
           break;
         case "object":
           ensureProjectShell(snapshot, operation.payload.projectId);
+          ensureObjectDependencies(snapshot, operation.payload);
           snapshot = {
             ...snapshot,
             objects: upsertById(snapshot.objects, operation.payload)

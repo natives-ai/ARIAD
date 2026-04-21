@@ -1,3 +1,4 @@
+// 이 파일은 스탠드얼론 모드용 로컬 클라우드 퍼시스턴스 에뮬레이션을 구현합니다.
 import type {
   CloudSyncOperation,
   GetProjectResponse,
@@ -121,20 +122,54 @@ export class StandaloneCloudPersistenceClient {
       if (operation.action === "delete") {
         switch (operation.kind) {
           case "episode":
-            nextSnapshot = {
-              ...nextSnapshot,
-              episodes: deleteById(nextSnapshot.episodes, operation.entityId)
-            };
+            {
+              const removedObjectIds = new Set(
+                nextSnapshot.objects
+                  .filter((object) => object.episodeId === operation.entityId)
+                  .map((object) => object.id)
+              );
+
+              nextSnapshot = {
+                ...nextSnapshot,
+                episodes: deleteById(nextSnapshot.episodes, operation.entityId),
+                nodes: nextSnapshot.nodes
+                  .filter((node) => node.episodeId !== operation.entityId)
+                  .map((node) => ({
+                    ...node,
+                    objectIds: node.objectIds.filter(
+                      (objectId) => !removedObjectIds.has(objectId)
+                    )
+                  })),
+                objects: nextSnapshot.objects.filter(
+                  (object) => object.episodeId !== operation.entityId
+                ),
+                temporaryDrawer: nextSnapshot.temporaryDrawer.filter(
+                  (item) => item.episodeId !== operation.entityId
+                )
+              };
+            }
             break;
           case "node":
             nextSnapshot = {
               ...nextSnapshot,
-              nodes: deleteById(nextSnapshot.nodes, operation.entityId)
+              nodes: deleteById(nextSnapshot.nodes, operation.entityId),
+              temporaryDrawer: nextSnapshot.temporaryDrawer.map((item) =>
+                item.sourceNodeId === operation.entityId
+                  ? {
+                      ...item,
+                      sourceNodeId: null
+                    }
+                  : item
+              )
             };
             break;
           case "object":
             nextSnapshot = {
               ...nextSnapshot,
+              nodes: nextSnapshot.nodes.map((node) => ({
+                ...node,
+                objectIds: node.objectIds.filter((objectId) => objectId !== operation.entityId)
+              })),
               objects: deleteById(nextSnapshot.objects, operation.entityId)
             };
             break;

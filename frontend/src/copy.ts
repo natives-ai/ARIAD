@@ -1,3 +1,4 @@
+// 이 파일은 워크스페이스 UI 문구 상수를 정의합니다.
 export const copy = {
   auth: {
     callbackDescription:
@@ -96,10 +97,12 @@ export const copy = {
     noObjectsFound: "No reference objects match this search yet.",
     noFoldersYet: "Create a folder first.",
     objectCategory: "Category",
+    objectEpisode: "Owned Episode",
     objectName: "Object Name",
+    objectEpisodeMissing: "Unknown Episode",
     objects: "Object Library",
     objectScopeHint:
-      "Reference objects stay project-wide and never move into the episode drawer.",
+      "Reference objects are owned by episodes, and folder members can reuse each other by reference.",
     objectSearch: "Search Objects",
     objectSearchPlaceholder: "Search object's name",
     objectAttached: "Attached",

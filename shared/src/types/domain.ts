@@ -1,3 +1,4 @@
+// 이 파일은 서비스 전역에서 사용하는 핵심 도메인 타입을 정의합니다.
 export type AppEnvironment = "local" | "dev" | "staging-like";
 
 export type WorkspaceRegion =
@@ -35,6 +36,7 @@ export interface StoryEpisode {
 export interface StoryObject {
   id: EntityId;
   projectId: EntityId;
+  episodeId: EntityId;
   category: StoryObjectCategory;
   name: string;
   summary: string;

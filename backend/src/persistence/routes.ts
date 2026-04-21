@@ -1,21 +1,57 @@
+﻿// 이 파일은 영속화 API 라우트를 등록하고 저장소 구현을 선택합니다.
+
 import type { FastifyInstance } from "fastify";
 import type {
   ImportProjectRequest,
   SyncProjectRequest
 } from "@scenaairo/shared";
 
+import type { MySqlConfig, PersistenceDriver } from "../config/env.js";
+import { MySqlBackedPersistenceStore } from "./mysql-store.js";
 import { FileBackedPersistenceStore } from "./store.js";
 
 interface RegisterPersistenceRoutesOptions {
   cloudDataDir: string;
+  mysql: MySqlConfig;
+  persistenceDriver: PersistenceDriver;
 }
 
+interface PersistenceStore {
+  getProject(accountId: string, projectId: string): ReturnType<FileBackedPersistenceStore["getProject"]>;
+  importProject: FileBackedPersistenceStore["importProject"];
+  listProjects: FileBackedPersistenceStore["listProjects"];
+  syncProject: FileBackedPersistenceStore["syncProject"];
+  close?: () => Promise<void>;
+}
+
+// 설정에 맞춰 파일/DB 영속화 저장소를 생성합니다.
+function createPersistenceStore(options: RegisterPersistenceRoutesOptions): PersistenceStore {
+  if (options.persistenceDriver === "mysql") {
+    return new MySqlBackedPersistenceStore({
+      database: options.mysql.database,
+      host: options.mysql.host,
+      password: options.mysql.password,
+      port: options.mysql.port,
+      user: options.mysql.user
+    });
+  }
+
+  return new FileBackedPersistenceStore({
+    cloudDataDir: options.cloudDataDir
+  });
+}
+
+// 백엔드 영속화 API 엔드포인트를 Fastify에 등록합니다.
 export async function registerPersistenceRoutes(
   app: FastifyInstance,
   options: RegisterPersistenceRoutesOptions
 ) {
-  const store = new FileBackedPersistenceStore({
-    cloudDataDir: options.cloudDataDir
+  const store = createPersistenceStore(options);
+
+  app.addHook("onClose", async () => {
+    if (store.close) {
+      await store.close();
+    }
   });
 
   app.get("/api/persistence/accounts/:accountId/projects", async (request) => {

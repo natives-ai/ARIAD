@@ -1,3 +1,4 @@
+// 이 파일은 퍼시스턴스 라우트의 통합 동작을 검증합니다.
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -47,6 +48,7 @@ function createSnapshot(now: string): StoryWorkspaceSnapshot {
       {
         category: "person",
         createdAt: now,
+        episodeId: "episode_alpha",
         id: "object_alpha",
         name: "Her Mother's Warning",
         projectId: "project_alpha",
@@ -144,6 +146,7 @@ describe("persistence routes integration", () => {
         payload: {
           category: "place",
           createdAt: "2026-04-15T00:10:00.000Z",
+          episodeId: "episode_alpha",
           id: "object_beta",
           name: "Cafe Exit",
           projectId: "project_alpha",

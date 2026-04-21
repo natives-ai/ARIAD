@@ -79,6 +79,16 @@ Examples:
 - recording blockers, warnings, and escalation state
 - filling handoff packets during execution
 
+### 3.4 Text encoding discipline
+Files that contain Korean comments or Korean documentation must be stored in **UTF-8 with BOM**.
+
+Agents must:
+- use explicit UTF-8 reads/writes when inspecting or repairing Korean text on Windows
+- avoid relying on locale-default encodings for Korean-bearing files
+- distinguish between display/read-path encoding problems and actual file-content corruption before editing text
+
+When Korean text looks broken in Windows PowerShell verification, first verify with UTF-8-aware reads and UTF-8 console output before concluding that the file content itself is damaged.
+
 ---
 
 ## 4. Operating Model
@@ -167,6 +177,19 @@ Responsible for:
 ## 6. Soft Ownership Model
 The repository does **not** use hard file locks.
 Instead it uses **soft ownership**.
+
+### 6.1 Concurrent thread/worktree discipline
+Concurrent Codex chats or work loops do **not** provide automatic file-level serialization.
+
+This means:
+- agents must not assume same-file edits will be automatically ordered
+- concurrent edits to the same file may fail to apply cleanly or may overwrite newer context if done carelessly
+- before editing a file that may also be touched elsewhere, the agent should re-read the latest file state first
+
+Required operating rule:
+- prefer disjoint file ownership across concurrent chats
+- if the same file must be touched, route sequencing through the Orchestrator and treat that file as effectively single-writer until the current edit is integrated
+- for larger parallel work, prefer separate branches or worktrees over multiple chats editing the same file in-place
 
 Each responsibility area may define:
 - `Primary owner`

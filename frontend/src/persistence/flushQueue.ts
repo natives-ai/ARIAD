@@ -1,3 +1,4 @@
+﻿// 이 파일은 클라우드 동기화 작업의 의존성 정렬과 플러시 큐를 처리합니다.
 import type {
   CloudSyncOperation,
   StoryWorkspaceSnapshot,
@@ -94,6 +95,13 @@ function getDependencyKeys(
         availableOperations.has(`project:${operation.payload.projectId}`)
       ) {
         dependencies.push(`project:${operation.payload.projectId}`);
+      }
+
+      if (
+        !hasEpisode(operation.payload.episodeId, remoteSnapshot, new Set()) &&
+        availableOperations.has(`episode:${operation.payload.episodeId}`)
+      ) {
+        dependencies.push(`episode:${operation.payload.episodeId}`);
       }
 
       return dependencies;
@@ -229,6 +237,10 @@ interface FlushQueueOptions {
   onSynced: (response: SyncProjectResponse) => void;
   onSyncing: () => void;
   onError: (error: Error) => void;
+  loadPending?: () => CloudSyncOperation[];
+  savePending?: (operations: CloudSyncOperation[]) => void;
+  retryBaseMs?: number;
+  maxRetryDelayMs?: number;
   syncProject: (operations: CloudSyncOperation[]) => Promise<SyncProjectResponse>;
   getRemoteSnapshot: () => StoryWorkspaceSnapshot | null;
 }
@@ -238,26 +250,54 @@ export class PersistenceFlushQueue {
 
   private pending: CloudSyncOperation[] = [];
 
+  private retryAttempt = 0;
+
+  private retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   private readonly debounceMs: number;
 
+  private readonly retryBaseMs: number;
+
+  private readonly maxRetryDelayMs: number;
+
   constructor(private readonly options: FlushQueueOptions) {
     this.debounceMs = options.debounceMs ?? 40;
+    this.retryBaseMs = options.retryBaseMs ?? 1000;
+    this.maxRetryDelayMs = options.maxRetryDelayMs ?? 15000;
+    this.pending = [...(options.loadPending?.() ?? [])];
   }
 
+  // 큐 타이머를 정리하고 후속 동기화를 중단합니다.
   dispose() {
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
       this.timeoutId = null;
     }
+
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
+    }
   }
 
+  // 새 동기화 연산을 큐에 적재하고 디바운스 플러시를 예약합니다.
   schedule(operations: CloudSyncOperation[]) {
+    if (operations.length === 0) {
+      return;
+    }
+
     this.pending.push(...operations);
+    this.persistPending();
 
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
+    }
+
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
     }
 
     this.timeoutId = setTimeout(() => {
@@ -265,10 +305,16 @@ export class PersistenceFlushQueue {
     }, this.debounceMs);
   }
 
+  // 현재 큐를 즉시 원격으로 전송합니다.
   async flushNow() {
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
       this.timeoutId = null;
+    }
+
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
     }
 
     if (this.pending.length === 0) {
@@ -288,21 +334,60 @@ export class PersistenceFlushQueue {
       this.options.getRemoteSnapshot()
     );
     this.pending = [];
+    this.persistPending();
 
     this.options.onSyncing();
     this.inFlight = this.options
       .syncProject(operations)
       .then((response) => {
+        this.retryAttempt = 0;
         this.options.onSynced(response);
       })
       .catch((error: unknown) => {
+        const syncError =
+          error instanceof Error ? error : new Error("sync_failed");
         this.pending = [...operations, ...this.pending];
-        this.options.onError(error instanceof Error ? error : new Error("sync_failed"));
+        this.persistPending();
+
+        if (syncError.message !== "not_authenticated") {
+          this.retryAttempt += 1;
+          this.scheduleRetry();
+        }
+
+        this.options.onError(syncError);
       })
       .finally(() => {
         this.inFlight = null;
       });
 
     await this.inFlight;
+  }
+
+  // 현재 대기 연산을 영속 저장소에 기록합니다.
+  private persistPending() {
+    if (this.options.savePending) {
+      this.options.savePending(this.pending);
+    }
+  }
+
+  // 실패 후 지수 백오프로 재시도를 예약합니다.
+  private scheduleRetry() {
+    if (this.pending.length === 0) {
+      return;
+    }
+
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId);
+    }
+
+    const delay = Math.min(
+      this.maxRetryDelayMs,
+      this.retryBaseMs * 2 ** Math.max(0, this.retryAttempt - 1)
+    );
+
+    this.retryTimeoutId = setTimeout(() => {
+      this.retryTimeoutId = null;
+      void this.flushNow();
+    }, delay);
   }
 }

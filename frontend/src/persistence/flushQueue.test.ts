@@ -1,3 +1,4 @@
+﻿// 이 파일은 퍼시스턴스 플러시 큐의 정렬/재시도 동작을 검증합니다.
 import { describe, expect, it, vi } from "vitest";
 import type {
   CloudSyncOperation,
@@ -77,6 +78,7 @@ describe("persistence flush queue", () => {
         payload: {
           category: "person",
           createdAt: "2026-04-15T00:02:00.000Z",
+          episodeId: "episode_alpha",
           id: "object_alpha",
           name: "Heroine's Mother",
           projectId: "project_alpha",
@@ -101,7 +103,7 @@ describe("persistence flush queue", () => {
     );
 
     expect(sortedKinds.indexOf("project")).toBeLessThan(sortedKinds.indexOf("episode"));
-    expect(sortedKinds.indexOf("project")).toBeLessThan(sortedKinds.indexOf("object"));
+    expect(sortedKinds.indexOf("episode")).toBeLessThan(sortedKinds.indexOf("object"));
     expect(sortedKinds.indexOf("episode")).toBeLessThan(sortedKinds.indexOf("node"));
     expect(sortedKinds.indexOf("object")).toBeLessThan(sortedKinds.indexOf("node"));
     expect(sortedKinds.indexOf("node")).toBeLessThan(
@@ -171,5 +173,85 @@ describe("persistence flush queue", () => {
     expect(attemptCount).toBe(2);
 
     queue.dispose();
+  });
+
+  it("restores pending operations from local persistence and clears them after sync", async () => {
+    const snapshot = createSnapshot();
+    const linkage: ProjectLinkageMetadata = {
+      cloudLinked: true,
+      entityId: snapshot.project.id,
+      lastImportedAt: "2026-04-15T00:00:00.000Z",
+      lastSyncedAt: "2026-04-15T00:00:00.000Z",
+      linkedAccountId: "demo-account"
+    };
+    let persisted: CloudSyncOperation[] = [];
+    const operation: CloudSyncOperation = {
+      action: "upsert",
+      kind: "node",
+      payload: {
+        contentMode: "keywords",
+        createdAt: "2026-04-15T00:01:00.000Z",
+        episodeId: "episode_alpha",
+        id: "node_alpha",
+        keywords: ["pressure"],
+        level: "major",
+        objectIds: [],
+        orderIndex: 1,
+        parentId: null,
+        projectId: "project_alpha",
+        text: "",
+        updatedAt: "2026-04-15T00:01:00.000Z"
+      }
+    };
+
+    const firstQueue = new PersistenceFlushQueue({
+      debounceMs: 60000,
+      getRemoteSnapshot: () => snapshot,
+      loadPending: () => persisted,
+      onError: vi.fn(),
+      onSynced: vi.fn(),
+      onSyncing: vi.fn(),
+      savePending: (operations) => {
+        persisted = [...operations];
+      },
+      syncProject: async () => {
+        return {
+          linkage,
+          snapshot
+        };
+      }
+    });
+
+    firstQueue.schedule([operation]);
+
+    expect(persisted).toHaveLength(1);
+
+    firstQueue.dispose();
+
+    const onSynced = vi.fn();
+    const restoredQueue = new PersistenceFlushQueue({
+      debounceMs: 0,
+      getRemoteSnapshot: () => snapshot,
+      loadPending: () => persisted,
+      onError: vi.fn(),
+      onSynced,
+      onSyncing: vi.fn(),
+      savePending: (operations) => {
+        persisted = [...operations];
+      },
+      syncProject: async () => {
+        return {
+          linkage,
+          snapshot
+        };
+      }
+    });
+
+    await restoredQueue.flushNow();
+
+    expect(onSynced).toHaveBeenCalledTimes(1);
+    expect(persisted).toHaveLength(0);
+
+    restoredQueue.dispose();
   });
 });

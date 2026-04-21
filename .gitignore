@@ -17,3 +17,8 @@ npm-debug.log*
 
 .codex-runtime/
 .data/
+.codex-dev-*.log
+.devlogs/
+.npm-cache/
+**/.npm-cache/
+.yarn/install-state.gz

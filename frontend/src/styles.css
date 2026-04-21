@@ -1,4 +1,5 @@
-﻿:root {
+﻿/* 이 파일은 워크스페이스 주요 화면 스타일을 정의합니다. */
+:root {
   --bg-cream: #fffaf0;
   --bg-panel: rgba(255, 255, 251, 0.92);
   --bg-panel-strong: rgba(255, 255, 253, 0.97);
@@ -328,12 +329,18 @@ textarea {
   background: rgba(255, 255, 253, 0.92);
   border: 1px solid rgba(22, 35, 43, 0.08);
   border-radius: 1rem;
+  box-shadow: 0 0 0 rgba(201, 120, 50, 0);
   display: flex;
   gap: 0.35rem;
   justify-content: space-between;
   overflow: visible;
   padding: 0.2rem 0.25rem 0.2rem 0.2rem;
   position: relative;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .sidebar-folder-button {
@@ -347,6 +354,20 @@ textarea {
   min-height: 2.7rem;
   padding: 0.62rem 0.35rem 0.62rem 0.55rem;
   text-align: left;
+}
+
+.sidebar-folder-item.is-active > .sidebar-folder-card,
+.sidebar-folder-card.is-active {
+  background: linear-gradient(180deg, rgba(255, 246, 236, 0.98), rgba(255, 239, 219, 0.96));
+  border-color: rgba(201, 120, 50, 0.42);
+  box-shadow:
+    0 0 0 1px rgba(201, 120, 50, 0.18),
+    0 0.9rem 2rem rgba(201, 120, 50, 0.12);
+}
+
+.sidebar-folder-button.is-active {
+  color: #6f3d14;
+  font-weight: 700;
 }
 
 .sidebar-folder-copy {
@@ -383,6 +404,11 @@ textarea {
   padding-left: 0.8rem;
 }
 
+.sidebar-folder-item.is-active > .sidebar-folder-episode-list {
+  border-left: 2px solid rgba(201, 120, 50, 0.28);
+  padding-left: 1rem;
+}
+
 .sidebar-folder-empty {
   margin: 0 0 0 0.8rem;
 }
@@ -396,11 +422,27 @@ textarea {
   background: rgba(255, 255, 253, 0.92);
   border: 1px solid rgba(22, 35, 43, 0.08);
   border-radius: 1rem;
+  box-shadow: 0 0 0 rgba(201, 120, 50, 0);
   display: flex;
   gap: 0.4rem;
   overflow: visible;
   padding: 0.2rem 0.25rem 0.2rem 0.2rem;
   position: relative;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.sidebar-episode-item.is-active > .sidebar-story-shell,
+.sidebar-story-shell.is-active {
+  background: linear-gradient(180deg, rgba(255, 244, 229, 0.98), rgba(255, 235, 210, 0.98));
+  border-color: rgba(201, 120, 50, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(201, 120, 50, 0.2),
+    0 0.9rem 2rem rgba(201, 120, 50, 0.14);
+  transform: translateX(0.15rem);
 }
 
 .sidebar-episode-link {
@@ -416,6 +458,11 @@ textarea {
   padding: 0.62rem 0.35rem 0.62rem 0.55rem;
   text-align: left;
   width: calc(100% - 2.8rem);
+}
+
+.sidebar-episode-link.is-active {
+  color: #6f3d14;
+  font-weight: 700;
 }
 
 .sidebar-episode-link strong {
@@ -445,6 +492,19 @@ textarea {
   width: 0.76rem;
 }
 
+.sidebar-episode-item.is-active .sidebar-item-icon-episode {
+  background: rgba(255, 248, 241, 0.98);
+  border-color: rgba(201, 120, 50, 0.82);
+}
+
+.sidebar-episode-item.is-active .sidebar-item-icon-episode::before {
+  background: rgba(201, 120, 50, 0.62);
+}
+
+.sidebar-episode-item.is-active .sidebar-item-icon-episode::after {
+  border-top-color: rgba(201, 120, 50, 0.38);
+}
+
 .sidebar-item-icon-episode::before {
   background: rgba(22, 35, 43, 0.28);
   border-radius: 999px;
@@ -472,6 +532,12 @@ textarea {
   height: 0.78rem;
   margin-top: 0.1rem;
   width: 0.92rem;
+}
+
+.sidebar-folder-item.is-active .sidebar-item-icon-folder,
+.sidebar-folder-item.is-active .sidebar-item-icon-folder::before {
+  background: rgba(255, 248, 238, 0.98);
+  border-color: rgba(201, 120, 50, 0.78);
 }
 
 .sidebar-item-icon-folder::before {
@@ -1357,11 +1423,15 @@ textarea {
   position: absolute;
   right: auto;
   text-align: left;
+  /* 노드 순서 재배치 시 위치 이동을 부드럽게 보여줍니다. */
   transition:
+    left 170ms cubic-bezier(0.22, 0.85, 0.33, 1),
+    top 170ms cubic-bezier(0.22, 0.85, 0.33, 1),
     transform 160ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease,
     background 160ms ease;
+  will-change: left, top, transform;
   width: 16.75rem;
   z-index: 2;
 }
@@ -1398,7 +1468,18 @@ textarea {
 .node-card.is-selected {
   border-color: #0f2a32;
   box-shadow: 0 0 0 4px rgba(18, 50, 60, 0.1);
-  z-index: 9;
+  z-index: 14;
+}
+
+.node-card.is-dragging {
+  cursor: grabbing;
+  transform: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+  will-change: transform;
+  z-index: 18;
 }
 
 .node-card.has-keyword-cloud {
@@ -1448,7 +1529,10 @@ textarea {
   min-width: 0;
   opacity: 0;
   padding: 0;
+  pointer-events: none;
   position: absolute;
+  touch-action: none;
+  transition: opacity 120ms ease;
   z-index: 8;
 }
 
@@ -1456,28 +1540,34 @@ textarea {
   transform: none;
 }
 
+.node-card.is-selected:hover .node-resize-handle,
+.node-card.is-selected:focus-within .node-resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .node-resize-handle-horizontal {
   cursor: ew-resize;
-  height: calc(100% - 2.1rem);
-  right: -0.5rem;
-  top: 1.05rem;
-  width: 1rem;
+  height: calc(100% - 1.8rem);
+  right: -0.45rem;
+  top: 0.9rem;
+  width: 0.9rem;
 }
 
 .node-resize-handle-vertical {
-  bottom: -0.5rem;
+  bottom: -0.45rem;
   cursor: ns-resize;
-  height: 1rem;
-  left: 1.15rem;
-  width: calc(100% - 2.3rem);
+  height: 0.9rem;
+  left: 0.9rem;
+  width: calc(100% - 1.8rem);
 }
 
 .node-resize-handle-diagonal {
-  bottom: -0.56rem;
+  bottom: -0.5rem;
   cursor: nwse-resize;
-  height: 1.25rem;
-  right: -0.56rem;
-  width: 1.25rem;
+  height: 1.05rem;
+  right: -0.5rem;
+  width: 1.05rem;
 }
 
 .node-card-header,

@@ -1,3 +1,4 @@
+﻿// 이 파일은 WorkspaceShell 주요 상호작용 시나리오를 검증하는 테스트를 포함합니다.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +37,59 @@ describe("workspace shell recommendation flow", () => {
 
   async function getSelectedNodeCard() {
     return (await screen.findByTestId("selected-node-title")).closest(".node-card") as HTMLElement;
+  }
+
+  // 캔버스 뷰포트 요소를 찾는 함수
+  function getCanvasViewport() {
+    const viewport = document.querySelector(".canvas-viewport");
+
+    if (!(viewport instanceof HTMLElement)) {
+      throw new Error("canvas_viewport_not_found");
+    }
+
+    return viewport;
+  }
+
+  // 인라인 스타일 px 문자열을 숫자로 파싱합니다.
+  function parseCssPixels(value: string) {
+    return Number.parseFloat(value.replace("px", ""));
+  }
+
+  // 레인 컬럼의 좌표와 폭을 읽어옵니다.
+  function getLaneColumnMetrics(level: "major" | "minor" | "detail") {
+    const laneColumn = document.querySelector(`.lane-column-${level}`);
+
+    if (!(laneColumn instanceof HTMLElement)) {
+      throw new Error(`lane_column_not_found:${level}`);
+    }
+
+    return {
+      left: parseCssPixels(laneColumn.style.left),
+      width: parseCssPixels(laneColumn.style.width)
+    };
+  }
+
+  // 노드 카드의 좌표와 크기를 읽어옵니다.
+  function getNodeCardMetrics(node: HTMLElement) {
+    return {
+      height: parseCssPixels(node.style.height),
+      left: parseCssPixels(node.style.left),
+      top: parseCssPixels(node.style.top),
+      width: parseCssPixels(node.style.width)
+    };
+  }
+
+  // 특정 X 좌표와 가장 가까운 연결 포트의 X 좌표를 찾습니다.
+  function getClosestConnectionPortLeft(targetX: number) {
+    const ports = Array.from(document.querySelectorAll(".connection-port-line"));
+
+    if (ports.length === 0) {
+      throw new Error("connection_port_not_found");
+    }
+
+    return ports
+      .map((port) => parseCssPixels((port as HTMLElement).style.left))
+      .sort((left, right) => Math.abs(left - targetX) - Math.abs(right - targetX))[0]!;
   }
 
   function pressWorkspaceKey(
@@ -190,7 +244,126 @@ describe("workspace shell recommendation flow", () => {
       await user.click(await screen.findByRole("button", { name: "Heroine's Mother" }));
 
       expect(await screen.findByTestId("detail-editor")).toBeInTheDocument();
+      expect(screen.queryByText("Owned Episode")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Close Details" })).toBeInTheDocument();
+    } finally {
+      HTMLElement.prototype.requestFullscreen = originalRequestFullscreen;
+      document.exitFullscreen = originalExitFullscreen;
+      Object.defineProperty(document, "fullscreenElement", {
+        configurable: true,
+        value: null
+      });
+    }
+  });
+
+  it("renders node more menu inside the fullscreen canvas container", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+    const originalRequestFullscreen = HTMLElement.prototype.requestFullscreen;
+    const originalExitFullscreen = document.exitFullscreen;
+    let fullscreenElement: Element | null = null;
+
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement
+    });
+
+    HTMLElement.prototype.requestFullscreen = vi.fn(async () => {
+      fullscreenElement = document.querySelector(".panel-canvas");
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+
+    document.exitFullscreen = vi.fn(async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+
+    try {
+      render(<WorkspaceShell />);
+
+      await user.click(await screen.findByRole("button", { name: "Enter Fullscreen" }));
+      const firstNodeCard = screen
+        .getAllByTestId(/node-/)
+        .find((element) => element.classList.contains("node-card")) as HTMLElement | undefined;
+
+      if (!firstNodeCard) {
+        throw new Error("node_card_not_found");
+      }
+
+      await user.click(firstNodeCard);
+      await openSelectedNodeMenu(user);
+
+      const keywordButton = await screen.findByRole("button", { name: "Keyword Suggestions" });
+      expect(keywordButton.closest(".panel-canvas")).not.toBeNull();
+    } finally {
+      HTMLElement.prototype.requestFullscreen = originalRequestFullscreen;
+      document.exitFullscreen = originalExitFullscreen;
+      Object.defineProperty(document, "fullscreenElement", {
+        configurable: true,
+        value: null
+      });
+    }
+  });
+
+  it("resizes the selected node while the canvas is fullscreen", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+    const originalRequestFullscreen = HTMLElement.prototype.requestFullscreen;
+    const originalExitFullscreen = document.exitFullscreen;
+    let fullscreenElement: Element | null = null;
+
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement
+    });
+
+    HTMLElement.prototype.requestFullscreen = vi.fn(async () => {
+      fullscreenElement = document.querySelector(".panel-canvas");
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+
+    document.exitFullscreen = vi.fn(async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+
+    try {
+      render(<WorkspaceShell />);
+
+      await user.click(await screen.findByRole("button", { name: "Enter Fullscreen" }));
+      const selectedNode = await getSelectedNodeCard();
+
+      await user.click(selectedNode);
+      fireEvent.pointerDown(
+        within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
+        {
+          button: 0,
+          clientX: 100,
+          clientY: 100
+        }
+      );
+      fireEvent.pointerMove(window, { clientX: 148, clientY: 100 });
+      fireEvent.pointerUp(window);
+
+      await waitFor(() => {
+        expect(selectedNode.style.width).toBe("316px");
+      });
     } finally {
       HTMLElement.prototype.requestFullscreen = originalRequestFullscreen;
       document.exitFullscreen = originalExitFullscreen;
@@ -547,6 +720,85 @@ describe("workspace shell recommendation flow", () => {
     expect(zoomReadout).toHaveTextContent("100%");
   });
 
+  it("uses ctrl+wheel on the canvas viewport to zoom the canvas itself", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    render(<WorkspaceShell />);
+
+    const zoomReadout = await screen.findByRole("button", { name: "Reset Zoom" });
+    const majorLane = await screen.findByTestId("lane-major");
+    const canvasViewport = majorLane.closest(".canvas-viewport");
+
+    if (!(canvasViewport instanceof HTMLElement)) {
+      throw new Error("canvas_viewport_not_found");
+    }
+
+    expect(zoomReadout).toHaveTextContent("100%");
+
+    const wheelEvent = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 160,
+      clientY: 160,
+      ctrlKey: true,
+      deltaY: -120
+    });
+
+    canvasViewport.dispatchEvent(wheelEvent);
+
+    await waitFor(() => {
+      expect(zoomReadout).toHaveTextContent("118%");
+    });
+    expect(wheelEvent.defaultPrevented).toBe(true);
+  });
+
+  it("uses ctrl+wheel on a node input inside the canvas to zoom the canvas itself", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const zoomReadout = await screen.findByRole("button", { name: "Reset Zoom" });
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.click(inlineInput);
+
+    expect(inlineInput).toHaveFocus();
+    expect(zoomReadout).toHaveTextContent("100%");
+
+    const wheelEvent = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 180,
+      clientY: 180,
+      ctrlKey: true,
+      deltaY: -120
+    });
+
+    inlineInput.dispatchEvent(wheelEvent);
+
+    await waitFor(() => {
+      expect(zoomReadout).toHaveTextContent("118%");
+    });
+    expect(wheelEvent.defaultPrevented).toBe(true);
+  });
+
   it("opens the right panel only when object detail editing is chosen", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -809,6 +1061,66 @@ describe("workspace shell recommendation flow", () => {
     expect(await screen.findByRole("button", { name: "Episode 11" })).toBeInTheDocument();
   });
 
+  it("highlights the selected episode and its containing folder in the sidebar", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: /New Folder/i }));
+    await user.type(screen.getByPlaceholderText("Name this folder"), "Act One");
+    await user.click(screen.getByRole("button", { name: "Create Folder" }));
+
+    const folderItem = (await screen.findByText("Act One")).closest(".sidebar-folder-item") as HTMLElement;
+
+    await user.click(within(folderItem).getByRole("button", { name: "More Act One" }));
+    await user.click(await screen.findByRole("button", { name: "Add Episodes" }));
+    await user.click(
+      within(document.querySelector(".sidebar-folder-picker") as HTMLElement).getByRole("button", {
+        name: /Episode 12/
+      })
+    );
+    await user.click(
+      within(document.querySelector(".sidebar-folder-picker") as HTMLElement).getByRole("button", {
+        name: /Episode 11/
+      })
+    );
+    await user.click(document.body);
+
+    await waitFor(() => {
+      expect(folderItem).toHaveClass("is-active");
+      expect(
+        within(folderItem)
+          .getByRole("button", { name: "Episode 12" })
+          .closest(".sidebar-episode-item")
+      ).toHaveClass("is-active");
+    });
+
+    await user.click(within(folderItem).getByRole("button", { name: "Episode 11" }));
+
+    await waitFor(() => {
+      expect(folderItem).toHaveClass("is-active");
+      expect(
+        within(folderItem)
+          .getByRole("button", { name: "Episode 11" })
+          .closest(".sidebar-episode-item")
+      ).toHaveClass("is-active");
+      expect(
+        within(folderItem)
+          .getByRole("button", { name: "Episode 12" })
+          .closest(".sidebar-episode-item")
+      ).not.toHaveClass("is-active");
+    });
+  });
+
   it("persists object detail edits across reload", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -962,18 +1274,20 @@ describe("workspace shell recommendation flow", () => {
     render(<WorkspaceShell />);
 
     expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    const canvasViewport = getCanvasViewport();
+    await user.click(canvasViewport);
 
-    pressWorkspaceKey("c", { ctrlKey: true });
-    pressWorkspaceKey("v", { ctrlKey: true });
+    pressWorkspaceKey("c", { ctrlKey: true }, canvasViewport);
+    pressWorkspaceKey("v", { ctrlKey: true }, canvasViewport);
 
     expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 2");
     expect(within(screen.getByTestId("history-controls")).getByRole("button", { name: "Undo" })).toBeEnabled();
 
-    pressWorkspaceKey("z", { ctrlKey: true });
+    pressWorkspaceKey("z", { ctrlKey: true }, canvasViewport);
 
     expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 1");
 
-    pressWorkspaceKey("z", { ctrlKey: true, shiftKey: true });
+    pressWorkspaceKey("z", { ctrlKey: true, shiftKey: true }, canvasViewport);
 
     expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 2");
 
@@ -1005,7 +1319,7 @@ describe("workspace shell recommendation flow", () => {
     pressWorkspaceKey("z", { ctrlKey: true }, pastedInlineInput);
 
     await waitFor(() => {
-      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 3");
     });
 
     pressWorkspaceKey("Escape");
@@ -1018,6 +1332,765 @@ describe("workspace shell recommendation flow", () => {
     pressWorkspaceKey("Escape");
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("restores resized node dimensions after delete undo and keeps redo consistent", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await screen.findByTestId("node-count");
+    await waitFor(() => {
+      expect(document.querySelector(".timeline-start-anchor")).not.toBeNull();
+      expect(document.querySelector(".timeline-end-handle")).not.toBeNull();
+    });
+
+    const selectedNode = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+    const canvasViewport = getCanvasViewport();
+
+    await user.click(canvasViewport);
+    await user.click(selectedNode);
+
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
+      {
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 148, clientY: 100 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(selectedNode.style.width).toBe("316px");
+    });
+
+    pressWorkspaceKey("Delete", {}, canvasViewport);
+
+    const deleteDialog = await screen.findByRole("dialog");
+    await user.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
+    });
+
+    pressWorkspaceKey("z", { ctrlKey: true }, canvasViewport);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    });
+
+    const restoredNode = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+
+    expect(restoredNode.style.width).toBe("316px");
+
+    pressWorkspaceKey("y", { ctrlKey: true }, canvasViewport);
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
+    });
+
+    pressWorkspaceKey("z", { ctrlKey: true }, canvasViewport);
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    });
+
+    const restoredAfterRedoNode = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+
+    expect(restoredAfterRedoNode.style.width).toBe("316px");
+  });
+
+  it("sizes the first major node to timeline span and shrinks timeline after deletion", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await screen.findByTestId("node-count");
+
+    function getTimelineSpan() {
+      const startAnchor = document.querySelector(".timeline-start-anchor");
+      const endHandle = document.querySelector(".timeline-end-handle");
+
+      if (!(startAnchor instanceof HTMLElement) || !(endHandle instanceof HTMLElement)) {
+        throw new Error("timeline_anchor_not_found");
+      }
+
+      const startTop = Number.parseFloat(startAnchor.style.top.replace("px", ""));
+      const endTop = Number.parseFloat(endHandle.style.top.replace("px", ""));
+
+      return {
+        endTop,
+        span: Math.round(endTop - startTop)
+      };
+    }
+
+    const initialTimeline = getTimelineSpan();
+    const selectedNode = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+
+    await user.click(selectedNode);
+    pressWorkspaceKey("Delete");
+
+    const deleteDialog = await screen.findByRole("dialog");
+    await user.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
+    });
+
+    const shrunkTimeline = getTimelineSpan();
+    expect(shrunkTimeline.endTop).toBeLessThan(initialTimeline.endTop);
+
+    await user.click(screen.getByRole("button", { name: "Create Node" }));
+    await user.click(screen.getByTestId("lane-major"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    });
+
+    const recreatedMajorNode = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+
+    expect(recreatedMajorNode.style.height).toBe(`${shrunkTimeline.span}px`);
+  });
+
+  it("disables timeline-end drag when start and end are the same major node", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const getMajorNodes = () =>
+      screen
+        .getAllByTestId(/node-/)
+        .filter((element) => element.classList.contains("node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(1);
+    });
+
+    expect(await screen.findByRole("button", { name: "Move timeline end" })).toBeDisabled();
+
+    await createEmptyMajorNode(user);
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(2);
+      expect(screen.getByRole("button", { name: "Move timeline end" })).toBeEnabled();
+    });
+  });
+
+  it("keeps major start/end markers after resizing major nodes", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      screen
+        .getAllByTestId(/node-/)
+        .filter((element) => element.classList.contains("node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(2);
+    });
+
+    const startNodeBefore = getMajorNodes().find((element) =>
+      element.classList.contains("is-start-node")
+    );
+    const endNodeBefore = getMajorNodes().find((element) =>
+      element.classList.contains("is-end-node")
+    );
+
+    if (!startNodeBefore || !endNodeBefore) {
+      throw new Error("missing_start_or_end_major_node");
+    }
+
+    const startNodeId = startNodeBefore.getAttribute("data-testid");
+    const endNodeId = endNodeBefore.getAttribute("data-testid");
+
+    if (!startNodeId || !endNodeId || startNodeId === endNodeId) {
+      throw new Error("invalid_major_anchor_nodes");
+    }
+
+    await user.click(endNodeBefore);
+    fireEvent.pointerDown(
+      within(endNodeBefore).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 136 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(startNodeId)).toHaveClass("is-start-node");
+      expect(screen.getByTestId(endNodeId)).toHaveClass("is-end-node");
+    });
+  });
+
+  it("keeps resized end major node aligned to timeline center and end anchor", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+
+    const endNodeBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(endNodeBefore instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found");
+    }
+
+    await user.click(endNodeBefore);
+    fireEvent.pointerDown(
+      within(endNodeBefore).getByRole("button", { name: "Resize horizontally" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 420, clientY: 100 });
+    fireEvent.pointerUp(window);
+
+    fireEvent.pointerDown(
+      within(endNodeBefore).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 240 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(endNodeBefore.style.width)).toBeGreaterThan(268);
+      expect(parseCssPixels(endNodeBefore.style.height)).toBeGreaterThan(102);
+    });
+
+    const endNodeAfter = document.querySelector(".node-card-level-major.is-end-node");
+    const timelineStartAnchor = document.querySelector(".timeline-start-anchor");
+    const timelineEndHandle = screen.getByRole("button", { name: "Move timeline end" });
+
+    if (!(endNodeAfter instanceof HTMLElement)) {
+      throw new Error("resized_end_major_node_not_found");
+    }
+
+    if (!(timelineStartAnchor instanceof HTMLElement)) {
+      throw new Error("timeline_start_anchor_not_found");
+    }
+
+    if (!(timelineEndHandle instanceof HTMLElement)) {
+      throw new Error("timeline_end_handle_not_found");
+    }
+
+    const majorLane = getLaneColumnMetrics("major");
+    const timelineCenterX = majorLane.left + parseCssPixels(timelineStartAnchor.style.left);
+    const endNodeCenterX =
+      parseCssPixels(endNodeAfter.style.left) + parseCssPixels(endNodeAfter.style.width) / 2;
+    const timelineEndY = parseCssPixels(timelineEndHandle.style.top);
+    const endNodeBottomY =
+      parseCssPixels(endNodeAfter.style.top) + parseCssPixels(endNodeAfter.style.height);
+
+    expect(Math.abs(endNodeCenterX - timelineCenterX)).toBeLessThan(0.6);
+    expect(Math.abs(endNodeBottomY - timelineEndY)).toBeLessThan(0.6);
+  });
+
+  it("keeps three major nodes separated after large end-node resize", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const endMajorNodeBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(endMajorNodeBefore instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found");
+    }
+
+    await user.click(endMajorNodeBefore);
+    fireEvent.pointerDown(
+      within(endMajorNodeBefore).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 760 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(endMajorNodeBefore.style.height)).toBeGreaterThan(500);
+    });
+
+    const endMajorNodeAfter = document.querySelector(".node-card-level-major.is-end-node");
+    const middleMajorNode = Array.from(document.querySelectorAll(".node-card-level-major")).find(
+      (nodeElement) =>
+        !nodeElement.classList.contains("is-start-node") &&
+        !nodeElement.classList.contains("is-end-node")
+    );
+
+    if (!(endMajorNodeAfter instanceof HTMLElement)) {
+      throw new Error("end_major_node_after_resize_not_found");
+    }
+
+    if (!(middleMajorNode instanceof HTMLElement)) {
+      throw new Error("middle_major_node_not_found");
+    }
+
+    const endMetrics = getNodeCardMetrics(endMajorNodeAfter);
+    const middleMetrics = getNodeCardMetrics(middleMajorNode);
+    const upperNodeBottom =
+      endMetrics.top < middleMetrics.top
+        ? endMetrics.top + endMetrics.height
+        : middleMetrics.top + middleMetrics.height;
+    const lowerNodeTop =
+      endMetrics.top < middleMetrics.top ? middleMetrics.top : endMetrics.top;
+
+    expect(upperNodeBottom + 17).toBeLessThanOrEqual(lowerNodeTop + 0.6);
+  });
+
+  it("hides resize handles for fixed nodes", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = await getSelectedNodeCard();
+    await user.click(selectedNode);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Fixed" }));
+
+    await waitFor(() => {
+      expect(selectedNode).toHaveClass("is-fixed");
+    });
+
+    expect(
+      within(selectedNode).queryByRole("button", { name: "Resize horizontally" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(selectedNode).queryByRole("button", { name: "Resize vertically" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(selectedNode).queryByRole("button", { name: "Resize diagonally" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps vertical resize shrink delta consistent with expansion delta", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = await getSelectedNodeCard();
+
+    await user.click(selectedNode);
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 148 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(selectedNode.style.height).toBe("150px");
+    });
+
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 76 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(selectedNode.style.height).toBe("126px");
+    });
+  });
+
+  it("preserves manual vertical shrink after pointer up on text-expanded nodes", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = await getSelectedNodeCard();
+    await user.click(selectedNode);
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 120
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 220 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBeGreaterThan(180);
+    });
+
+    const expandedHeight = parseCssPixels(selectedNode.style.height);
+    const inlineInput = within(selectedNode).getByRole("textbox");
+    const inlineEditor = inlineInput.closest(".node-inline-editor");
+
+    if (!(inlineEditor instanceof HTMLElement)) {
+      throw new Error("inline_editor_not_found");
+    }
+
+    Object.defineProperty(inlineEditor, "scrollHeight", {
+      configurable: true,
+      get: () => 220
+    });
+    Object.defineProperty(inlineInput, "scrollHeight", {
+      configurable: true,
+      get: () => 220
+    });
+
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 220
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 120 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBeLessThan(expandedHeight - 60);
+    });
+
+    const shrunkHeight = parseCssPixels(selectedNode.style.height);
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBe(shrunkHeight);
+    });
+  });
+
+  it("keeps node height stable while typing when editor scrollHeight follows card height", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = await getSelectedNodeCard();
+    await user.click(selectedNode);
+
+    const inlineInput = within(selectedNode).getByRole("textbox");
+    const inlineEditor = inlineInput.closest(".node-inline-editor");
+    const previewElement =
+      inlineInput.closest(".node-inline-input-shell")?.querySelector(".node-inline-preview");
+
+    if (!(inlineEditor instanceof HTMLElement)) {
+      throw new Error("inline_editor_not_found");
+    }
+
+    if (!(previewElement instanceof HTMLElement)) {
+      throw new Error("inline_preview_not_found");
+    }
+
+    Object.defineProperty(previewElement, "scrollHeight", {
+      configurable: true,
+      get: () => 64
+    });
+    Object.defineProperty(inlineInput, "scrollHeight", {
+      configurable: true,
+      get: () => 64
+    });
+    Object.defineProperty(inlineEditor, "scrollHeight", {
+      configurable: true,
+      get: () => parseCssPixels(selectedNode.style.height)
+    });
+
+    fireEvent.change(inlineInput, {
+      target: {
+        value: "a"
+      }
+    });
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBeGreaterThan(102);
+    });
+
+    const firstTypedHeight = parseCssPixels(selectedNode.style.height);
+
+    fireEvent.change(inlineInput, {
+      target: {
+        value: "ab"
+      }
+    });
+    fireEvent.change(inlineInput, {
+      target: {
+        value: "abc"
+      }
+    });
+    fireEvent.change(inlineInput, {
+      target: {
+        value: "abcd"
+      }
+    });
+    fireEvent.change(inlineInput, {
+      target: {
+        value: "abcde"
+      }
+    });
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBe(firstTypedHeight);
+    });
+  });
+
+  it("does not grow node height on key-only interactions when preview height tracks the card", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = await getSelectedNodeCard();
+    await user.click(selectedNode);
+
+    const inlineInput = within(selectedNode).getByRole("textbox");
+    const previewElement =
+      inlineInput.closest(".node-inline-input-shell")?.querySelector(".node-inline-preview");
+
+    if (!(previewElement instanceof HTMLElement)) {
+      throw new Error("inline_preview_not_found");
+    }
+
+    Object.defineProperty(previewElement, "scrollHeight", {
+      configurable: true,
+      get: () => parseCssPixels(selectedNode.style.height)
+    });
+    Object.defineProperty(inlineInput, "scrollHeight", {
+      configurable: true,
+      get: () => 64
+    });
+
+    const baselineHeight = parseCssPixels(selectedNode.style.height);
+
+    fireEvent.keyUp(inlineInput, { key: "ArrowDown" });
+    fireEvent.keyUp(inlineInput, { key: "ArrowUp" });
+    fireEvent.keyUp(inlineInput, { key: "Escape" });
+    fireEvent.keyUp(inlineInput, { key: "Control" });
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBe(baselineHeight);
+    });
+  });
+
+  it("keeps resized minor nodes centered, shifts connection ports, and expands lane width", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    const selectedNode = await getSelectedNodeCard();
+    expect(selectedNode).toHaveClass("node-card-level-minor");
+
+    const minorLaneBefore = getLaneColumnMetrics("minor");
+    const selectedNodeBefore = getNodeCardMetrics(selectedNode);
+    const selectedNodeCenterBefore = selectedNodeBefore.left + selectedNodeBefore.width / 2;
+    const minorLaneCenterBefore = minorLaneBefore.left + minorLaneBefore.width / 2;
+    const childPortLeftBefore = getClosestConnectionPortLeft(selectedNodeCenterBefore);
+
+    expect(Math.abs(selectedNodeCenterBefore - minorLaneCenterBefore)).toBeLessThan(0.6);
+
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 100 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.width)).toBeGreaterThan(selectedNodeBefore.width);
+    });
+
+    const minorLaneAfter = getLaneColumnMetrics("minor");
+    const selectedNodeAfter = getNodeCardMetrics(selectedNode);
+    const selectedNodeCenterAfter = selectedNodeAfter.left + selectedNodeAfter.width / 2;
+    const minorLaneCenterAfter = minorLaneAfter.left + minorLaneAfter.width / 2;
+    const childPortLeftAfter = getClosestConnectionPortLeft(selectedNodeCenterAfter);
+
+    expect(minorLaneAfter.width).toBeGreaterThan(minorLaneBefore.width);
+    expect(selectedNodeAfter.left + selectedNodeAfter.width).toBeLessThanOrEqual(
+      minorLaneAfter.left + minorLaneAfter.width + 0.6
+    );
+    expect(Math.abs(selectedNodeCenterAfter - minorLaneCenterAfter)).toBeLessThan(0.6);
+    expect(Math.abs(childPortLeftAfter - selectedNodeCenterAfter)).toBeLessThan(0.6);
+    expect(childPortLeftAfter).toBeGreaterThan(childPortLeftBefore);
+  });
+
+  it("keeps oversized horizontal resize inside the minor lane bounds", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    const selectedNode = await getSelectedNodeCard();
+    expect(selectedNode).toHaveClass("node-card-level-minor");
+
+    await user.click(selectedNode);
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 6200, clientY: 100 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.width)).toBeGreaterThan(268);
+    });
+
+    const minorLaneAfter = getLaneColumnMetrics("minor");
+    const selectedNodeAfter = getNodeCardMetrics(selectedNode);
+
+    expect(selectedNodeAfter.left).toBeGreaterThanOrEqual(minorLaneAfter.left - 0.6);
+    expect(selectedNodeAfter.left + selectedNodeAfter.width).toBeLessThanOrEqual(
+      minorLaneAfter.left + minorLaneAfter.width + 0.6
+    );
   });
 
   it("allows the selected node to resize horizontally, vertically, and diagonally", async () => {
@@ -1043,7 +2116,7 @@ describe("workspace shell recommendation flow", () => {
 
     await user.click(selectedNode);
 
-    fireEvent.mouseDown(
+    fireEvent.pointerDown(
       within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
       {
         clientX: 100,
@@ -1057,7 +2130,7 @@ describe("workspace shell recommendation flow", () => {
       expect(selectedNode.style.width).toBe("316px");
     });
 
-    fireEvent.mouseDown(
+    fireEvent.pointerDown(
       within(selectedNode).getByRole("button", { name: "Resize vertically" }),
       {
         clientX: 100,
@@ -1071,7 +2144,7 @@ describe("workspace shell recommendation flow", () => {
       expect(selectedNode.style.height).toBe("138px");
     });
 
-    fireEvent.mouseDown(
+    fireEvent.pointerDown(
       within(selectedNode).getByRole("button", { name: "Resize diagonally" }),
       {
         clientX: 100,
@@ -1084,6 +2157,108 @@ describe("workspace shell recommendation flow", () => {
     await waitFor(() => {
       expect(selectedNode.style.width).toBe("348px");
       expect(selectedNode.style.height).toBe("162px");
+    });
+  });
+
+  it("keeps node position fixed while resizing", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+
+    await user.click(selectedNode);
+
+    const leftBefore = parseCssPixels(selectedNode.style.left);
+    const topBefore = parseCssPixels(selectedNode.style.top);
+
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 148 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(selectedNode.style.height)).toBeGreaterThan(102);
+      expect(parseCssPixels(selectedNode.style.left)).toBe(leftBefore);
+      expect(parseCssPixels(selectedNode.style.top)).toBe(topBefore);
+    });
+  });
+
+  it("starts node movement only after pointer drag crosses the activation threshold", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    const selectedMinorNode = await getSelectedNodeCard();
+    const nodeTestId = selectedMinorNode.getAttribute("data-testid");
+
+    if (!nodeTestId) {
+      throw new Error("selected_minor_node_testid_missing");
+    }
+
+    const getMinorNode = () => screen.getByTestId(nodeTestId);
+    const before = getNodeCardMetrics(getMinorNode());
+
+    fireEvent.pointerDown(getMinorNode(), {
+      button: 0,
+      clientX: before.left + 32,
+      clientY: before.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: before.left + 35,
+      clientY: before.top + 26
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(getNodeCardMetrics(getMinorNode()).left).toBe(before.left);
+      expect(getNodeCardMetrics(getMinorNode()).top).toBe(before.top);
+    });
+
+    fireEvent.pointerDown(getMinorNode(), {
+      button: 0,
+      clientX: before.left + 32,
+      clientY: before.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: before.left + 92,
+      clientY: before.top + 104
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const after = getNodeCardMetrics(getMinorNode());
+
+      expect(after.left).toBe(before.left);
+      expect(after.top).toBeGreaterThan(before.top + 50);
     });
   });
 });
