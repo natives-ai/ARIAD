@@ -214,6 +214,59 @@ export function resolveNodeOverlapPlacement(
   return nextPlacement;
 }
 
+// 이 함수는 같은 레인 노드를 세로 간격 규칙으로 순차 재배치합니다.
+export function applyLaneVerticalReflow(
+  nodeIds: string[],
+  nodePlacements: Map<string, { x: number; y: number }>,
+  nodeSizes: Record<string, NodeSize>,
+  options?: {
+    gap?: number;
+    lockedNodeIds?: Set<string>;
+  }
+) {
+  const gap = options?.gap ?? 8;
+  const lockedNodeIds = options?.lockedNodeIds ?? new Set<string>();
+  // 입력 nodeIds 순서를 유지해 리사이즈 중 노드 시각 순서가 뒤바뀌지 않도록 합니다.
+  const laneEntries = nodeIds
+    .map((nodeId) => {
+      const placement = nodePlacements.get(nodeId);
+
+      if (!placement) {
+        return null;
+      }
+
+      return {
+        nodeId,
+        placement,
+        size: getNodeSize(nodeSizes, nodeId)
+      };
+    })
+    .filter((entry): entry is { nodeId: string; placement: { x: number; y: number }; size: NodeSize } => {
+      return entry !== null;
+    });
+  let previousBottom: number | null = null;
+
+  for (const entry of laneEntries) {
+    const isLocked = lockedNodeIds.has(entry.nodeId);
+    const currentPlacement = nodePlacements.get(entry.nodeId) ?? entry.placement;
+    const maxY = maxCanvasContentBottom - entry.size.height;
+    const minimumY: number =
+      previousBottom === null ? stageTopPadding : previousBottom + gap;
+    const nextY: number = isLocked
+      ? currentPlacement.y
+      : Math.min(maxY, Math.max(currentPlacement.y, minimumY));
+
+    if (nextY !== currentPlacement.y) {
+      nodePlacements.set(entry.nodeId, {
+        ...currentPlacement,
+        y: nextY
+      });
+    }
+
+    previousBottom = (nodePlacements.get(entry.nodeId)?.y ?? nextY) + entry.size.height;
+  }
+}
+
 export function getMentionPopoverPosition(rect: DOMRect) {
   const maxLeft = Math.max(16, window.innerWidth - 280);
   const maxTop = Math.max(16, window.innerHeight - 220);

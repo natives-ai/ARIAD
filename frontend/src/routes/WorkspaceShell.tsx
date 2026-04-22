@@ -82,7 +82,8 @@ import {
   hasTextSelection,
   getPasteInsertIndex,
   getTimelineAnchorPositions,
-  snapMajorNodePlacementToTimelineAnchors
+  snapMajorNodePlacementToTimelineAnchors,
+  applyLaneVerticalReflow
 } from "./workspace-shell/workspaceShell.canvas";
 import {
   extractInlineKeywords,
@@ -366,6 +367,8 @@ export function WorkspaceShell() {
       }
     | {
         kind: "timeline-end";
+        followerNodeId: string | null;
+        followerNodeSize: NodeSize | null;
         stageTop: number;
       }
     | {
@@ -979,8 +982,38 @@ export function WorkspaceShell() {
         return;
       }
 
-      const nextTimelineEndY = (event.clientY - dragState.stageTop) / canvasZoom;
-      setTimelineEndY(Math.max(timelineStartY + 120, nextTimelineEndY));
+      const nextTimelineEndY = Math.max(
+        timelineStartY + 120,
+        (event.clientY - dragState.stageTop) / canvasZoom
+      );
+      const followerNodeId = dragState.followerNodeId;
+      const followerNodeSize = dragState.followerNodeSize;
+
+      if (!followerNodeId || !followerNodeSize) {
+        updateNodeDragPreview(null);
+        setTimelineEndY(nextTimelineEndY);
+        return;
+      }
+
+      const followerPreviewPlacement = getTimelineEndFollowerPlacement(
+        followerNodeId,
+        nextTimelineEndY,
+        followerNodeSize
+      );
+
+      if (!followerPreviewPlacement) {
+        updateNodeDragPreview(null);
+        setTimelineEndY(nextTimelineEndY);
+        return;
+      }
+
+      updateNodeDragPreview({
+        nodeId: followerNodeId,
+        placement: followerPreviewPlacement
+      });
+      setTimelineEndY(
+        Math.max(nextTimelineEndY, followerPreviewPlacement.y + followerNodeSize.height)
+      );
     }
 
     function clearPointerDrag() {
@@ -1030,6 +1063,22 @@ export function WorkspaceShell() {
         setRewireHoverTargetId(null);
         setRewirePreviewPoint(null);
         setRewireNodeId(null);
+      }
+
+      if (dragState?.kind === "timeline-end") {
+        const followerNodeId = dragState.followerNodeId;
+        const followerPreviewPlacement =
+          followerNodeId && activeNodeDragPreview?.nodeId === followerNodeId
+            ? activeNodeDragPreview.placement
+            : null;
+
+        updateNodeDragPreview(null);
+
+        if (followerNodeId && followerPreviewPlacement) {
+          void moveNodeFreelyRef.current?.(followerNodeId, "major", followerPreviewPlacement);
+          setSelectedNodeId(followerNodeId);
+          setRewireNodeId(null);
+        }
       }
 
       if (dragState?.kind === "node-resize" && selectedNodeIdRef.current === dragState.nodeId) {
@@ -1720,19 +1769,10 @@ export function WorkspaceShell() {
     }
   );
   const orderedMajorNodes = orderedNodes.filter((node) => node.level === "major");
-  const majorNodeIds = new Set(orderedMajorNodes.map((node) => node.id));
-  const persistedMajorAnchors =
-    activeEpisodeId ? majorAnchorNodeIdsByEpisodeRef.current[activeEpisodeId] : undefined;
-  const lockedStartMajorNodeId =
-    persistedMajorAnchors?.startId && majorNodeIds.has(persistedMajorAnchors.startId)
-      ? persistedMajorAnchors.startId
-      : null;
-  const lockedEndMajorNodeId =
-    persistedMajorAnchors?.endId && majorNodeIds.has(persistedMajorAnchors.endId)
-      ? persistedMajorAnchors.endId
-      : null;
+  const lockedStartMajorNodeId = orderedMajorNodes[0]?.id ?? null;
+  const lockedEndMajorNodeId = orderedMajorNodes.at(-1)?.id ?? lockedStartMajorNodeId;
   const lockedMajorAnchorNodeIds = new Set(
-    [lockedStartMajorNodeId, lockedEndMajorNodeId].filter(
+    [lockedStartMajorNodeId].filter(
       (nodeId): nodeId is string => nodeId !== null
     )
   );
@@ -1758,24 +1798,12 @@ export function WorkspaceShell() {
       nodeSize
     );
     const alignedMajorAnchorX = timelineAnchors.railCenterX - nodeSize.width / 2;
-    const alignedMajorEndAnchorY = Math.max(
-      timelineAnchors.startNodeY + 48,
-      timelineAnchors.endNodeBottomY - nodeSize.height
-    );
 
     if (node.id === lockedStartMajorNodeId) {
       return {
         ...snappedPlacement,
         x: alignedMajorAnchorX,
         y: timelineAnchors.startNodeY
-      };
-    }
-
-    if (node.id === lockedEndMajorNodeId) {
-      return {
-        ...snappedPlacement,
-        x: alignedMajorAnchorX,
-        y: alignedMajorEndAnchorY
       };
     }
 
@@ -1819,6 +1847,16 @@ export function WorkspaceShell() {
 
     nodePlacements.set(node.id, resolvedPlacement);
   }
+  // major 레인은 구조 순서를 우선으로 최소 세로 간격만 보정해 자유 이동/재정렬 충돌을 줄입니다.
+  applyLaneVerticalReflow(visibleNodeIdsByLevel.major, nodePlacements, nodeSizes, {
+    gap: 8,
+    lockedNodeIds: new Set(
+      [lockedStartMajorNodeId].filter((nodeId): nodeId is string => nodeId !== null)
+    )
+  });
+  // 같은 레인의 노드 높이가 바뀐 경우 최소 간격만큼 아래 노드를 밀어 겹침을 완화합니다.
+  applyLaneVerticalReflow(visibleNodeIdsByLevel.minor, nodePlacements, nodeSizes);
+  applyLaneVerticalReflow(visibleNodeIdsByLevel.detail, nodePlacements, nodeSizes);
   const majorLaneTimelineLocalCenterX =
     timelineAnchors.railCenterX - laneCanvasBounds.major.left;
   const connectionLines = buildConnectionLines(visibleNodes, nodePlacements, nodeSizes);
@@ -1853,17 +1891,42 @@ export function WorkspaceShell() {
     deleteTargetId !== null ? nodesById.get(deleteTargetId) ?? null : null;
   const aiPanelNode = aiPanelNodeId ? nodesById.get(aiPanelNodeId) ?? null : null;
 
-  function getInsertIndexForCanvasY(targetY: number) {
-    const sortedByCanvasY = [...visibleNodes].sort((left, right) => {
-      const leftPlacement = nodePlacements.get(left.id);
-      const rightPlacement = nodePlacements.get(right.id);
+  // 이 함수는 같은 레벨 노드의 중심 Y를 기준으로 삽입 인덱스를 계산합니다.
+  function getInsertIndexForCanvasY(
+    level: StoryNodeLevel,
+    targetCenterY: number,
+    excludedNodeId?: string
+  ) {
+    const sortedLevelNodesByCenterY = [...visibleNodes]
+      .filter((node) => node.level === level && node.id !== excludedNodeId)
+      .map((node) => {
+        const placement = nodePlacements.get(node.id);
+        const size = getNodeSize(nodeSizes, node.id);
 
-      return (leftPlacement?.y ?? 0) - (rightPlacement?.y ?? 0);
-    });
-    const anchorNode = sortedByCanvasY.find((node) => {
-      const placement = nodePlacements.get(node.id);
-      return (placement?.y ?? Number.MAX_SAFE_INTEGER) > targetY;
-    });
+        return {
+          centerY: (placement?.y ?? 0) + size.height / 2,
+          node
+        };
+      })
+      .sort((left, right) => {
+        return left.centerY - right.centerY;
+      });
+
+    if (sortedLevelNodesByCenterY.length === 0) {
+      return orderedNodes.length;
+    }
+
+    const firstEntry = sortedLevelNodesByCenterY[0];
+
+    if (!firstEntry) {
+      return orderedNodes.length;
+    }
+
+    const anchorEntry =
+      targetCenterY <= firstEntry.centerY
+        ? firstEntry
+        : sortedLevelNodesByCenterY.find((entry) => entry.centerY > targetCenterY);
+    const anchorNode = anchorEntry?.node;
 
     if (!anchorNode) {
       return orderedNodes.length;
@@ -1896,6 +1959,37 @@ export function WorkspaceShell() {
     );
   }
 
+  // 이 함수는 timeline-end 드래그 시 end major 노드의 미리보기 배치를 계산합니다.
+  function getTimelineEndFollowerPlacement(
+    followerNodeId: string,
+    nextTimelineEndY: number,
+    followerNodeSize: NodeSize
+  ) {
+    const currentLaneCanvasBounds = laneCanvasBoundsRef.current;
+
+    if (!currentLaneCanvasBounds) {
+      return null;
+    }
+
+    const clampedTimelineEndY = Math.max(timelineStartY + 120, nextTimelineEndY);
+    const dynamicTimelineAnchors = getTimelineAnchorPositions(
+      clampedTimelineEndY,
+      currentLaneCanvasBounds.major,
+      followerNodeSize
+    );
+    const followerPlacement = nodePlacementsRef.current.get(followerNodeId);
+
+    return snapMajorNodePlacementToTimelineAnchors(
+      "major",
+      {
+        x: followerPlacement?.x ?? dynamicTimelineAnchors.snappedNodeX,
+        y: clampedTimelineEndY - followerNodeSize.height
+      },
+      dynamicTimelineAnchors,
+      followerNodeSize
+    );
+  }
+
   function getStagePointFromClient(clientX: number, clientY: number) {
     const stageRect = canvasStageRef.current?.getBoundingClientRect();
 
@@ -1920,6 +2014,16 @@ export function WorkspaceShell() {
       };
     } | null
   ) {
+    const currentPreview = activeNodeDragPreviewRef.current;
+    const isSamePreview =
+      currentPreview?.nodeId === preview?.nodeId &&
+      currentPreview?.placement.x === preview?.placement.x &&
+      currentPreview?.placement.y === preview?.placement.y;
+
+    if (isSamePreview) {
+      return;
+    }
+
     activeNodeDragPreviewRef.current = preview;
     setActiveNodeDragPreview(preview);
   }
@@ -2141,7 +2245,11 @@ export function WorkspaceShell() {
 
     event.preventDefault();
     event.stopPropagation();
+    const followerNodeId = endMajorNodeIdRef.current;
     canvasDragStateRef.current = {
+      followerNodeId,
+      followerNodeSize:
+        followerNodeId !== null ? getNodeSize(nodeSizesRef.current, followerNodeId) : null,
       kind: "timeline-end",
       stageTop: stageRect.top
     };
@@ -2478,7 +2586,7 @@ export function WorkspaceShell() {
 
     const createdNodeId = await controller.createNode(
       level,
-      getInsertIndexForCanvasY(resolvedPlacement.y),
+      getInsertIndexForCanvasY(level, resolvedPlacement.y + nodeCardHeight / 2),
       {
         canvasX: resolvedPlacement.x,
         canvasY: resolvedPlacement.y
@@ -2537,9 +2645,15 @@ export function WorkspaceShell() {
     const nodeSize = getNodeSize(nodeSizes, nodeId);
 
     if (level === "major") {
+      const intendedSnappedPlacement = snapMajorNodePlacementToTimelineAnchors(
+        level,
+        placement,
+        timelineAnchors,
+        nodeSize
+      );
       const requiredTimelineEndY =
         nodeId === endMajorNodeId
-          ? Math.max(timelineStartY + 120, resolvedPlacement.y + nodeSize.height)
+          ? Math.max(timelineStartY + 120, intendedSnappedPlacement.y + nodeSize.height)
           : timelineEndY;
       const dynamicTimelineAnchors = getTimelineAnchorPositions(
         requiredTimelineEndY,
@@ -2548,7 +2662,7 @@ export function WorkspaceShell() {
       );
       const snappedPlacement = snapMajorNodePlacementToTimelineAnchors(
         level,
-        resolvedPlacement,
+        intendedSnappedPlacement,
         dynamicTimelineAnchors,
         nodeSize
       );
@@ -2572,6 +2686,15 @@ export function WorkspaceShell() {
         canvasX: snappedPlacement.x,
         canvasY: snappedPlacement.y
       });
+      const targetInsertIndex = getInsertIndexForCanvasY(
+        level,
+        snappedPlacement.y + nodeSize.height / 2,
+        nodeId
+      );
+      await controller.moveNode(
+        nodeId,
+        targetInsertIndex
+      );
       setSelectedNodeId(nodeId);
       setRewireNodeId(null);
       return;
@@ -2584,6 +2707,12 @@ export function WorkspaceShell() {
       canvasX: resolvedPlacement.x,
       canvasY: resolvedPlacement.y
     });
+    const targetInsertIndex = getInsertIndexForCanvasY(
+      level,
+      resolvedPlacement.y + nodeSize.height / 2,
+      nodeId
+    );
+    await controller.moveNode(nodeId, targetInsertIndex);
     setSelectedNodeId(nodeId);
     setRewireNodeId(null);
   }
@@ -2845,46 +2974,44 @@ export function WorkspaceShell() {
     keywordSuggestions,
     keywordRefreshCycle
   );
-  const visualStartMajorNodeId =
-    orderedMajorNodes.find((node) => {
+  const visualMajorPlacements = orderedMajorNodes
+    .map((node) => {
       const placement = nodePlacements.get(node.id);
 
-      return placement ? Math.abs(placement.y - timelineAnchors.startNodeY) <= 0.5 : false;
-    })?.id ?? null;
+      if (!placement) {
+        return null;
+      }
+
+      const nodeSize = getNodeSize(nodeSizes, node.id);
+
+      return {
+        id: node.id,
+        bottomY: placement.y + nodeSize.height,
+        topY: placement.y
+      };
+    })
+    .filter(
+      (
+        entry
+      ): entry is {
+        id: string;
+        bottomY: number;
+        topY: number;
+      } => {
+        return entry !== null;
+      }
+    );
+  const visualStartMajorNodeId =
+    [...visualMajorPlacements].sort((left, right) => left.topY - right.topY)[0]?.id ?? null;
   const visualEndMajorNodeId =
-    [...orderedMajorNodes]
-      .reverse()
-      .find((node) => {
-        const placement = nodePlacements.get(node.id);
-        const nodeSize = getNodeSize(nodeSizes, node.id);
-
-        return placement
-          ? Math.abs(
-              placement.y + nodeSize.height - effectiveTimelineEndY
-            ) <= 0.5
-          : false;
-      })?.id ?? null;
-  let startMajorNodeId = lockedStartMajorNodeId ?? visualStartMajorNodeId;
-  let endMajorNodeId = lockedEndMajorNodeId ?? visualEndMajorNodeId;
-
-  if (!startMajorNodeId) {
-    startMajorNodeId = orderedMajorNodes[0]?.id ?? null;
-  }
-
-  if (!endMajorNodeId) {
-    endMajorNodeId = orderedMajorNodes.at(-1)?.id ?? startMajorNodeId;
-  }
-
-  if (
-    startMajorNodeId &&
-    endMajorNodeId &&
-    startMajorNodeId === endMajorNodeId &&
-    orderedMajorNodes.length > 1
-  ) {
-    endMajorNodeId =
-      [...orderedMajorNodes].reverse().find((node) => node.id !== startMajorNodeId)?.id ??
-      endMajorNodeId;
-  }
+    [...visualMajorPlacements].sort((left, right) => right.bottomY - left.bottomY)[0]?.id ?? null;
+  const timelineEndFollowerNodeId =
+    canvasDragStateRef.current?.kind === "timeline-end"
+      ? canvasDragStateRef.current.followerNodeId
+      : null;
+  const startMajorNodeId = visualStartMajorNodeId ?? lockedStartMajorNodeId;
+  const endMajorNodeId =
+    timelineEndFollowerNodeId ?? visualEndMajorNodeId ?? lockedEndMajorNodeId;
 
   if (activeEpisodeId) {
     majorAnchorNodeIdsByEpisodeRef.current[activeEpisodeId] = {

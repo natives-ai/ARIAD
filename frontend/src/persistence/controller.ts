@@ -133,7 +133,14 @@ const defaultNodeYByLevel: Record<StoryNodeLevel, number> = {
   minor: 96
 };
 
+const defaultNodeHeightByLevel: Record<StoryNodeLevel, number> = {
+  detail: 102,
+  major: 102,
+  minor: 102
+};
+
 const nodeVerticalSpacing = 148;
+const minimumNodeVerticalGap = 8;
 
 function cloneSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as StoryWorkspaceSnapshot;
@@ -314,16 +321,53 @@ function sanitizeText(value: string) {
   return value.trim();
 }
 
+// 이 함수는 같은 레인의 기존 간격으로 노드 높이를 추정합니다.
+function inferNodeHeightFromLaneSpacing(
+  level: StoryNodeLevel,
+  currentY: number,
+  nextY: number | null
+) {
+  const defaultHeight = defaultNodeHeightByLevel[level];
+
+  if (nextY === null) {
+    return defaultHeight;
+  }
+
+  return Math.max(defaultHeight, nextY - currentY - minimumNodeVerticalGap);
+}
+
+// 이 함수는 기존 레인 배치 간격을 반영해 다음 노드의 기본 배치를 계산합니다.
 function getNextNodePlacement(level: StoryNodeLevel, orderedNodes: StoryNode[]) {
   const sameLevelNodes = orderedNodes.filter((node) => node.level === level);
-  const maxY = sameLevelNodes.reduce((current, node, index) => {
-    const fallbackY = defaultNodeYByLevel[level] + index * nodeVerticalSpacing;
-    return Math.max(current, node.canvasY ?? fallbackY);
+
+  if (sameLevelNodes.length === 0) {
+    return {
+      canvasX: defaultNodeXByLevel[level],
+      canvasY: defaultNodeYByLevel[level]
+    };
+  }
+
+  const sortedLanePlacements = sameLevelNodes
+    .map((node, index) => {
+      const fallbackY = defaultNodeYByLevel[level] + index * nodeVerticalSpacing;
+      return {
+        node,
+        y: node.canvasY ?? fallbackY
+      };
+    })
+    .sort((left, right) => left.y - right.y);
+  const maxBottom = sortedLanePlacements.reduce((current, entry, index) => {
+    const nextEntry = sortedLanePlacements[index + 1] ?? null;
+    const inferredHeight = inferNodeHeightFromLaneSpacing(level, entry.y, nextEntry?.y ?? null);
+    return Math.max(current, entry.y + inferredHeight);
   }, defaultNodeYByLevel[level] - nodeVerticalSpacing);
 
   return {
     canvasX: defaultNodeXByLevel[level],
-    canvasY: maxY + nodeVerticalSpacing
+    canvasY: Math.max(
+      defaultNodeYByLevel[level],
+      Math.ceil(maxBottom + minimumNodeVerticalGap)
+    )
   };
 }
 
@@ -379,6 +423,54 @@ function normalizeWorkspaceSnapshotObjectBindings(snapshot: StoryWorkspaceSnapsh
 
 function getOrderedEpisodeNodes(snapshot: StoryWorkspaceSnapshot, episodeId: string) {
   return sortNodesByOrder(snapshot.nodes.filter((node) => node.episodeId === episodeId));
+}
+
+// 이 함수는 재정렬 intent를 실제 정렬 힌트 orderIndex 목록으로 변환합니다.
+function createReorderOrderIndexHints(
+  remainingNodes: StoryNode[],
+  insertAtIndex: number,
+  movedCount: number
+) {
+  if (movedCount <= 0) {
+    return [];
+  }
+
+  const previousNode =
+    insertAtIndex > 0 ? remainingNodes[insertAtIndex - 1] ?? null : null;
+  const nextNode =
+    insertAtIndex < remainingNodes.length ? remainingNodes[insertAtIndex] ?? null : null;
+
+  if (previousNode && nextNode) {
+    const gap = nextNode.orderIndex - previousNode.orderIndex;
+
+    if (gap > 0) {
+      const step = gap / (movedCount + 1);
+
+      return Array.from({ length: movedCount }, (_, index) => {
+        return previousNode.orderIndex + step * (index + 1);
+      });
+    }
+
+    const epsilon = 0.0001;
+
+    return Array.from({ length: movedCount }, (_, index) => {
+      return previousNode.orderIndex + epsilon * (index + 1);
+    });
+  }
+
+  if (previousNode) {
+    return Array.from({ length: movedCount }, (_, index) => {
+      return previousNode.orderIndex + index + 1;
+    });
+  }
+
+  if (nextNode) {
+    return Array.from({ length: movedCount }, (_, index) => {
+      return nextNode.orderIndex - movedCount + index;
+    });
+  }
+
+  return Array.from({ length: movedCount }, (_, index) => index + 1);
 }
 
 function mergeEpisodeNodes(
@@ -1014,6 +1106,11 @@ export class WorkspacePersistenceController {
     placement?: NodePlacementDraft
   ) {
     const current = this.requireState();
+    const shouldUseCanonicalCreate =
+      current.session.mode === "authenticated" &&
+      current.session.accountId !== null &&
+      placement !== undefined &&
+      current.linkage?.cloudLinked === true;
     const activeEpisode = getActiveEpisode(current.snapshot);
 
     if (!activeEpisode) {
@@ -1063,6 +1160,10 @@ export class WorkspacePersistenceController {
       snapshot,
       createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
     );
+
+    if (shouldUseCanonicalCreate) {
+      await this.flushNow();
+    }
 
     return node.id;
   }
@@ -1452,6 +1553,7 @@ export class WorkspacePersistenceController {
     return true;
   }
 
+  // 이 함수는 노드 이동 intent를 반영하고 필요 시 서버 canonical 순서를 즉시 반영합니다.
   async moveNode(nodeId: string, insertAtIndex: number) {
     const current = this.requireState();
     const rootNode = current.snapshot.nodes.find((node) => node.id === nodeId);
@@ -1468,15 +1570,20 @@ export class WorkspacePersistenceController {
     }
 
     const subtreeIds = new Set(subtreeNodes.map((node) => node.id));
+    const clampedInsertIndex = clampInsertIndex(insertAtIndex, orderedNodes.length);
     const removedBeforeInsert = orderedNodes
-      .slice(0, clampInsertIndex(insertAtIndex, orderedNodes.length))
+      .slice(0, clampedInsertIndex)
       .filter((node) => subtreeIds.has(node.id)).length;
     const remainingNodes = orderedNodes.filter((node) => !subtreeIds.has(node.id));
     const adjustedIndex = clampInsertIndex(
-      insertAtIndex - removedBeforeInsert,
+      clampedInsertIndex - removedBeforeInsert,
       remainingNodes.length
     );
     const timestamp = this.now();
+    const shouldUseCanonicalReorder =
+      current.session.mode === "authenticated" &&
+      current.session.accountId !== null &&
+      current.linkage?.cloudLinked === true;
 
     const parentId = inferParentId(
       remainingNodes,
@@ -1484,33 +1591,72 @@ export class WorkspacePersistenceController {
       adjustedIndex,
       subtreeIds
     );
-    const nextEpisodeNodes = normalizeNodeOrder(
-      stampNodes(
-        [
-          ...remainingNodes.slice(0, adjustedIndex),
-          ...subtreeNodes.map((node) =>
-            node.id === rootNode.id
-              ? {
-                  ...node,
-                  parentId
-                }
-              : node
-          ),
-          ...remainingNodes.slice(adjustedIndex)
-        ],
-        timestamp
-      )
+    const reorderOrderHints = shouldUseCanonicalReorder
+      ? createReorderOrderIndexHints(
+          remainingNodes,
+          adjustedIndex,
+          subtreeNodes.length
+        )
+      : [];
+    const movedNodes = subtreeNodes.map((node, index) =>
+      shouldUseCanonicalReorder
+        ? {
+            ...node,
+            orderIndex: reorderOrderHints[index] ?? node.orderIndex,
+            parentId: node.id === rootNode.id ? parentId : node.parentId,
+            updatedAt: timestamp
+          }
+        : (node.id === rootNode.id
+            ? {
+                ...node,
+                parentId
+              }
+            : node)
     );
-    const nextNodes = mergeEpisodeNodes(current.snapshot.nodes, rootNode.episodeId, nextEpisodeNodes);
+    const nextEpisodeNodes = shouldUseCanonicalReorder
+      ? [
+          ...remainingNodes.slice(0, adjustedIndex),
+          ...movedNodes,
+          ...remainingNodes.slice(adjustedIndex)
+        ]
+      : normalizeNodeOrder(
+          stampNodes(
+            [
+              ...remainingNodes.slice(0, adjustedIndex),
+              ...movedNodes,
+              ...remainingNodes.slice(adjustedIndex)
+            ],
+            timestamp
+          )
+        );
+    const nextNodes = mergeEpisodeNodes(
+      current.snapshot.nodes,
+      rootNode.episodeId,
+      nextEpisodeNodes
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
       nodes: nextNodes
     };
 
-    this.applyLocalMutation(
-      snapshot,
-      createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
-    );
+    const operations =
+      shouldUseCanonicalReorder
+        ? movedNodes.map((node) => ({
+            action: "upsert" as const,
+            kind: "node" as const,
+            payload: node
+          }))
+        : createNodeOperations(
+            current.snapshot.nodes,
+            nextNodes,
+            current.snapshot.project.id
+          );
+
+    this.applyLocalMutation(snapshot, operations);
+
+    if (shouldUseCanonicalReorder) {
+      void this.flushNow();
+    }
   }
 
   async rewireNode(nodeId: string, nextParentId: string | null) {

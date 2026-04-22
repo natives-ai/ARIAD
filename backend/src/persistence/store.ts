@@ -1,4 +1,4 @@
-// 이 파일은 백엔드 파일 기반 퍼시스턴스 저장소 동작을 구현합니다.
+﻿// 이 파일은 백엔드 파일 기반 퍼시스턴스 저장소 동작을 구현합니다.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -21,6 +21,12 @@ import type {
   GlobalProjectRegistryEntry,
   ProjectLinkageMetadata
 } from "@scenaairo/shared";
+import {
+  assertFreshNodeRevision,
+  canonicalizeNodeOrderByEpisode,
+  getExpectedParentLevel,
+  validateNodeGraphIntegrity
+} from "./node-order.js";
 
 interface StoredProjectRecord {
   linkage: ProjectLinkageMetadata;
@@ -62,23 +68,20 @@ function sortObjects(objects: StoryObject[]): StoryObject[] {
   return [...objects].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-function sortNodes(nodes: StoryNode[]): StoryNode[] {
-  return [...nodes].sort((left, right) => left.orderIndex - right.orderIndex);
-}
-
 function sortDrawer(items: TemporaryDrawerItem[]): TemporaryDrawerItem[] {
   return [...items].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 function normalizeSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
   const clonedSnapshot = cloneSnapshot(snapshot);
+  const normalizedEpisodes = sortEpisodes(clonedSnapshot.episodes);
   const fallbackEpisodeId =
-    clonedSnapshot.episodes.find(
+    normalizedEpisodes.find(
       (episode) => episode.id === clonedSnapshot.project.activeEpisodeId
     )?.id ??
-    clonedSnapshot.episodes[0]?.id ??
+    normalizedEpisodes[0]?.id ??
     null;
-  const knownEpisodeIds = new Set(clonedSnapshot.episodes.map((episode) => episode.id));
+  const knownEpisodeIds = new Set(normalizedEpisodes.map((episode) => episode.id));
   const normalizedObjects = clonedSnapshot.objects
     .map((object) => {
       const episodeId =
@@ -110,12 +113,16 @@ function normalizeSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnap
       })
     )]
   }));
+  const normalizedNodesByEpisode = canonicalizeNodeOrderByEpisode(
+    normalizedNodes,
+    normalizedEpisodes
+  );
 
   return {
     ...clonedSnapshot,
-    episodes: sortEpisodes(clonedSnapshot.episodes),
+    episodes: normalizedEpisodes,
     objects: sortObjects(normalizedObjects),
-    nodes: sortNodes(normalizedNodes),
+    nodes: normalizedNodesByEpisode,
     temporaryDrawer: sortDrawer(clonedSnapshot.temporaryDrawer)
   };
 }
@@ -144,8 +151,26 @@ function ensureObjectDependencies(snapshot: StoryWorkspaceSnapshot, object: Stor
 function ensureNodeDependencies(snapshot: StoryWorkspaceSnapshot, node: StoryNode) {
   ensureEpisodeExists(snapshot, node.episodeId);
 
-  if (node.parentId && !snapshot.nodes.some((entry) => entry.id === node.parentId)) {
-    throw new Error("missing_parent_node_dependency");
+  if (node.parentId) {
+    const parentNode = snapshot.nodes.find((entry) => entry.id === node.parentId);
+
+    if (!parentNode) {
+      throw new Error("missing_parent_node_dependency");
+    }
+
+    if (parentNode.projectId !== node.projectId) {
+      throw new Error("parent_project_mismatch");
+    }
+
+    if (parentNode.episodeId !== node.episodeId) {
+      throw new Error("parent_episode_mismatch");
+    }
+
+    const expectedParentLevel = getExpectedParentLevel(node.level);
+
+    if (!expectedParentLevel || parentNode.level !== expectedParentLevel) {
+      throw new Error("invalid_parent_level");
+    }
   }
 
   for (const objectId of node.objectIds) {
@@ -172,6 +197,14 @@ function ensureDrawerDependencies(
     !snapshot.nodes.some((node) => node.id === item.sourceNodeId)
   ) {
     throw new Error("missing_drawer_node_dependency");
+  }
+
+  if (item.sourceNodeId) {
+    const sourceNode = snapshot.nodes.find((node) => node.id === item.sourceNodeId);
+
+    if (sourceNode && sourceNode.episodeId !== item.episodeId) {
+      throw new Error("drawer_episode_mismatch");
+    }
   }
 }
 
@@ -304,9 +337,12 @@ export class FileBackedPersistenceStore {
       lastSyncedAt: now
     };
 
+    const normalizedSnapshot = normalizeSnapshot(snapshot);
+    validateNodeGraphIntegrity(normalizedSnapshot);
+
     account.projects[projectId] = {
       linkage: nextLinkage,
-      snapshot: normalizeSnapshot(snapshot)
+      snapshot: normalizedSnapshot
     };
 
     await this.writeDatabase(database);
@@ -314,7 +350,7 @@ export class FileBackedPersistenceStore {
     return {
       created: true,
       linkage: nextLinkage,
-      snapshot: normalizeSnapshot(snapshot)
+      snapshot: normalizedSnapshot
     };
   }
 
@@ -423,6 +459,10 @@ export class FileBackedPersistenceStore {
           break;
         case "node":
           ensureProjectShell(snapshot, operation.payload.projectId);
+          assertFreshNodeRevision(
+            snapshot.nodes.find((entry) => entry.id === operation.payload.id),
+            operation.payload
+          );
           ensureNodeDependencies(snapshot, operation.payload);
           snapshot = {
             ...snapshot,
@@ -446,17 +486,20 @@ export class FileBackedPersistenceStore {
       linkedAccountId: accountId,
       lastSyncedAt: this.now()
     };
+    const normalizedSnapshot = normalizeSnapshot(snapshot);
+    validateNodeGraphIntegrity(normalizedSnapshot);
 
     account.projects[projectId] = {
       linkage: nextLinkage,
-      snapshot: normalizeSnapshot(snapshot)
+      snapshot: normalizedSnapshot
     };
 
     await this.writeDatabase(database);
 
     return {
       linkage: nextLinkage,
-      snapshot: normalizeSnapshot(snapshot)
+      snapshot: normalizedSnapshot
     };
   }
 }
+

@@ -1,4 +1,4 @@
-// 이 파일은 퍼시스턴스 라우트의 통합 동작을 검증합니다.
+﻿// 이 파일은 퍼시스턴스 라우트의 통합 동작을 검증합니다.
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -209,4 +209,337 @@ describe("persistence routes integration", () => {
 
     await app.close();
   });
+
+  it("canonicalizes node order per episode when sync payload order is sparse or duplicated", async () => {
+    const app = buildApp({ cloudDataDir });
+    await app.ready();
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        linkage: null,
+        snapshot: createSnapshot("2026-04-15T00:00:00.000Z")
+      } satisfies ImportProjectRequest,
+      url: "/api/persistence/accounts/demo-account/import"
+    });
+
+    const operations: CloudSyncOperation[] = [
+      {
+        action: "upsert",
+        kind: "episode",
+        payload: {
+          createdAt: "2026-04-15T01:00:00.000Z",
+          endpoint: "The episode closes with an unresolved warning.",
+          id: "episode_beta",
+          objective: "Lay out the immediate aftermath of the ultimatum.",
+          projectId: "project_alpha",
+          title: "Episode 13",
+          updatedAt: "2026-04-15T01:00:00.000Z"
+        }
+      },
+      {
+        action: "upsert",
+        kind: "node",
+        payload: {
+          contentMode: "text",
+          createdAt: "2026-04-15T01:10:00.000Z",
+          episodeId: "episode_alpha",
+          id: "node_beta",
+          keywords: [],
+          level: "minor",
+          objectIds: [],
+          orderIndex: 99,
+          parentId: "node_alpha",
+          projectId: "project_alpha",
+          text: "The lead hesitates before replying.",
+          updatedAt: "2026-04-15T01:10:00.000Z"
+        }
+      },
+      {
+        action: "upsert",
+        kind: "node",
+        payload: {
+          contentMode: "text",
+          createdAt: "2026-04-15T01:20:00.000Z",
+          episodeId: "episode_alpha",
+          id: "node_gamma",
+          keywords: [],
+          level: "minor",
+          objectIds: [],
+          orderIndex: 99,
+          parentId: "node_alpha",
+          projectId: "project_alpha",
+          text: "A second beat keeps the tension unresolved.",
+          updatedAt: "2026-04-15T01:20:00.000Z"
+        }
+      },
+      {
+        action: "upsert",
+        kind: "node",
+        payload: {
+          contentMode: "text",
+          createdAt: "2026-04-15T01:30:00.000Z",
+          episodeId: "episode_beta",
+          id: "node_delta",
+          keywords: [],
+          level: "major",
+          objectIds: [],
+          orderIndex: 500,
+          parentId: null,
+          projectId: "project_alpha",
+          text: "The next episode opens with silent fallout.",
+          updatedAt: "2026-04-15T01:30:00.000Z"
+        }
+      }
+    ];
+
+    const syncResponse = await app.inject({
+      method: "POST",
+      payload: {
+        operations
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+    const getResponse = await app.inject({
+      method: "GET",
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha"
+    });
+
+    expect(syncResponse.statusCode).toBe(200);
+    expect(getResponse.statusCode).toBe(200);
+
+    const syncedSnapshot = syncResponse.json().snapshot as StoryWorkspaceSnapshot;
+    const persistedSnapshot = getResponse.json().snapshot as StoryWorkspaceSnapshot;
+    const syncedEpisodeAlphaNodes = syncedSnapshot.nodes
+      .filter((node) => node.episodeId === "episode_alpha")
+      .sort((left, right) => left.orderIndex - right.orderIndex);
+    const syncedEpisodeBetaNodes = syncedSnapshot.nodes
+      .filter((node) => node.episodeId === "episode_beta")
+      .sort((left, right) => left.orderIndex - right.orderIndex);
+    const persistedEpisodeAlphaNodes = persistedSnapshot.nodes
+      .filter((node) => node.episodeId === "episode_alpha")
+      .sort((left, right) => left.orderIndex - right.orderIndex);
+    const persistedEpisodeBetaNodes = persistedSnapshot.nodes
+      .filter((node) => node.episodeId === "episode_beta")
+      .sort((left, right) => left.orderIndex - right.orderIndex);
+
+    expect(syncedEpisodeAlphaNodes.map((node) => node.id)).toEqual([
+      "node_alpha",
+      "node_beta",
+      "node_gamma"
+    ]);
+    expect(syncedEpisodeAlphaNodes.map((node) => node.orderIndex)).toEqual([1, 2, 3]);
+    expect(syncedEpisodeBetaNodes.map((node) => node.id)).toEqual(["node_delta"]);
+    expect(syncedEpisodeBetaNodes.map((node) => node.orderIndex)).toEqual([1]);
+    expect(persistedEpisodeAlphaNodes.map((node) => node.orderIndex)).toEqual([1, 2, 3]);
+    expect(persistedEpisodeBetaNodes.map((node) => node.orderIndex)).toEqual([1]);
+
+    await app.close();
+  });
+
+  it("rejects cross-episode parent linkage with validation error", async () => {
+    const app = buildApp({ cloudDataDir });
+    await app.ready();
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        linkage: null,
+        snapshot: createSnapshot("2026-04-15T00:00:00.000Z")
+      } satisfies ImportProjectRequest,
+      url: "/api/persistence/accounts/demo-account/import"
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        operations: [
+          {
+            action: "upsert",
+            kind: "episode",
+            payload: {
+              createdAt: "2026-04-15T02:00:00.000Z",
+              endpoint: "Follow the branch where emotions cool down.",
+              id: "episode_beta",
+              objective: "Prepare the next conflict beat.",
+              projectId: "project_alpha",
+              title: "Episode 13",
+              updatedAt: "2026-04-15T02:00:00.000Z"
+            }
+          },
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T02:01:00.000Z",
+              episodeId: "episode_beta",
+              id: "node_beta",
+              keywords: [],
+              level: "major",
+              objectIds: [],
+              orderIndex: 1,
+              parentId: null,
+              projectId: "project_alpha",
+              text: "A new major beat in another episode.",
+              updatedAt: "2026-04-15T02:01:00.000Z"
+            }
+          },
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T02:02:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_cross",
+              keywords: [],
+              level: "minor",
+              objectIds: [],
+              orderIndex: 2,
+              parentId: "node_beta",
+              projectId: "project_alpha",
+              text: "This should not attach across episode boundaries.",
+              updatedAt: "2026-04-15T02:02:00.000Z"
+            }
+          }
+        ] satisfies CloudSyncOperation[]
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json().message).toBe("parent_episode_mismatch");
+
+    await app.close();
+  });
+
+  it("rejects subtree move attempts that break parent-level integrity", async () => {
+    const app = buildApp({ cloudDataDir });
+    await app.ready();
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        linkage: null,
+        snapshot: createSnapshot("2026-04-15T00:00:00.000Z")
+      } satisfies ImportProjectRequest,
+      url: "/api/persistence/accounts/demo-account/import"
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        operations: [
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T03:00:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_beta",
+              keywords: [],
+              level: "minor",
+              objectIds: [],
+              orderIndex: 2,
+              parentId: "node_alpha",
+              projectId: "project_alpha",
+              text: "A child node under the major beat.",
+              updatedAt: "2026-04-15T03:00:00.000Z"
+            }
+          },
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T03:01:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_gamma",
+              keywords: [],
+              level: "detail",
+              objectIds: [],
+              orderIndex: 3,
+              parentId: "node_beta",
+              projectId: "project_alpha",
+              text: "A detail node under the minor beat.",
+              updatedAt: "2026-04-15T03:01:00.000Z"
+            }
+          },
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T03:00:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_beta",
+              keywords: [],
+              level: "minor",
+              objectIds: [],
+              orderIndex: 2,
+              parentId: "node_gamma",
+              projectId: "project_alpha",
+              text: "This minor node now points to its own descendant.",
+              updatedAt: "2026-04-15T03:02:00.000Z"
+            }
+          }
+        ] satisfies CloudSyncOperation[]
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json().message).toBe("invalid_parent_level");
+
+    await app.close();
+  });
+
+  it("rejects stale node revisions with conflict status", async () => {
+    const app = buildApp({ cloudDataDir });
+    await app.ready();
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        linkage: null,
+        snapshot: createSnapshot("2026-04-15T00:00:00.000Z")
+      } satisfies ImportProjectRequest,
+      url: "/api/persistence/accounts/demo-account/import"
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        operations: [
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T00:00:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_alpha",
+              keywords: ["meeting", "suspicion"],
+              level: "major",
+              objectIds: ["object_alpha"],
+              orderIndex: 1,
+              parentId: null,
+              projectId: "project_alpha",
+              text: "This stale update should be rejected.",
+              updatedAt: "2026-04-14T23:59:59.000Z"
+            }
+          }
+        ] satisfies CloudSyncOperation[]
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().message).toBe("stale_node_revision");
+
+    await app.close();
+  });
 });
+

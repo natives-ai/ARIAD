@@ -1497,3 +1497,193 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: `WorkspaceShell` tests are green (`63/63`) with the new keyboard-interaction height regression covered, and frontend typecheck is green.
 - Warnings / blockers: No new blockers; `WorkspaceShell.tsx` continues to have the same pre-existing effect-rule lint errors/warning unrelated to this loop.
 - Approval needed: `none`
+
+### 2026-04-22 / loop-087
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/styles.css`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Removed the dedicated node drag button and switched to card-body-only node reordering UX. Deleted `node-drag-handle` rendering and related option path in `beginNodeDrag`, so node movement starts directly from non-interactive node-card regions while preserving the existing drag-threshold behavior. Kept position transition-based motion smoothing for reorder, added same-coordinate drag-preview deduping to reduce redundant rerender flicker during drag, and updated regression coverage to assert that no `Move ...` handle is rendered while card dragging still moves the node.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings)
+- Result: `WorkspaceShell` tests are green (`65/65`) with the updated drag-handle removal regression included, and frontend typecheck is green.
+- Warnings / blockers: No new blockers; direct lint on `WorkspaceShell.tsx` still reports the same pre-existing effect-rule issues unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-086
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Investigated user-reported node reposition issue and confirmed selected-node body drag can be constrained by inline editing targets. Added a dedicated node drag handle (`.node-drag-handle`) so users can always move nodes without conflicting with textarea editing interactions. Updated drag-start helper to allow explicit interactive-target starts only for this handle path, and added a regression test that drags a selected minor node via the new handle and verifies vertical position changes.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx -t "moves the selected node from the dedicated drag handle"` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Node move interaction is now available through an explicit top-left drag handle on each non-fixed node, and frontend tests/build remain green with the new regression included (`65/65` in the executed WorkspaceShell suite).
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` issues unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-088
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Fixed node drag reorder behavior and stale major end-marker resolution together. In drag commit flow, node movement now persists both canvas placement and structural order by calling `controller.moveNode(...)` with a Y-projected insert index (excluding the moving node from anchor lookup). For major anchors, start/end marker selection now derives from current ordered major nodes each render instead of prioritizing persisted ref anchors, eliminating stale `is-end-node` state after new major-node additions. Added/updated regression coverage so (1) the last ordered major node is always marked `is-end-node`, and (2) dragging a major node to the bottom updates both order and end-marker assignment.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx -t "reorders major nodes on drag and updates the end-node marker to the last ordered node"` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows pre-existing `react-hooks/set-state-in-effect` findings)
+- Result: `WorkspaceShell` tests are green (`66/66`), including the new major reorder/end-marker regression, and frontend typecheck is green.
+- Warnings / blockers: No new blockers; direct lint on `WorkspaceShell.tsx` still reports the same pre-existing effect-rule issues unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-089
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `PLANS.md`
+- What changed: Reviewed the recent node reorder work and current persistence architecture to prepare a multi-chat execution plan. Confirmed that drag reorder now reaches `controller.moveNode(...)`, which renormalizes episode-local `orderIndex`, but backend persistence still stores full project snapshots and accepts node order as part of generic node upserts. Also confirmed that the optional MySQL path persists `cloud_projects.snapshot_json` rather than a normalized node table, so any "DB-level reorder" effort is a persistence-model change rather than a small schema tweak. Prepared a phased plan that separates contract/backend canonical-order work from any later DB normalization spike.
+- Tests run: Read-only code/log inspection only
+- Result: Ready to hand off a multi-chat plan with explicit sequencing and disjoint write scopes for reorder-related backend/frontend/database work.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-090
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Patched node reorder index calculation to use same-level node center-Y ordering instead of mixed-level top-Y ordering, and excluded the moving node from anchor lookup to avoid reciprocal reorder jitter during drag/drop. For major nodes, kept overlap-safe placement persistence but switched reorder-index projection to the intended drag placement (timeline-snapped, overlap resolution 전) so dragging a lower major node to the top can promote it to the first node. Added regression coverage for upward major reorder (`lower -> first`) and verified the existing downward major reorder/end-marker test still passes.
+- Tests run: `C:\windows\System32\WindowsPowerShell\v1.0\powershell.exe -Command corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings only)
+- Result: `WorkspaceShell` route suite is green (`67/67`) including 신규 상향 재정렬 회귀 케이스, and frontend typecheck is green.
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` continues to report the same pre-existing effect-rule issues unrelated to this patch.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-091
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `backend/src/persistence/store.ts`, `backend/src/persistence/mysql-store.ts`, `backend/src/persistence/routes.integration.test.ts`, `PLANS.md`
+- What changed: Started the loop-089 phase plan with the contract/backend canonical-order freeze slice first. Updated both file-backed and MySQL-backed persistence normalization so node ordering is canonicalized per episode (`orderIndex` renormalized to contiguous `1..N` after stable ordering by `orderIndex -> createdAt -> id`) instead of only globally sorting raw indices. Added backend integration coverage that sends sparse/duplicate node order values across two episodes and verifies sync/get responses always return episode-scoped canonical ordering.
+- Tests run: `corepack yarn --cwd backend typecheck`; `corepack yarn --cwd backend integration`; `corepack yarn --cwd backend run -T eslint src/persistence/store.ts src/persistence/mysql-store.ts src/persistence/routes.integration.test.ts`; `corepack yarn --cwd backend build` (fails with pre-existing `StoryObject.episodeId` declaration mismatch from shared `.d.ts`)
+- Result: Contract freeze phase-1 is in place for backend persistence paths; canonical node order is now deterministic and episode-scoped in both sync response and persisted reload paths.
+- Warnings / blockers: Contract freeze slice 자체의 타입체크/통합테스트/린트는 통과했지만, `build smoke`는 기존 shared declaration mismatch(`StoryObject`에 `episodeId` 누락) 때문에 실패했다. 이 루프는 해당 타입 선언 불일치 수정을 범위 밖으로 두었고 DB schema normalization(`cloud_projects.snapshot_json`)도 의도적으로 시작하지 않았다.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-093
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `backend/src/persistence/routes.ts`, `backend/src/persistence/store.ts`, `backend/src/persistence/mysql-store.ts`, `backend/src/persistence/node-order.ts`, `backend/src/persistence/routes.integration.test.ts`, `PLANS.md`
+- What changed: Executed the requested Backend Canonical Reorder authority slice following `NODE_REORDER_EXECUTION_PLAN.md` Track B / Chat 2 scope. Added a new persistence helper (`node-order.ts`) that centralizes deterministic node ordering, per-episode contiguous `orderIndex` canonicalization, parent-level/episode/project graph validation, cycle detection, and stale node revision checks. Applied that helper to both file-backed and MySQL-backed stores so sync/import flows now enforce server-side reorder authority. Strengthened dependency checks for parent episode boundaries and drawer source-node episode consistency. Updated sync error handling in routes to return semantic status codes (`409` for stale revision, `422` for validation, `404` for missing project). Expanded integration tests to cover cross-episode parent rejection, subtree parent-integrity rejection, stale revision conflict, and canonicalized sparse/duplicate ordering.
+- Tests run: `corepack yarn --cwd backend typecheck`; `corepack yarn --cwd backend integration`; `corepack yarn --cwd backend run -T eslint src/persistence/routes.ts src/persistence/store.ts src/persistence/mysql-store.ts src/persistence/node-order.ts src/persistence/routes.integration.test.ts`; `corepack yarn --cwd backend build` (fails with pre-existing shared declaration mismatch: `StoryObject.episodeId` missing in shared `.d.ts`)
+- Result: Backend now treats reorder semantics as authoritative server concern and validates/canonicalizes node ordering and parent integrity before persisting snapshot state.
+- Warnings / blockers: `build smoke` is still blocked by the same pre-existing shared declaration drift (`shared/src/types/domain.d.ts` vs runtime/shared source types) and is not introduced by this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-094
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `NODE_REORDER_EXECUTION_PLAN.md`, `PLANS.md`
+- What changed: Kept `PLANS.md` in its existing work-loop-log format and moved the detailed node reorder persistence/DB execution plan into a new standalone document, `NODE_REORDER_EXECUTION_PLAN.md`. The new document captures current reorder architecture, the recommended two-stage direction (backend canonicalization first, DB normalization spike later), track-by-track work breakdown, per-chat ownership/scope, sequencing rules, test gates, and stop conditions.
+- Tests run: UTF-8 readback of `NODE_REORDER_EXECUTION_PLAN.md`; BOM byte check (`EF BB BF`)
+- Result: Detailed reorder planning is now separated from the running execution log, so `PLANS.md` can stay concise while the new document serves as the handoff/reference plan for parallel chats.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-095
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `PLANS.md`
+- What changed: Executed the Chat 3 frontend reorder-adoption slice so drag flow now sends reorder intent (`target insert index`) from `WorkspaceShell` instead of trying to materialize a full final order payload at the route level. In `WorkspacePersistenceController.moveNode`, added an authenticated+linked path that treats reorder as intent: only the moved subtree nodes are upserted with order hints, local state is updated immediately for UX continuity, and an immediate flush is triggered so canonical node ordering comes back from backend sync response. Kept the existing full local normalization path as fallback for guest/local-only mode where no cloud canonical source exists. Added controller regression coverage proving authenticated reorder sends subtree-only node upserts (not whole-episode node upserts).
+- Tests run: `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend test -- src/persistence/controller.test.ts src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend run -T eslint src/persistence/controller.ts src/persistence/controller.test.ts`; `corepack yarn --cwd frontend run -T eslint src/persistence/controller.ts src/persistence/controller.test.ts src/routes/WorkspaceShell.tsx` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` errors/warning); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Reorder ownership is shifted toward intent-driven frontend behavior with backend canonical-order adoption on authenticated cloud sync, while guest/local mode remains stable. Frontend typecheck, targeted lint, unit smoke, and build smoke passed for the changed slice.
+- Warnings / blockers: No new blocker from this slice. `WorkspaceShell.tsx` still has the same pre-existing lint findings unrelated to this change.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-096
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/persistence/controller.reorder.test.ts`, `backend/src/persistence/routes.reorder.integration.test.ts`, `PLANS.md`
+- What changed: Added a dedicated reorder regression suite using only new test files to avoid collisions in existing large suites. The new frontend suite (`controller.reorder.test.ts`) validates major/minor/detail reorder behavior, subtree block move behavior, undo/redo restoration after reorder, and pending queue restoration with reorder replay after restart. The new backend suite (`routes.reorder.integration.test.ts`) validates sparse/duplicate reorder payload canonicalization and stale reorder revision rejection (`stale_node_revision`).
+- Tests run: `corepack yarn --cwd frontend test -- src/persistence/controller.reorder.test.ts` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd backend run -T vitest run --pool threads src/persistence/routes.reorder.integration.test.ts`; `corepack yarn --cwd frontend run -T eslint src/persistence/controller.reorder.test.ts`; `corepack yarn --cwd backend run -T eslint src/persistence/routes.reorder.integration.test.ts`; `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd backend typecheck`
+- Result: Reorder-focused regression coverage is now isolated into separate files and all added tests pass.
+- Warnings / blockers: No new blockers identified in this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-097
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `NODE_LAYOUT_STABILITY_PLAN.md`, `PLANS.md`
+- What changed: Investigated the reported node UI instability beyond the simple overlap hypothesis and split the findings into a new standalone plan document, `NODE_LAYOUT_STABILITY_PLAN.md`. The review identified multiple likely causes in the current frontend flow: no lane reflow after resize/auto-height growth, mismatch between final resolved placement and reorder-index projection, height-unaware fallback node creation placement, major start/end anchor force-placement side effects, and local-only node size state amplifying layout drift. The new document captures these causes, testing gaps, and a staged execution plan that prioritizes frontend layout stability before persistence/DB follow-up.
+- Tests run: Read-only code inspection; UTF-8 readback of `NODE_LAYOUT_STABILITY_PLAN.md`; BOM byte check (`EF BB BF`)
+- Result: A dedicated UI-layout stability plan now exists separately from the reorder/persistence plan, with clearer prioritization for the currently reported symptom.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-098
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.layout.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Executed the first layout-stability patch from `NODE_LAYOUT_STABILITY_PLAN.md` Track 1/2/3 (frontend-focused). Added a reusable lane packing helper (`applyLaneVerticalReflow`) that pushes same-lane nodes downward by minimum gap after size changes, then wired it into `WorkspaceShell` for `minor`/`detail` placement resolution to reduce post-resize/post-auto-height overlap drift. Updated non-major drag reorder projection to use final resolved placement center Y (instead of raw pointer Y) when computing `targetInsertIndex`. Added layout regression coverage for minor-lane vertical resize to verify the lower node keeps the minimum gap after the upper node grows.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/workspace-shell/workspaceShell.layout.test.ts` (outside sandbox due Vite `spawn EPERM` in sandbox); `C:\windows\System32\WindowsPowerShell\v1.0\powershell.exe -Command corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/workspace-shell/workspaceShell.canvas.ts src/routes/workspace-shell/workspaceShell.layout.test.ts src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.canvas.ts src/routes/workspace-shell/workspaceShell.layout.test.ts` (shows pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Frontend layout-stability slice landed with passing route/unit tests (`76/76`), typecheck, targeted lint, and build smoke.
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` issues unrelated to this patch.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-099
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.layout.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Applied follow-up fixes requested after loop-098. Reduced lane reflow minimum push gap from `18px` to `8px` so vertical resize/auto-height growth no longer over-separates lower nodes. For major end-marker stability, changed marker selection to use current visual major-node extremes (`topY`/`bottomY`) rather than only ordered IDs, so the visually lowest major node keeps the end marker even when overlap resolution/anchor effects reorder visible bottoms transiently.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/workspace-shell/workspaceShell.layout.test.ts` (outside sandbox due Vite `spawn EPERM` in sandbox); `C:\windows\System32\WindowsPowerShell\v1.0\powershell.exe -Command corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.canvas.ts src/routes/workspace-shell/workspaceShell.layout.test.ts`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows same pre-existing `react-hooks/set-state-in-effect` findings)
+- Result: Requested UX follow-up landed: narrower reflow spacing and end-marker assignment now track visible bottom major node; regression suite remains green (`76/76`), and frontend typecheck is green.
+- Warnings / blockers: No new blockers. `WorkspaceShell.tsx` still has the same pre-existing effect-rule lint findings unrelated to this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-100
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `PLANS.md`
+- What changed: Executed the remaining `NODE_LAYOUT_STABILITY_PLAN.md` items (Track 4/5/6) in one frontend-oriented loop. Track 4: relaxed major anchor forcing by locking only start-node hard anchor and removing hard end-node anchoring, then added a regression that validates the visually lowest major node keeps the end marker after major resize. Track 5: upgraded `createNode` fallback placement to infer lane height from existing same-level spacing (`inferNodeHeightFromLaneSpacing`) so default placement no longer relies only on fixed `nodeVerticalSpacing`. Track 6: added persistence follow-up in `createNode` so authenticated cloud-linked creates with explicit UI placement trigger immediate flush (`await flushNow`) to adopt canonical cloud state quickly; added controller regression coverage for inferred fallback Y and immediate cloud sync on placed create.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx src/persistence/controller.test.ts src/persistence/controller.reorder.test.ts src/routes/workspace-shell/workspaceShell.layout.test.ts` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/persistence/controller.ts src/persistence/controller.test.ts src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.canvas.ts src/routes/workspace-shell/workspaceShell.layout.test.ts`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows same pre-existing `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Track 4/5/6 slice landed with updated major-anchor behavior, height-aware fallback placement, and create-time canonical sync adoption; route/controller/layout regressions are green (`79/79`), typecheck is green, and build smoke is green.
+- Warnings / blockers: No new blockers. `WorkspaceShell.tsx` direct lint still reports the same pre-existing `react-hooks/set-state-in-effect` findings unrelated to this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-101
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.layout.test.ts`, `PLANS.md`
+- What changed: Addressed the remaining “order flips while resizing” symptom by changing lane vertical reflow to preserve the provided lane node order (`nodeIds`) instead of re-sorting by current Y position. This keeps resize-driven reflow from reinterpreting visual Y as authoritative ordering and prevents perceived reorder during size adjustments. Added a focused regression test that starts with out-of-order Y coordinates and verifies reflow keeps structural lane order while enforcing minimum gap.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/workspace-shell/workspaceShell.layout.test.ts src/routes/WorkspaceShell.test.tsx` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/workspace-shell/workspaceShell.canvas.ts src/routes/workspace-shell/workspaceShell.layout.test.ts`
+- Result: Resize-time lane reflow now preserves lane order semantics and the expanded frontend regression suite is green (`80/80`) with typecheck/lint passing for changed files.
+- Warnings / blockers: No new blockers identified in this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-103
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Executed `CANVAS_MAJOR_LANE_PLAN.md` stabilization slice for major-lane interactions. Added timeline-end follower semantics so timeline-end drag now tracks a concrete end-major node identity and updates that node’s preview/commit placement alongside rail end updates. During timeline-end drag, end-marker identity is pinned to the active follower for consistent handle/marker/node semantics. Updated major drag commit to use one placement basis for both `updateNodePlacement(...)` and `moveNode(...)` reorder index projection. Added regressions for (1) timeline-end drag moving end major node together, (2) non-end major drag not hijacking end semantics, and (3) preview/commit alignment for major drag.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx` (shows same pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Major-lane handle/marker/follower semantics are now aligned and route regressions are green (`83/83`) with typecheck/build passing.
+- Warnings / blockers: No new blocker from this slice. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` issues unrelated to this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-102
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `CANVAS_MAJOR_LANE_PLAN.md`, `PLANS.md`
+- What changed: Investigated the newly reported `Major Event Lane` interaction issues and separated them from the earlier generic layout/reorder work. Confirmed that current frontend tests and typecheck are green, but the existing suite does not cover timeline-end handle drag semantics. Read the current `WorkspaceShell` implementation and identified the most likely fault line: the timeline-end handle only mutates `timelineEndY`, while the visually lowest/end major-node identity, major drag commit, and reorder projection still use partially different semantics. Captured the recommended response in a new standalone plan document, `CANVAS_MAJOR_LANE_PLAN.md`, with staged tracks for regression coverage, end-node identity unification, handle drag/node-follow behavior, and final-placement reorder alignment.
+- Tests run: `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx`
+- Result: Current regression suite stays green (`80/80`), but there is now a focused execution plan for the uncovered major-lane/timeline-end behavior gap.
+- Warnings / blockers: No immediate blocker, but concurrent chats have recently touched the same `WorkspaceShell` files, so same-file work should be treated as effectively single-writer before implementation.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-104
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Applied the requested major-lane follow-up patch (Track 5) to clarify authority between free move and reorder. Added a major-lane minimal vertical reflow pass that preserves structural order and minimum gap while keeping start-major locked, so major free-move/reorder no longer leaves visually inverted/overlapping lane order. Added regression coverage that performs a major reorder and asserts visual top-to-bottom order stays aligned with structural node order and gap rules.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows same pre-existing `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Major lane now uses a clearer “order-first + minimum-gap” stabilization rule after reorder/free-move flows, and route regressions are green (`84/84`) with typecheck/build passing.
+- Warnings / blockers: No new blocker from this slice. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` issues unrelated to this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-103
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `WORKSPACE_SHELL_REFACTOR_PLAN.md`, `PLANS.md`
+- What changed: Reviewed `frontend/src/routes/WorkspaceShell.tsx` specifically as a maintainability/refactor concern and created a dedicated execution plan document, `WORKSPACE_SHELL_REFACTOR_PLAN.md`. Captured the current complexity baseline (line count, state/effect/ref/function density), explained why the problem is responsibility concentration rather than mere file length, and proposed a staged decomposition: subtree extraction first, then episode-canvas state isolation, then canvas-interaction hook extraction, followed by route-shell slimming and test splitting. Also recorded the concurrency constraint that active major-lane fixes and large refactors should be treated as effectively single-writer on `WorkspaceShell.tsx`.
+- Tests run: Read-only code inspection only
+- Result: A standalone refactor plan now exists for `WorkspaceShell.tsx`, separate from the ongoing bug-fix plans, with sequencing and stop conditions defined.
+- Warnings / blockers: No immediate blocker. Implementation should avoid colliding with active same-file bug work in `WorkspaceShell.tsx`.
+- Approval needed: `none`

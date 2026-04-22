@@ -19,6 +19,12 @@ import type {
   StoryWorkspaceSnapshot,
   TemporaryDrawerItem
 } from "@scenaairo/shared";
+import {
+  assertFreshNodeRevision,
+  canonicalizeNodeOrderByEpisode,
+  getExpectedParentLevel,
+  validateNodeGraphIntegrity
+} from "./node-order.js";
 
 interface StoredProjectRecord {
   linkage: ProjectLinkageMetadata;
@@ -68,11 +74,6 @@ function sortObjects(objects: StoryObject[]): StoryObject[] {
   return [...objects].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-// 노드 목록을 순서 인덱스 기준으로 정렬합니다.
-function sortNodes(nodes: StoryNode[]): StoryNode[] {
-  return [...nodes].sort((left, right) => left.orderIndex - right.orderIndex);
-}
-
 // 임시 서랍 항목을 생성 시간 순으로 정렬합니다.
 function sortDrawer(items: TemporaryDrawerItem[]): TemporaryDrawerItem[] {
   return [...items].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -80,12 +81,15 @@ function sortDrawer(items: TemporaryDrawerItem[]): TemporaryDrawerItem[] {
 
 // 스냅샷을 복제하고 내부 컬렉션 정렬 규칙을 표준화합니다.
 function normalizeSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
+  const clonedSnapshot = cloneSnapshot(snapshot);
+  const normalizedEpisodes = sortEpisodes(clonedSnapshot.episodes);
+
   return {
-    ...cloneSnapshot(snapshot),
-    episodes: sortEpisodes(snapshot.episodes),
-    nodes: sortNodes(snapshot.nodes),
-    objects: sortObjects(snapshot.objects),
-    temporaryDrawer: sortDrawer(snapshot.temporaryDrawer)
+    ...clonedSnapshot,
+    episodes: normalizedEpisodes,
+    nodes: canonicalizeNodeOrderByEpisode(clonedSnapshot.nodes, normalizedEpisodes),
+    objects: sortObjects(clonedSnapshot.objects),
+    temporaryDrawer: sortDrawer(clonedSnapshot.temporaryDrawer)
   };
 }
 
@@ -107,8 +111,26 @@ function ensureEpisodeExists(snapshot: StoryWorkspaceSnapshot, episodeId: Entity
 function ensureNodeDependencies(snapshot: StoryWorkspaceSnapshot, node: StoryNode) {
   ensureEpisodeExists(snapshot, node.episodeId);
 
-  if (node.parentId && !snapshot.nodes.some((entry) => entry.id === node.parentId)) {
-    throw new Error("missing_parent_node_dependency");
+  if (node.parentId) {
+    const parentNode = snapshot.nodes.find((entry) => entry.id === node.parentId);
+
+    if (!parentNode) {
+      throw new Error("missing_parent_node_dependency");
+    }
+
+    if (parentNode.projectId !== node.projectId) {
+      throw new Error("parent_project_mismatch");
+    }
+
+    if (parentNode.episodeId !== node.episodeId) {
+      throw new Error("parent_episode_mismatch");
+    }
+
+    const expectedParentLevel = getExpectedParentLevel(node.level);
+
+    if (!expectedParentLevel || parentNode.level !== expectedParentLevel) {
+      throw new Error("invalid_parent_level");
+    }
   }
 
   if (
@@ -132,6 +154,14 @@ function ensureDrawerDependencies(
     !snapshot.nodes.some((node) => node.id === item.sourceNodeId)
   ) {
     throw new Error("missing_drawer_node_dependency");
+  }
+
+  if (item.sourceNodeId) {
+    const sourceNode = snapshot.nodes.find((node) => node.id === item.sourceNodeId);
+
+    if (sourceNode && sourceNode.episodeId !== item.episodeId) {
+      throw new Error("drawer_episode_mismatch");
+    }
   }
 }
 
@@ -278,6 +308,7 @@ export class MySqlBackedPersistenceStore {
   ): Promise<ImportProjectResponse> {
     await this.ensureSchema();
     const normalizedSnapshot = normalizeSnapshot(snapshot);
+    validateNodeGraphIntegrity(normalizedSnapshot);
     const projectId = normalizedSnapshot.project.id;
     const now = this.now();
 
@@ -436,6 +467,10 @@ export class MySqlBackedPersistenceStore {
             break;
           case "node":
             ensureProjectShell(snapshot, operation.payload.projectId);
+            assertFreshNodeRevision(
+              snapshot.nodes.find((entry) => entry.id === operation.payload.id),
+              operation.payload
+            );
             ensureNodeDependencies(snapshot, operation.payload);
             snapshot = {
               ...snapshot,
@@ -460,6 +495,7 @@ export class MySqlBackedPersistenceStore {
         linkedAccountId: accountId
       };
       const normalizedSnapshot = normalizeSnapshot(snapshot);
+      validateNodeGraphIntegrity(normalizedSnapshot);
 
       await connection.execute(
         `UPDATE cloud_projects

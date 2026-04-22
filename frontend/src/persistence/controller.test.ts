@@ -47,6 +47,7 @@ interface StoredProjectRecord {
 
 class FakeCloudPersistenceGateway {
   private readonly accounts = new Map<string, Map<string, StoredProjectRecord>>();
+  private readonly lastSyncOperationsByProject = new Map<string, CloudSyncOperation[]>();
 
   constructor(private readonly now: () => string) {}
 
@@ -137,6 +138,13 @@ class FakeCloudPersistenceGateway {
       throw new Error("missing_project");
     }
 
+    this.lastSyncOperationsByProject.set(
+      `${accountId}:${projectId}`,
+      payload.operations.map((operation) =>
+        JSON.parse(JSON.stringify(operation)) as CloudSyncOperation
+      )
+    );
+
     let snapshot = cloneSnapshot(current.snapshot);
 
     for (const operation of payload.operations) {
@@ -221,6 +229,10 @@ class FakeCloudPersistenceGateway {
       linkage: { ...linkage },
       snapshot: cloneSnapshot(snapshot)
     };
+  }
+
+  getLastSyncOperations(accountId: string, projectId: string) {
+    return [...(this.lastSyncOperationsByProject.get(`${accountId}:${projectId}`) ?? [])];
   }
 
   seedProject(
@@ -512,6 +524,38 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("infers lane spacing when creating a node without an explicit placement", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const minorA = await controller.createNode("minor", 1, {
+      canvasX: 452,
+      canvasY: 100
+    });
+    const minorB = await controller.createNode("minor", 2, {
+      canvasX: 452,
+      canvasY: 320
+    });
+    const inferredMinor = await controller.createNode("minor", Number.MAX_SAFE_INTEGER);
+    const state = controller.getState()!;
+    const inferredMinorNode = state.snapshot.nodes.find((node) => node.id === inferredMinor);
+
+    expect(minorA).toBeTruthy();
+    expect(minorB).toBeTruthy();
+    expect(inferredMinorNode?.canvasY).toBe(430);
+
+    controller.dispose();
+  });
+
   it("does not move fixed nodes when placement updates are requested", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
@@ -611,6 +655,88 @@ describe("workspace persistence controller", () => {
     expect(
       remoteAfterDelete.snapshot?.objects.some((object) => object.id === objectId)
     ).toBe(false);
+
+    controller.dispose();
+  });
+
+  it("sends subtree-only node upserts for authenticated reorder intent", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const cloud = new FakeCloudPersistenceGateway(now);
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      flushDebounceMs: 0,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    await controller.signIn();
+
+    const initialMajorId = controller.getState()!.snapshot.nodes[0]!.id;
+    const secondMajorId = (await controller.createNode("major", 1))!;
+    const minorId = (await controller.createNode("minor", 1))!;
+    const detailId = (await controller.createNode("detail", 2))!;
+
+    await controller.flushNow();
+    await controller.moveNode(initialMajorId, 4);
+    await controller.flushNow();
+
+    const state = controller.getState()!;
+    const syncedOperations = cloud.getLastSyncOperations(
+      "demo-account",
+      state.snapshot.project.id
+    );
+    const syncedNodeUpserts = syncedOperations
+      .filter((operation): operation is Extract<CloudSyncOperation, { action: "upsert"; kind: "node" }> => {
+        return operation.action === "upsert" && operation.kind === "node";
+      })
+      .map((operation) => operation.payload.id);
+
+    expect(state.snapshot.nodes.map((node) => node.id)).toEqual([
+      secondMajorId,
+      initialMajorId,
+      minorId,
+      detailId
+    ]);
+    expect(syncedNodeUpserts).toEqual([initialMajorId, minorId, detailId]);
+    expect(syncedNodeUpserts).not.toContain(secondMajorId);
+
+    controller.dispose();
+  });
+
+  it("flushes cloud-linked create mutations immediately for canonical sync adoption", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const cloud = new FakeCloudPersistenceGateway(now);
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      flushDebounceMs: 5000,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    await controller.signIn();
+
+    const projectId = controller.getState()!.snapshot.project.id;
+    const createdNodeId = await controller.createNode("minor", 1, {
+      canvasX: 452,
+      canvasY: 244
+    });
+    const syncedOperations = cloud.getLastSyncOperations("demo-account", projectId);
+    const syncedNodeIds = syncedOperations
+      .filter((operation): operation is Extract<CloudSyncOperation, { action: "upsert"; kind: "node" }> => {
+        return operation.action === "upsert" && operation.kind === "node";
+      })
+      .map((operation) => operation.payload.id);
+
+    expect(createdNodeId).toBeTruthy();
+    expect(syncedNodeIds).toContain(createdNodeId);
 
     controller.dispose();
   });

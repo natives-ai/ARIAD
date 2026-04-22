@@ -1509,6 +1509,199 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
+  // 타임라인 끝 핸들 드래그 시 end major 노드가 함께 이동하는지 검증합니다.
+  it("moves the end major node together when dragging the timeline end handle", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+
+    const endHandleBefore = screen.getByRole("button", { name: "Move timeline end" });
+    const endMajorNodeBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(endHandleBefore instanceof HTMLElement)) {
+      throw new Error("timeline_end_handle_not_found");
+    }
+
+    if (!(endMajorNodeBefore instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found_before_timeline_drag");
+    }
+
+    const endMajorNodeTestId = endMajorNodeBefore.getAttribute("data-testid");
+
+    if (!endMajorNodeTestId) {
+      throw new Error("end_major_node_testid_missing_before_timeline_drag");
+    }
+
+    const handleTopBefore = parseCssPixels(endHandleBefore.style.top);
+    const endNodeBottomBefore =
+      parseCssPixels(endMajorNodeBefore.style.top) + parseCssPixels(endMajorNodeBefore.style.height);
+
+    fireEvent.mouseDown(endHandleBefore, {
+      button: 0,
+      clientX: 120,
+      clientY: handleTopBefore
+    });
+    fireEvent.pointerMove(window, {
+      clientX: 120,
+      clientY: handleTopBefore + 240
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const endHandleAfter = screen.getByRole("button", { name: "Move timeline end" });
+      const endMajorNodeAfter = screen.getByTestId(endMajorNodeTestId);
+      const handleTopAfter = parseCssPixels((endHandleAfter as HTMLElement).style.top);
+      const endNodeBottomAfter =
+        parseCssPixels((endMajorNodeAfter as HTMLElement).style.top) +
+        parseCssPixels((endMajorNodeAfter as HTMLElement).style.height);
+
+      expect(handleTopAfter).toBeGreaterThan(handleTopBefore + 120);
+      expect(endNodeBottomAfter).toBeGreaterThan(endNodeBottomBefore + 120);
+      expect(Math.abs(endNodeBottomAfter - handleTopAfter)).toBeLessThan(0.6);
+      expect(endMajorNodeAfter).toHaveClass("is-end-node");
+    });
+  });
+
+  // end가 아닌 major 노드 드래그가 타임라인 끝 위치를 불필요하게 바꾸지 않는지 검증합니다.
+  it("keeps timeline end stable when dragging a non-end major node", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const nonEndMajorNode = getMajorNodes().find((node) => {
+      return !node.classList.contains("is-start-node") && !node.classList.contains("is-end-node");
+    });
+    const endMajorNodeBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(nonEndMajorNode instanceof HTMLElement)) {
+      throw new Error("non_end_major_node_not_found");
+    }
+
+    if (!(endMajorNodeBefore instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found_before_non_end_drag");
+    }
+
+    const nonEndMajorNodeId = nonEndMajorNode.getAttribute("data-testid");
+    const endMajorNodeIdBefore = endMajorNodeBefore.getAttribute("data-testid");
+
+    if (!nonEndMajorNodeId || !endMajorNodeIdBefore) {
+      throw new Error("non_end_major_node_testid_missing");
+    }
+
+    const nonEndMetricsBefore = getNodeCardMetrics(nonEndMajorNode);
+
+    fireEvent.pointerDown(nonEndMajorNode, {
+      button: 0,
+      clientX: nonEndMetricsBefore.left + 30,
+      clientY: nonEndMetricsBefore.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: nonEndMetricsBefore.left + 36,
+      clientY: nonEndMetricsBefore.top - 260
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const nonEndMajorNodeAfter = screen.getByTestId(nonEndMajorNodeId);
+      expect(parseCssPixels(nonEndMajorNodeAfter.style.top)).toBeLessThan(nonEndMetricsBefore.top - 40);
+    });
+
+    const timelineEndHandleAfter = screen.getByRole("button", { name: "Move timeline end" });
+    const endMajorNodeAfter = screen.getByTestId(endMajorNodeIdBefore);
+    const timelineEndTopAfter = parseCssPixels((timelineEndHandleAfter as HTMLElement).style.top);
+    const endNodeBottomAfter =
+      parseCssPixels(endMajorNodeAfter.style.top) + parseCssPixels(endMajorNodeAfter.style.height);
+
+    expect(Math.abs(timelineEndTopAfter - endNodeBottomAfter)).toBeLessThan(0.6);
+    expect(screen.getByTestId(nonEndMajorNodeId)).not.toHaveClass("is-end-node");
+  });
+
+  // major 드래그 프리뷰와 커밋 결과가 동일한 위치를 유지하는지 검증합니다.
+  it("keeps major drag commit aligned with the last preview placement", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+
+    const endMajorNode = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(endMajorNode instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found_for_preview_commit_alignment");
+    }
+
+    const endMajorNodeId = endMajorNode.getAttribute("data-testid");
+
+    if (!endMajorNodeId) {
+      throw new Error("end_major_node_testid_missing_for_preview_commit_alignment");
+    }
+
+    const beforeMetrics = getNodeCardMetrics(endMajorNode);
+    let previewTop = beforeMetrics.top;
+
+    fireEvent.pointerDown(endMajorNode, {
+      button: 0,
+      clientX: beforeMetrics.left + 34,
+      clientY: beforeMetrics.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: beforeMetrics.left + 42,
+      clientY: beforeMetrics.top + 360
+    });
+
+    await waitFor(() => {
+      const previewNode = screen.getByTestId(endMajorNodeId);
+      previewTop = parseCssPixels(previewNode.style.top);
+
+      expect(previewTop).toBeGreaterThan(beforeMetrics.top + 80);
+    });
+
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const committedNode = screen.getByTestId(endMajorNodeId);
+      const committedTop = parseCssPixels(committedNode.style.top);
+
+      expect(Math.abs(committedTop - previewTop)).toBeLessThan(0.6);
+    });
+  });
+
   it("keeps major start/end markers after resizing major nodes", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -1711,6 +1904,67 @@ describe("workspace shell recommendation flow", () => {
     expect(upperNodeBottom + 17).toBeLessThanOrEqual(lowerNodeTop + 0.6);
   });
 
+  it("keeps the visually lowest major node marked as end after major resize", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const middleMajorNode = getMajorNodes()[1];
+
+    if (!(middleMajorNode instanceof HTMLElement)) {
+      throw new Error("middle_major_node_not_found_for_visual_end_marker");
+    }
+
+    await user.click(middleMajorNode);
+    fireEvent.pointerDown(
+      within(middleMajorNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 620 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(middleMajorNode.style.height)).toBeGreaterThan(450);
+    });
+
+    const majorNodesAfter = getMajorNodes();
+    const visuallyLowestMajorNode = [...majorNodesAfter]
+      .sort((left, right) => {
+        const leftBottom = parseCssPixels(left.style.top) + parseCssPixels(left.style.height);
+        const rightBottom = parseCssPixels(right.style.top) + parseCssPixels(right.style.height);
+        return rightBottom - leftBottom;
+      })
+      .at(0);
+
+    if (!(visuallyLowestMajorNode instanceof HTMLElement)) {
+      throw new Error("visual_lowest_major_node_not_found");
+    }
+
+    expect(visuallyLowestMajorNode).toHaveClass("is-end-node");
+  });
+
   it("hides resize handles for fixed nodes", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -1860,6 +2114,85 @@ describe("workspace shell recommendation flow", () => {
 
     await waitFor(() => {
       expect(parseCssPixels(selectedNode.style.height)).toBe(shrunkHeight);
+    });
+  });
+
+  // 리사이즈 이후 같은 레인의 하위 노드가 최소 간격을 유지하는지 검증합니다.
+  it("keeps lower minor nodes separated after the upper minor node grows on vertical resize", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const getMinorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-minor")) as HTMLElement[];
+    const existingMinorNodeIds = new Set(
+      getMinorNodes()
+        .map((node) => node.getAttribute("data-testid"))
+        .filter((nodeId): nodeId is string => Boolean(nodeId))
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    const createdMinorNodeIds = await waitFor(() => {
+      const createdNodeIds = getMinorNodes()
+        .map((node) => node.getAttribute("data-testid"))
+        .filter((nodeId): nodeId is string => Boolean(nodeId))
+        .filter((nodeId) => !existingMinorNodeIds.has(nodeId));
+
+      expect(createdNodeIds.length).toBeGreaterThanOrEqual(2);
+      return createdNodeIds;
+    });
+    const createdMinorNodes = createdMinorNodeIds
+      .map((nodeId) => screen.getByTestId(nodeId))
+      .sort((left, right) => getNodeCardMetrics(left).top - getNodeCardMetrics(right).top);
+    const upperMinorNode = createdMinorNodes[0];
+    const lowerMinorNode = createdMinorNodes[1];
+
+    if (!(upperMinorNode instanceof HTMLElement) || !(lowerMinorNode instanceof HTMLElement)) {
+      throw new Error("created_minor_nodes_not_found_for_vertical_reflow");
+    }
+
+    const lowerMinorNodeId = lowerMinorNode.getAttribute("data-testid");
+
+    if (!lowerMinorNodeId) {
+      throw new Error("lower_minor_node_testid_missing_for_vertical_reflow");
+    }
+
+    await user.click(upperMinorNode);
+    fireEvent.pointerDown(
+      within(upperMinorNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 520 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(upperMinorNode.style.height)).toBeGreaterThan(400);
+    });
+
+    await waitFor(() => {
+      const nextUpperMetrics = getNodeCardMetrics(upperMinorNode);
+      const nextLowerMetrics = getNodeCardMetrics(screen.getByTestId(lowerMinorNodeId));
+
+      expect(nextUpperMetrics.top + nextUpperMetrics.height + 7).toBeLessThanOrEqual(
+        nextLowerMetrics.top + 0.6
+      );
     });
   });
 
@@ -2259,6 +2592,242 @@ describe("workspace shell recommendation flow", () => {
 
       expect(after.left).toBe(before.left);
       expect(after.top).toBeGreaterThan(before.top + 50);
+    });
+  });
+
+  it("does not render a dedicated drag handle and still moves the node by dragging the card", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    const selectedMinorNode = await getSelectedNodeCard();
+    const nodeTestId = selectedMinorNode.getAttribute("data-testid");
+
+    if (!nodeTestId) {
+      throw new Error("selected_minor_node_testid_missing_for_card_drag");
+    }
+
+    const getMinorNode = () => screen.getByTestId(nodeTestId);
+    const before = getNodeCardMetrics(getMinorNode());
+    const dragHandle = within(getMinorNode()).queryByRole("button", { name: /^Move /i });
+
+    expect(dragHandle).toBeNull();
+
+    fireEvent.pointerDown(getMinorNode(), {
+      button: 0,
+      clientX: before.left + 32,
+      clientY: before.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: before.left + 40,
+      clientY: before.top + 104
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const after = getNodeCardMetrics(getMinorNode());
+
+      expect(after.left).toBe(before.left);
+      expect(after.top).toBeGreaterThan(before.top + 60);
+    });
+  });
+
+  it("reorders major nodes on drag and updates the end-node marker to the last ordered node", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const firstMajorBefore = getMajorNodes()[0];
+    const lastMajorBefore = getMajorNodes().at(-1);
+
+    if (!(firstMajorBefore instanceof HTMLElement)) {
+      throw new Error("first_major_node_not_found");
+    }
+
+    if (!(lastMajorBefore instanceof HTMLElement)) {
+      throw new Error("last_major_node_not_found");
+    }
+
+    expect(lastMajorBefore).toHaveClass("is-end-node");
+
+    const firstMajorTestId = firstMajorBefore.getAttribute("data-testid");
+
+    if (!firstMajorTestId) {
+      throw new Error("first_major_node_testid_missing");
+    }
+
+    const firstMajorMetrics = getNodeCardMetrics(firstMajorBefore);
+
+    fireEvent.pointerDown(firstMajorBefore, {
+      button: 0,
+      clientX: firstMajorMetrics.left + 36,
+      clientY: firstMajorMetrics.top + 26
+    });
+    fireEvent.pointerMove(window, {
+      clientX: firstMajorMetrics.left + 42,
+      clientY: firstMajorMetrics.top + 920
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const majorNodesAfter = getMajorNodes();
+      const lastMajorAfter = majorNodesAfter.at(-1);
+
+      expect(lastMajorAfter?.getAttribute("data-testid")).toBe(firstMajorTestId);
+      expect(lastMajorAfter).toHaveClass("is-end-node");
+    });
+  });
+
+  it("allows dragging a lower major node above the first major node", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const secondMajorBefore = getMajorNodes()[1];
+
+    if (!(secondMajorBefore instanceof HTMLElement)) {
+      throw new Error("second_major_node_not_found");
+    }
+
+    const secondMajorTestId = secondMajorBefore.getAttribute("data-testid");
+
+    if (!secondMajorTestId) {
+      throw new Error("second_major_node_testid_missing");
+    }
+
+    const secondMajorMetrics = getNodeCardMetrics(secondMajorBefore);
+
+    fireEvent.pointerDown(secondMajorBefore, {
+      button: 0,
+      clientX: secondMajorMetrics.left + 36,
+      clientY: secondMajorMetrics.top + 26
+    });
+    fireEvent.pointerMove(window, {
+      clientX: secondMajorMetrics.left + 42,
+      clientY: secondMajorMetrics.top - 540
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const majorNodesAfter = getMajorNodes();
+      const firstMajorAfter = majorNodesAfter[0];
+
+      expect(firstMajorAfter?.getAttribute("data-testid")).toBe(secondMajorTestId);
+      expect(firstMajorAfter).toHaveClass("is-start-node");
+    });
+  });
+
+  // major 레인에서 구조 순서와 시각 순서가 최소 간격 규칙으로 일치하는지 검증합니다.
+  it("keeps major lane visual order aligned with structural order after major reorder", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const firstMajorBefore = getMajorNodes()[0];
+
+    if (!(firstMajorBefore instanceof HTMLElement)) {
+      throw new Error("first_major_node_not_found_for_major_order_alignment");
+    }
+
+    const firstMetrics = getNodeCardMetrics(firstMajorBefore);
+
+    fireEvent.pointerDown(firstMajorBefore, {
+      button: 0,
+      clientX: firstMetrics.left + 36,
+      clientY: firstMetrics.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: firstMetrics.left + 42,
+      clientY: firstMetrics.top + 920
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const majorNodesAfter = getMajorNodes();
+      const isMonotonic = majorNodesAfter.every((node, index) => {
+        if (index === 0) {
+          return true;
+        }
+
+        const previous = majorNodesAfter[index - 1];
+
+        if (!(previous instanceof HTMLElement)) {
+          return false;
+        }
+
+        const previousMetrics = getNodeCardMetrics(previous);
+        const currentMetrics = getNodeCardMetrics(node);
+
+        return previousMetrics.top + previousMetrics.height + 7 <= currentMetrics.top + 0.6;
+      });
+
+      expect(isMonotonic).toBe(true);
     });
   });
 });
