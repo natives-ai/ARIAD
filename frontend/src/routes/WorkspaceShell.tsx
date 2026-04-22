@@ -1,6 +1,5 @@
 ﻿// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -14,8 +13,7 @@ import type { KeywordSuggestion } from "@scenaairo/recommendation";
 import type {
   StoryEpisode,
   StoryNode,
-  StoryNodeLevel,
-  StoryObjectCategory
+  StoryNodeLevel
 } from "@scenaairo/shared";
 
 import { StubAuthBoundary } from "../auth/stubAuthBoundary";
@@ -50,20 +48,17 @@ import {
   maxCanvasContentRight,
   timelineRailWidth,
   timelineStartY,
-  initialTimelineEndY,
   timelineHandleHeight,
   nodeCardWidth,
   nodeCardHeight,
   canvasBottomPadding,
   minimumCanvasHeight,
   emptyNodes,
-  objectCategoryOptions,
   rootFolderScopeId
 } from "./workspace-shell/workspaceShell.constants";
 import {
   toMessage,
   describeCloudStatus,
-  formatObjectCategory,
   renderViewportOverlay
 } from "./workspace-shell/workspaceShell.common";
 import {
@@ -94,11 +89,8 @@ import {
   getObjectToken,
   normalizeInlineObjectMentions,
   getClosedObjectWordQuery,
-  renderTextWithObjectMentions,
   buildDisplayedKeywordSuggestions,
   toggleInlineKeywordToken,
-  removeInlineSelectionWithTokenBoundaries,
-  removeAdjacentInlineToken,
   getObjectMentionSignature,
   deriveNodeContentMode
 } from "./workspace-shell/workspaceShell.inlineEditor";
@@ -113,9 +105,12 @@ import {
   parseStoredFolderList,
   parseStoredEpisodePinMap,
   sanitizeSidebarFolders,
-  matchesEpisodeSearch,
-  SidebarItemIcon
+  buildSidebarEpisodeCollections
 } from "./workspace-shell/workspaceShell.sidebar";
+import { WorkspaceSidebarRecents } from "./workspace-shell/WorkspaceSidebarRecents";
+import { WorkspaceObjectPanel } from "./workspace-shell/WorkspaceObjectPanel";
+import { CanvasNodeCard } from "./workspace-shell/CanvasNodeCard";
+import { useEpisodeCanvasState } from "./workspace-shell/useEpisodeCanvasState";
 import type {
   DragPayload,
   DetailEditorMode,
@@ -126,48 +121,6 @@ import type {
   NodeSize,
   ObjectMentionQuery
 } from "./workspace-shell/workspaceShell.types";
-
-interface EpisodeCanvasHistoryState {
-  laneDividerXs: {
-    detailEdge: number;
-    first: number;
-    second: number;
-  };
-  nodeSizes: Record<string, NodeSize>;
-  timelineEndY: number;
-}
-
-function cloneLaneDividerState(value: EpisodeCanvasHistoryState["laneDividerXs"]) {
-  return {
-    detailEdge: value.detailEdge,
-    first: value.first,
-    second: value.second
-  };
-}
-
-function cloneNodeSizeState(nodeSizes: Record<string, NodeSize>) {
-  return Object.fromEntries(
-    Object.entries(nodeSizes).map(([nodeId, size]) => [nodeId, { ...size }])
-  );
-}
-
-function getEpisodeCanvasHistorySignature(
-  episodeId: string | null,
-  nodes: StoryNode[]
-) {
-  if (!episodeId) {
-    return null;
-  }
-
-  const nodeSignature = nodes
-    .map(
-      (node) =>
-        `${node.id}:${node.orderIndex}:${node.parentId ?? ""}:${node.level}:${node.canvasX ?? ""}:${node.canvasY ?? ""}`
-    )
-    .join("|");
-
-  return `${episodeId}::${nodeSignature}`;
-}
 
 // 이 컴포넌트는 워크스페이스 화면 전체를 렌더링합니다.
 export function WorkspaceShell() {
@@ -268,17 +221,6 @@ export function WorkspaceShell() {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [isCanvasPanning, setIsCanvasPanning] = useState(false);
-  const [laneDividerXs, setLaneDividerXs] = useState<{
-    detailEdge: number;
-    first: number;
-    second: number;
-  }>(() => ({
-    detailEdge: initialLaneDividerXs.detailEdge,
-    first: initialLaneDividerXs.first,
-    second: initialLaneDividerXs.second
-  }));
-  const [timelineEndY, setTimelineEndY] = useState(initialTimelineEndY);
-  const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
   const [inlineNodeTextDraft, setInlineNodeTextDraft] = useState("");
   const [rewirePreviewPoint, setRewirePreviewPoint] = useState<{
     x: number;
@@ -328,12 +270,8 @@ export function WorkspaceShell() {
   const laneCanvasBoundsRef = useRef<
     Record<StoryNodeLevel, { left: number; right: number; startY: number }> | null
   >(null);
-  const nodeSizesRef = useRef<Record<string, NodeSize>>({});
   const timelineAnchorsRef = useRef<ReturnType<typeof getTimelineAnchorPositions> | null>(null);
-  const laneDividerXsRef = useRef(laneDividerXs);
   const stageHeightRef = useRef(0);
-  const timelineEndYRef = useRef(timelineEndY);
-  const episodeCanvasHistoryRef = useRef<Record<string, EpisodeCanvasHistoryState>>({});
   const majorAnchorNodeIdsByEpisodeRef = useRef<
     Record<string, { endId: string | null; startId: string | null }>
   >({});
@@ -445,6 +383,21 @@ export function WorkspaceShell() {
 
   const activeProjectId = state?.snapshot.project.id ?? null;
   const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
+  const {
+    laneDividerXs,
+    nodeSizes,
+    nodeSizesRef,
+    runRedo,
+    runUndo,
+    setLaneDividerXs,
+    setNodeSizes,
+    setTimelineEndY,
+    timelineEndY
+  } = useEpisodeCanvasState({
+    activeEpisodeId,
+    controller,
+    snapshotNodes: state?.snapshot.nodes ?? emptyNodes
+  });
 
   useEffect(() => {
     if (!state) {
@@ -533,7 +486,7 @@ export function WorkspaceShell() {
 
     const key = `${env.storagePrefix}:node-sizes:${activeEpisodeId}`;
     setNodeSizes(parseStoredNodeSizeMap(window.localStorage.getItem(key)));
-  }, [activeEpisodeId, env.storagePrefix]);
+  }, [activeEpisodeId, env.storagePrefix, setNodeSizes]);
 
   // undo 복원 시 같은 노드 id의 크기를 되살리기 위해 삭제된 엔트리를 즉시 정리하지 않습니다.
   useEffect(() => {
@@ -1108,7 +1061,15 @@ export function WorkspaceShell() {
       window.removeEventListener("pointerup", clearPointerDrag);
       window.removeEventListener("pointercancel", clearPointerDrag);
     };
-  }, [canvasZoom, controller]);
+  }, [
+    canvasZoom,
+    controller,
+    nodeSizesRef,
+    setLaneDividerXs,
+    setNodeSizes,
+    setTimelineEndY,
+    syncSelectedNodeInputHeight
+  ]);
 
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -1208,91 +1169,6 @@ export function WorkspaceShell() {
     state === null
       ? true
       : state.syncStatus === "booting" || state.syncStatus === "importing";
-  const activeEpisodeCanvasHistorySignature = getEpisodeCanvasHistorySignature(
-    activeEpisodeId,
-    orderedNodes
-  );
-
-  useEffect(() => {
-    laneDividerXsRef.current = laneDividerXs;
-  }, [laneDividerXs]);
-
-  useEffect(() => {
-    timelineEndYRef.current = timelineEndY;
-  }, [timelineEndY]);
-
-  useEffect(() => {
-    if (!activeEpisodeCanvasHistorySignature) {
-      return;
-    }
-
-    episodeCanvasHistoryRef.current[activeEpisodeCanvasHistorySignature] = {
-      laneDividerXs: cloneLaneDividerState(laneDividerXs),
-      nodeSizes: cloneNodeSizeState(nodeSizes),
-      timelineEndY
-    };
-  }, [activeEpisodeCanvasHistorySignature, laneDividerXs, nodeSizes, timelineEndY]);
-
-  const restoreCanvasUiFromSnapshotHistory = useCallback(() => {
-    const snapshot = controller.getState()?.snapshot;
-
-    if (!snapshot) {
-      return;
-    }
-
-    const historyEpisodeId =
-      snapshot.project.activeEpisodeId ??
-      snapshot.episodes.find((episode) => episode.id === snapshot.project.activeEpisodeId)?.id ??
-      snapshot.episodes[0]?.id ??
-      null;
-
-    if (!historyEpisodeId) {
-      return;
-    }
-
-    const historyNodes = sortNodesByOrder(
-      snapshot.nodes.filter((node) => node.episodeId === historyEpisodeId)
-    );
-    const historySignature = getEpisodeCanvasHistorySignature(
-      historyEpisodeId,
-      historyNodes
-    );
-
-    if (!historySignature) {
-      return;
-    }
-
-    const storedState = episodeCanvasHistoryRef.current[historySignature];
-
-    if (!storedState) {
-      return;
-    }
-
-    if (
-      JSON.stringify(storedState.laneDividerXs) !==
-      JSON.stringify(laneDividerXsRef.current)
-    ) {
-      setLaneDividerXs(cloneLaneDividerState(storedState.laneDividerXs));
-    }
-
-    if (storedState.timelineEndY !== timelineEndYRef.current) {
-      setTimelineEndY(storedState.timelineEndY);
-    }
-
-    if (JSON.stringify(storedState.nodeSizes) !== JSON.stringify(nodeSizesRef.current)) {
-      setNodeSizes(cloneNodeSizeState(storedState.nodeSizes));
-    }
-  }, [controller]);
-
-  const runUndo = useCallback(async () => {
-    await controller.undo();
-    restoreCanvasUiFromSnapshotHistory();
-  }, [controller, restoreCanvasUiFromSnapshotHistory]);
-
-  const runRedo = useCallback(async () => {
-    await controller.redo();
-    restoreCanvasUiFromSnapshotHistory();
-  }, [controller, restoreCanvasUiFromSnapshotHistory]);
 
   useEffect(() => {
     if (previousActiveEpisodeIdRef.current === activeEpisodeId) {
@@ -1379,7 +1255,12 @@ export function WorkspaceShell() {
     return () => {
       window.cancelAnimationFrame(animationId);
     };
-  }, [inlineNodeTextDraft.length, selectedNode, selectedNodeIdentity]);
+  }, [
+    inlineNodeTextDraft.length,
+    selectedNode,
+    selectedNodeIdentity,
+    syncSelectedNodeInputHeight
+  ]);
 
   useEffect(() => {
     if (!selectedNode) {
@@ -1398,7 +1279,13 @@ export function WorkspaceShell() {
     return () => {
       window.cancelAnimationFrame(animationId);
     };
-  }, [selectedAiKeywords, inlineNodeTextDraft, selectedNode, selectedNodeIdentity]);
+  }, [
+    selectedAiKeywords,
+    inlineNodeTextDraft,
+    selectedNode,
+    selectedNodeIdentity,
+    syncSelectedNodeInputHeight
+  ]);
 
   useEffect(() => {
     if (detailMode === "object" && selectedObject) {
@@ -1889,7 +1776,6 @@ export function WorkspaceShell() {
   effectiveFirstDividerXRef.current = effectiveFirstDividerX;
   const deleteTarget =
     deleteTargetId !== null ? nodesById.get(deleteTargetId) ?? null : null;
-  const aiPanelNode = aiPanelNodeId ? nodesById.get(aiPanelNodeId) ?? null : null;
 
   // 이 함수는 같은 레벨 노드의 중심 Y를 기준으로 삽입 인덱스를 계산합니다.
   function getInsertIndexForCanvasY(
@@ -3054,378 +2940,75 @@ export function WorkspaceShell() {
       extractDisplayText(displayText) || activeKeywords.join(" ") || getNodeHeadline(node);
 
     return (
-      <article
-        className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNode?.id === node.id ? " has-keyword-cloud" : ""}`}
-        data-testid={`node-${node.id}`}
-        draggable={false}
+      <CanvasNodeCard
+        activeKeywords={activeKeywords}
+        activeObjectMentionIndex={activeObjectMentionIndex}
+        aiPanelNodeId={aiPanelNodeId}
+        applyObjectMentionSelection={applyObjectMentionSelection}
+        beginNodeDrag={beginNodeDrag}
+        beginNodeResize={beginNodeResize}
+        centerCanvasViewportOnNode={centerCanvasViewportOnNode}
+        displayBodyText={displayBodyText}
+        displayedKeywordSuggestions={displayedKeywordSuggestions}
+        displayText={displayText}
+        getViewportMenuPosition={getViewportMenuPosition}
+        hasVisibleKeywords={hasVisibleKeywords}
+        inlineNodeTextDraft={inlineNodeTextDraft}
+        isBusy={isBusy}
+        isDragging={isDragging}
+        isEndMajorNode={isEndMajorNode}
+        isHoveredRewireTarget={isHoveredRewireTarget}
+        isLoadingKeywords={isLoadingKeywords}
+        isNodeMoreMenuOpen={isNodeMoreMenuOpen}
+        isRewireSource={isRewireSource}
+        isRewireTarget={isRewireTarget}
+        isSelected={isSelected}
+        isStartMajorNode={isStartMajorNode}
         key={node.id}
-        onClick={() => {
-          if (suppressNodeClickRef.current === node.id) {
-            suppressNodeClickRef.current = null;
-            return;
-          }
-
-          if (isRewireTarget && rewireNode) {
-            void controller.rewireNode(rewireNode.id, node.id);
-            setSelectedNodeId(rewireNode.id);
-            setRewireNodeId(null);
-            rewireHoverTargetIdRef.current = null;
-            setRewireHoverTargetId(null);
-            setRewirePreviewPoint(null);
-            return;
-          }
-
-          shouldFocusSelectedNodeRef.current = true;
-          setSelectedNodeId(node.id);
+        node={node}
+        nodeCardRefs={nodeCardRefs}
+        nodeMenuButtonRefs={nodeMenuButtonRefs}
+        nodeSize={nodeSize}
+        objectMentionQuery={objectMentionQuery}
+        objectMentionSuggestions={objectMentionSuggestions}
+        onRewireNode={async (sourceNodeId, targetNodeId) => {
+          await controller.rewireNode(sourceNodeId, targetNodeId);
+          rewireHoverTargetIdRef.current = null;
         }}
-        onDoubleClick={(event) => {
-          if (isInteractiveTarget(event.target)) {
-            return;
-          }
-
-          shouldFocusSelectedNodeRef.current = true;
-          setSelectedNodeId(node.id);
-          centerCanvasViewportOnNode(node.id);
+        openKeywordSuggestions={openKeywordSuggestions}
+        persistInlineNodeContent={persistInlineNodeContent}
+        placement={placement}
+        recommendationError={recommendationError}
+        rewireNode={rewireNode}
+        selectedAiKeywords={selectedAiKeywords}
+        selectedNodeInputRef={selectedNodeInputRef}
+        selectedNodeTitle={selectedNodeTitle}
+        setActiveObjectMentionIndex={setActiveObjectMentionIndex}
+        setAiPanelNodeId={setAiPanelNodeId}
+        setInlineNodeTextDraft={setInlineNodeTextDraft}
+        setIsNodeMoreMenuOpen={setIsNodeMoreMenuOpen}
+        setNodeMenuPosition={setNodeMenuPosition}
+        setObjectMentionMenuPosition={setObjectMentionMenuPosition}
+        setObjectMentionQuery={setObjectMentionQuery}
+        setRecommendationError={setRecommendationError}
+        setRewireHoverTargetId={setRewireHoverTargetId}
+        setRewireNodeId={setRewireNodeId}
+        setRewirePreviewPoint={setRewirePreviewPoint}
+        setSelectedAiKeywords={setSelectedAiKeywords}
+        setSelectedNodeId={setSelectedNodeId}
+        shouldFocusSelectedNodeRef={shouldFocusSelectedNodeRef}
+        shouldShowPlaceholder={shouldShowPlaceholder}
+        suppressNodeClickRef={suppressNodeClickRef}
+        syncInlineObjectMentions={syncInlineObjectMentions}
+        syncSelectedNodeInputHeight={syncSelectedNodeInputHeight}
+        toggleAiKeyword={toggleAiKeyword}
+        toggleNodeCollapsed={async (nodeId, nextCollapsed) => {
+          await controller.updateNodeVisualState(nodeId, {
+            isCollapsed: nextCollapsed
+          });
         }}
-        onPointerDown={(event) => {
-          beginNodeDrag(node.id, node.level, event);
-        }}
-        ref={(element) => {
-          if (element) {
-            nodeCardRefs.current.set(node.id, element);
-          } else {
-            nodeCardRefs.current.delete(node.id);
-          }
-        }}
-        style={{
-          left: `${placement.x}px`,
-          top: `${placement.y}px`,
-          height: `${nodeSize.height}px`,
-          width: `${nodeSize.width}px`
-        } as CSSProperties}
-      >
-        <div className="node-card-header">
-          <span className="visually-hidden">{node.level} node</span>
-          <div className="node-header-actions">
-            <button
-              aria-label={node.isCollapsed ? copy.persistence.unfold : copy.persistence.fold}
-              className="button-secondary node-header-button"
-              disabled={isBusy}
-              onClick={(event) => {
-                event.stopPropagation();
-                void controller.updateNodeVisualState(node.id, {
-                  isCollapsed: !(node.isCollapsed ?? false)
-                });
-              }}
-              type="button"
-            >
-              {node.isCollapsed ? ">" : "<"}
-            </button>
-            <div className="node-menu-shell">
-              <button
-                aria-expanded={isSelected && isNodeMoreMenuOpen}
-                aria-label={`${copy.persistence.more} ${getNodeHeadline(node)}`}
-                className="button-secondary node-header-button node-more-button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  const nextOpen = !(isSelected && isNodeMoreMenuOpen);
-                  setSelectedNodeId(node.id);
-                  setIsNodeMoreMenuOpen(nextOpen);
-                  setNodeMenuPosition(
-                    nextOpen
-                      ? getViewportMenuPosition(
-                          (event.currentTarget as HTMLButtonElement).getBoundingClientRect()
-                        )
-                      : null
-                  );
-                }}
-                ref={(element) => {
-                  if (element) {
-                    nodeMenuButtonRefs.current.set(node.id, element);
-                  } else {
-                    nodeMenuButtonRefs.current.delete(node.id);
-                  }
-                }}
-                type="button"
-              >
-                ...
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="node-card-body">
-          {node.contentMode === "text" && activeKeywords.length > 0 ? (
-            <span aria-label="AI-assisted node" className="visually-hidden" />
-          ) : null}
-          <span
-            className="visually-hidden"
-            data-testid={isSelected ? "selected-node-title" : undefined}
-          >
-            {selectedNodeTitle}
-          </span>
-          {isSelected ? (
-            <div
-              className="node-inline-editor"
-              onClick={(event) => {
-                event.stopPropagation();
-                selectedNodeInputRef.current?.focus();
-              }}
-            >
-              <div className="node-inline-input-shell">
-                <div
-                  aria-hidden="true"
-                  className={`node-inline-preview${
-                    !displayBodyText && activeKeywords.length === 0 ? " is-placeholder" : ""
-                  }`}
-                >
-                  {displayText
-                    ? renderTextWithObjectMentions(displayText)
-                    : activeKeywords.length === 0
-                      ? "Type the beat"
-                      : "\u200b"}
-                </div>
-                <textarea
-                  className="node-inline-input"
-                  data-node-id={node.id}
-                  onBlur={() => {
-                    void persistInlineNodeContent(node, inlineNodeTextDraft, activeKeywords);
-                  }}
-                  onChange={(event) => {
-                    const nextValue = normalizeInlineObjectMentions(event.target.value);
-                    const nextCaret = event.target.selectionStart ?? nextValue.length;
-
-                    setInlineNodeTextDraft(nextValue);
-                    setSelectedAiKeywords(extractInlineKeywords(nextValue));
-                    updateObjectMentionQueryFromInput(event.currentTarget, nextValue);
-                    syncSelectedNodeInputHeight(node.id, event.currentTarget);
-                    syncInlineObjectMentions(node.id, nextValue);
-
-                    if (nextValue !== event.target.value) {
-                      window.requestAnimationFrame(() => {
-                        selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
-                      });
-                    }
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    updateObjectMentionQueryFromInput(event.currentTarget);
-                  }}
-                  onKeyDown={(event) => {
-                    const selectionStart = event.currentTarget.selectionStart ?? 0;
-                    const selectionEnd = event.currentTarget.selectionEnd ?? 0;
-                    const activeMentionSuggestion =
-                      objectMentionSuggestions[activeObjectMentionIndex] ?? null;
-
-                    if (selectionStart === selectionEnd) {
-                      const removableToken =
-                        event.key === "Backspace"
-                          ? removeAdjacentInlineToken(inlineNodeTextDraft, selectionStart, "backward")
-                          : event.key === "Delete"
-                            ? removeAdjacentInlineToken(inlineNodeTextDraft, selectionStart, "forward")
-                            : null;
-
-                      if (removableToken) {
-                        event.preventDefault();
-                        setInlineNodeTextDraft(removableToken.nextText);
-                        setSelectedAiKeywords(extractInlineKeywords(removableToken.nextText));
-                        syncInlineObjectMentions(node.id, removableToken.nextText);
-
-                        window.requestAnimationFrame(() => {
-                          selectedNodeInputRef.current?.focus();
-                          selectedNodeInputRef.current?.setSelectionRange(
-                            removableToken.nextCaret,
-                            removableToken.nextCaret
-                          );
-                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
-                        });
-                        return;
-                      }
-                    }
-
-                    if (
-                      selectionStart !== selectionEnd &&
-                      (event.key === "Backspace" || event.key === "Delete")
-                    ) {
-                      const removableSelection = removeInlineSelectionWithTokenBoundaries(
-                        inlineNodeTextDraft,
-                        selectionStart,
-                        selectionEnd
-                      );
-
-                      if (removableSelection) {
-                        event.preventDefault();
-                        setInlineNodeTextDraft(removableSelection.nextText);
-                        setSelectedAiKeywords(extractInlineKeywords(removableSelection.nextText));
-                        syncInlineObjectMentions(node.id, removableSelection.nextText);
-
-                        window.requestAnimationFrame(() => {
-                          selectedNodeInputRef.current?.focus();
-                          selectedNodeInputRef.current?.setSelectionRange(
-                            removableSelection.nextCaret,
-                            removableSelection.nextCaret
-                          );
-                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
-                        });
-                        return;
-                      }
-                    }
-
-                    if (
-                      activeMentionSuggestion &&
-                      (event.key === "Enter" ||
-                        event.key === "Tab" ||
-                        (objectMentionQuery?.mode === "mention" && event.key === " "))
-                    ) {
-                      event.preventDefault();
-                      applyObjectMentionSelection(
-                        activeMentionSuggestion.name,
-                        objectMentionQuery?.mode === "mention" && event.key === " "
-                      );
-                      return;
-                    }
-
-                    if (objectMentionSuggestions.length > 0 && event.key === "ArrowDown") {
-                      event.preventDefault();
-                      setActiveObjectMentionIndex((current) =>
-                        Math.min(current + 1, objectMentionSuggestions.length - 1)
-                      );
-                      return;
-                    }
-
-                    if (objectMentionSuggestions.length > 0 && event.key === "ArrowUp") {
-                      event.preventDefault();
-                      setActiveObjectMentionIndex((current) => Math.max(current - 1, 0));
-                      return;
-                    }
-
-                    if (objectMentionQuery !== null && event.key === "Escape") {
-                      event.preventDefault();
-                      setObjectMentionQuery(null);
-                      setObjectMentionMenuPosition(null);
-                      setActiveObjectMentionIndex(0);
-                    }
-                  }}
-                  onKeyUp={(event) => {
-                    updateObjectMentionQueryFromInput(event.currentTarget);
-                  }}
-                  placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
-                  ref={selectedNodeInputRef}
-                  rows={1}
-                  value={inlineNodeTextDraft}
-                />
-              </div>
-            </div>
-          ) : displayBodyText || hasVisibleKeywords ? (
-            <div className="node-text-flow">
-              {displayText ? (
-                <span className="node-inline-text">{renderTextWithObjectMentions(displayText)}</span>
-              ) : null}
-            </div>
-          ) : null}
-          {shouldShowPlaceholder ? (
-            <p className="node-simple-text is-placeholder">{displayText}</p>
-          ) : null}
-        </div>
-        {isSelected && !node.isFixed ? (
-          <>
-            <button
-              aria-label="Resize horizontally"
-              className="node-resize-handle node-resize-handle-horizontal"
-              onPointerDown={(event) => {
-                beginNodeResize(node.id, "horizontal", event);
-              }}
-              type="button"
-            />
-            <button
-              aria-label="Resize vertically"
-              className="node-resize-handle node-resize-handle-vertical"
-              onPointerDown={(event) => {
-                beginNodeResize(node.id, "vertical", event);
-              }}
-              type="button"
-            />
-            <button
-              aria-label="Resize diagonally"
-              className="node-resize-handle node-resize-handle-diagonal"
-              onPointerDown={(event) => {
-                beginNodeResize(node.id, "diagonal", event);
-              }}
-              type="button"
-            />
-          </>
-        ) : null}
-
-        {aiPanelNode?.id === node.id ? (
-          <section
-            className="recommendation-panel"
-            data-testid="keyword-cloud"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <div className="recommendation-panel-header">
-              <strong>{copy.persistence.keywordSuggestions}</strong>
-              <div className="recommendation-panel-actions">
-                <button
-                  className="button-secondary"
-                  disabled={isLoadingKeywords}
-                  onClick={() => {
-                    void openKeywordSuggestions(node, { refresh: true });
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.keywordRefresh}
-                </button>
-                <button
-                  className="button-secondary"
-                  onClick={() => {
-                    setAiPanelNodeId(null);
-                    setRecommendationError(null);
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.cancel}
-                </button>
-              </div>
-            </div>
-
-            {recommendationError ? (
-              <p className="recommendation-error">
-                {copy.persistence.recommendationFailed}: {recommendationError}
-              </p>
-            ) : null}
-
-            {isLoadingKeywords ? (
-              <p className="support-copy">Loading keyword suggestions...</p>
-            ) : displayedKeywordSuggestions.length > 0 ? (
-              <div className="keyword-suggestion-grid">
-                {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
-                  const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
-
-                  return (
-                    <button
-                      aria-pressed={isSelectedKeyword}
-                      className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
-                      data-testid={`keyword-suggestion-${suggestionIndex}`}
-                      key={suggestion.label}
-                      onClick={() => {
-                        void toggleAiKeyword(node, suggestion.label);
-                      }}
-                      type="button"
-                    >
-                      <span>{suggestion.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="support-copy">{copy.persistence.keywordCloudEmpty}</p>
-            )}
-          </section>
-        ) : null}
-
-      </article>
+        updateObjectMentionQueryFromInput={updateObjectMentionQueryFromInput}
+      />
     );
   });
   const rewirePreviewLine =
@@ -3470,94 +3053,13 @@ export function WorkspaceShell() {
     state.session.displayName ??
     state.session.accountId ??
     `${copy.workspace.brand} User`;
-  const episodeSearchNormalized = episodeSearchQuery.trim().toLowerCase();
-  const folderIdByEpisodeId = new Map<string, string>();
-
-  for (const folder of sidebarFolders) {
-    for (const episodeId of folder.episodeIds) {
-      folderIdByEpisodeId.set(episodeId, folder.id);
-    }
-  }
-
-  function getScopedPinnedEpisodes(scopeId: string) {
-    return folderEpisodePins[scopeId] ?? [];
-  }
-
-  function sortEpisodesForScope(episodes: StoryEpisode[], scopeId: string) {
-    const pinnedIds = getScopedPinnedEpisodes(scopeId);
-
-    return [...episodes].sort((left, right) => {
-      const leftPinned = pinnedIds.includes(left.id);
-      const rightPinned = pinnedIds.includes(right.id);
-
-      if (leftPinned !== rightPinned) {
-        return leftPinned ? -1 : 1;
-      }
-
-      return right.updatedAt.localeCompare(left.updatedAt);
-    });
-  }
-
-  function sortEpisodesForFolder(
-    episodes: StoryEpisode[],
-    scopeId: string,
-    orderedEpisodeIds: string[]
-  ) {
-    const pinnedIds = getScopedPinnedEpisodes(scopeId);
-    const orderIndexById = new Map(
-      orderedEpisodeIds.map((episodeId, index) => [episodeId, index])
-    );
-
-    return [...episodes].sort((left, right) => {
-      const leftPinned = pinnedIds.includes(left.id);
-      const rightPinned = pinnedIds.includes(right.id);
-
-      if (leftPinned !== rightPinned) {
-        return leftPinned ? -1 : 1;
-      }
-
-      return (orderIndexById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-        (orderIndexById.get(right.id) ?? Number.MAX_SAFE_INTEGER);
-    });
-  }
-
-  const rootEpisodes = sortEpisodesForScope(
-    snapshot.episodes.filter((episode) => !folderIdByEpisodeId.has(episode.id)),
-    rootFolderScopeId
-  ).filter((episode) => matchesEpisodeSearch(episode, episodeSearchQuery));
-
-  const visibleFolders = sidebarFolders
-    .map((folder) => {
-      const folderEpisodes = folder.episodeIds
-        .map((episodeId) => snapshot.episodes.find((episode) => episode.id === episodeId) ?? null)
-        .filter((episode): episode is StoryEpisode => episode !== null);
-      const folderMatches = episodeSearchNormalized
-        ? folder.name.toLowerCase().includes(episodeSearchNormalized)
-        : true;
-      const filteredFolderEpisodes = folderMatches
-        ? folderEpisodes
-        : folderEpisodes.filter((episode) => matchesEpisodeSearch(episode, episodeSearchQuery));
-      const visibleFolderEpisodes = sortEpisodesForFolder(
-        filteredFolderEpisodes,
-        folder.id,
-        folder.episodeIds
-      );
-
-      return {
-        ...folder,
-        visibleEpisodes: visibleFolderEpisodes,
-        visibleInSearch:
-          !episodeSearchNormalized || folderMatches || visibleFolderEpisodes.length > 0
-      };
-    })
-    .filter((folder) => folder.visibleInSearch)
-    .sort((left, right) => {
-      if (left.isPinned !== right.isPinned) {
-        return left.isPinned ? -1 : 1;
-      }
-
-      return right.updatedAt.localeCompare(left.updatedAt);
-    });
+  const { folderIdByEpisodeId, rootEpisodes, visibleFolders } = buildSidebarEpisodeCollections({
+    episodes: snapshot.episodes,
+    folders: sidebarFolders,
+    pinMap: folderEpisodePins,
+    query: episodeSearchQuery,
+    rootScopeId: rootFolderScopeId
+  });
 
   function openObjectDetails(objectId: string) {
     setSelectedObjectId(objectId);
@@ -3845,140 +3347,24 @@ export function WorkspaceShell() {
         )
       : null;
 
-  const detailPanel =
-    detailMode !== null ? (
-      <aside
-        className={`panel panel-details${isCanvasFullscreen ? " panel-details-floating" : ""}`}
-      >
-        <div className="detail-panel-header">
-          <span className="visually-hidden">{copy.workspace.details}</span>
-          <button
-            aria-label={copy.persistence.closeDetails}
-            className="button-secondary detail-close-button"
-            onClick={closeDetailPanel}
-            type="button"
-          >
-            x
-          </button>
-        </div>
-
-        {detailError ? <p className="recommendation-error">{detailError}</p> : null}
-
-        {detailMode === "object" && selectedObject ? (
-          <form
-            className="detail-editor"
-            data-testid="detail-editor"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void saveObjectDetails();
-            }}
-          >
-            {folderIdByEpisodeId.has(selectedObject.episodeId) ? (
-              <div className="field-stack">
-                <span>{copy.workspace.objectEpisode}</span>
-                <span>
-                  {selectedObjectEpisodeTitle ?? copy.workspace.objectEpisodeMissing}
-                </span>
-              </div>
-            ) : null}
-            <label className="field-stack">
-              <span>{copy.workspace.objectName}</span>
-              <input
-                onChange={(event) => {
-                  handleObjectDraftChange("name", event.target.value);
-                }}
-                type="text"
-                value={objectEditorDraft.name}
-              />
-            </label>
-            <label className="field-stack">
-              <span>{copy.workspace.objectCategory}</span>
-              <select
-                onChange={(event) => {
-                  handleObjectDraftChange(
-                    "category",
-                    event.target.value as StoryObjectCategory
-                  );
-                }}
-                value={objectEditorDraft.category}
-              >
-                {objectCategoryOptions.map((category) => (
-                  <option key={category} value={category}>
-                    {formatObjectCategory(category)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field-stack">
-              <span>{copy.workspace.objectSummary}</span>
-              <textarea
-                onChange={(event) => {
-                  handleObjectDraftChange("summary", event.target.value);
-                }}
-                rows={4}
-                value={objectEditorDraft.summary}
-              />
-            </label>
-            <div className="control-row">
-              <button type="submit">{copy.persistence.saveObject}</button>
-            </div>
-          </form>
-        ) : detailMode === "create-object" ? (
-          <form
-            className="detail-editor"
-            data-testid="detail-editor"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void saveObjectDetails();
-            }}
-          >
-            <label className="field-stack">
-              <span>{copy.workspace.objectName}</span>
-              <input
-                onChange={(event) => {
-                  handleObjectDraftChange("name", event.target.value);
-                }}
-                placeholder="Heroine's Mother"
-                type="text"
-                value={objectEditorDraft.name}
-              />
-            </label>
-            <label className="field-stack">
-              <span>{copy.workspace.objectCategory}</span>
-              <select
-                onChange={(event) => {
-                  handleObjectDraftChange(
-                    "category",
-                    event.target.value as StoryObjectCategory
-                  );
-                }}
-                value={objectEditorDraft.category}
-              >
-                {objectCategoryOptions.map((category) => (
-                  <option key={category} value={category}>
-                    {formatObjectCategory(category)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field-stack">
-              <span>{copy.workspace.objectSummary}</span>
-              <textarea
-                onChange={(event) => {
-                  handleObjectDraftChange("summary", event.target.value);
-                }}
-                placeholder="Relationship pressure, location note, or prop detail."
-                rows={4}
-                value={objectEditorDraft.summary}
-              />
-            </label>
-            <div className="control-row">
-              <button type="submit">{copy.workspace.createObject}</button>
-            </div>
-          </form>
-        ) : null}
-      </aside>
-    ) : null;
+  const detailPanel = (
+    <WorkspaceObjectPanel
+      detailError={detailError}
+      detailMode={detailMode}
+      isCanvasFullscreen={isCanvasFullscreen}
+      objectEditorDraft={objectEditorDraft}
+      onClose={closeDetailPanel}
+      onDraftChange={handleObjectDraftChange}
+      onSave={() => {
+        void saveObjectDetails();
+      }}
+      selectedObject={selectedObject}
+      selectedObjectEpisodeTitle={selectedObjectEpisodeTitle}
+      showSelectedObjectEpisode={
+        selectedObject ? folderIdByEpisodeId.has(selectedObject.episodeId) : false
+      }
+    />
+  );
 
   function openSidebarAndSearch() {
     setIsSidebarCollapsed(false);
@@ -4310,418 +3696,6 @@ export function WorkspaceShell() {
     setFolderPickerPosition(null);
   }
 
-  // 사이드바 에피소드 항목을 렌더링하는 함수
-  function renderEpisodeItem(episode: StoryEpisode, scopeId: string) {
-    const isActive = episode.id === activeEpisode?.id;
-    const isPinned = getScopedPinnedEpisodes(scopeId).includes(episode.id);
-    const isRenaming = renamingEpisodeId === episode.id;
-    const currentFolderId = folderIdByEpisodeId.get(episode.id) ?? null;
-    const isSortable = sortingFolderId !== null && sortingFolderId === currentFolderId;
-
-    return (
-      <li
-        className={`sidebar-episode-item${isActive ? " is-active" : ""}${isSortable ? " is-sortable" : ""}`}
-        draggable={isSortable}
-        key={episode.id}
-        onDragEnd={() => {
-          setDraggedSidebarEpisodeId(null);
-        }}
-        onDragOver={(event) => {
-          if (!isSortable || !draggedSidebarEpisodeId || draggedSidebarEpisodeId === episode.id) {
-            return;
-          }
-
-          event.preventDefault();
-        }}
-        onDragStart={() => {
-          if (!isSortable) {
-            return;
-          }
-
-          setDraggedSidebarEpisodeId(episode.id);
-        }}
-        onDrop={(event) => {
-          if (!isSortable || !draggedSidebarEpisodeId || !currentFolderId) {
-            return;
-          }
-
-          event.preventDefault();
-          reorderEpisodeWithinFolder(currentFolderId, draggedSidebarEpisodeId, episode.id);
-          setDraggedSidebarEpisodeId(null);
-        }}
-      >
-        {isRenaming ? (
-          <form
-            className="sidebar-episode-rename"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submitEpisodeRename();
-            }}
-          >
-            <input
-              onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                setEpisodeRenameDraft(event.target.value);
-              }}
-              type="text"
-              value={episodeRenameDraft}
-            />
-            <div className="control-row">
-              <button type="submit">{copy.persistence.saveEpisode}</button>
-              <button
-                className="button-secondary"
-                onClick={() => {
-                  setRenamingEpisodeId(null);
-                  setEpisodeRenameDraft("");
-                }}
-                type="button"
-              >
-                {copy.persistence.cancel}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <div className={`sidebar-story-shell${isActive ? " is-active" : ""}`}>
-            <button
-              className={`sidebar-episode-link${isActive ? " is-active" : ""}`}
-              onClick={() => {
-                void selectEpisodeFromSidebar(episode.id);
-              }}
-              type="button"
-            >
-              <span className="sidebar-episode-title-row">
-                <SidebarItemIcon kind="episode" />
-                <strong>{episode.title}</strong>
-              </span>
-            </button>
-            <div className="sidebar-episode-actions">
-              <button
-                aria-label={`${isPinned ? copy.persistence.unpinEpisode : copy.persistence.pinEpisode} ${episode.title}`}
-                className="button-secondary sidebar-inline-pin-button"
-                onClick={() => {
-                  toggleEpisodePin(episode.id);
-                }}
-                type="button"
-              >
-                {isPinned ? copy.persistence.unpinEpisode : copy.persistence.pinEpisode}
-              </button>
-              <button
-                aria-label={`${copy.workspace.utilities} ${episode.title}`}
-                className="button-secondary sidebar-episode-menu-button"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setFolderMenuId(null);
-                  setFolderMenuPosition(null);
-                  setFolderEpisodePickerFolderId(null);
-                  setFolderEpisodePickerPosition(null);
-                  setFolderPickerEpisodeId(null);
-                  setFolderPickerPosition(null);
-                  setEpisodeMenuId((current) => {
-                    const nextId = current === episode.id ? null : episode.id;
-                    setEpisodeMenuPosition(
-                      nextId ? getViewportMenuPosition(rect) : null
-                    );
-                    return nextId;
-                  });
-                }}
-                ref={(element) => {
-                  if (element) {
-                    episodeMenuButtonRefs.current.set(episode.id, element);
-                  } else {
-                    episodeMenuButtonRefs.current.delete(episode.id);
-                  }
-                }}
-                type="button"
-              >
-                ...
-              </button>
-              {episodeMenuId === episode.id
-                ? renderViewportOverlay(
-                    <div
-                      className="sidebar-episode-menu sidebar-episode-menu-overlay"
-                      style={
-                        episodeMenuPosition
-                          ? ({
-                              left: `${episodeMenuPosition.left}px`,
-                              top: `${episodeMenuPosition.top}px`
-                            } as CSSProperties)
-                          : undefined
-                      }
-                    >
-                      <button
-                        className="button-secondary"
-                        onClick={() => {
-                          beginEpisodeRename(episode);
-                        }}
-                        type="button"
-                      >
-                        {copy.persistence.renameEpisode}
-                      </button>
-                      {currentFolderId ? (
-                        <button
-                          className="button-secondary"
-                          onClick={() => {
-                            void dissolveEpisodeFromFolder(episode.id);
-                          }}
-                          type="button"
-                        >
-                          {copy.persistence.dissolveEpisode}
-                        </button>
-                      ) : (
-                        <button
-                          className="button-secondary"
-                          onClick={(event) => {
-                            const rect = event.currentTarget.getBoundingClientRect();
-                            setFolderPickerEpisodeId((current) => {
-                              const nextId = current === episode.id ? null : episode.id;
-                              setFolderPickerPosition(
-                                nextId ? getViewportMenuPosition(rect, "right-start") : null
-                              );
-                              return nextId;
-                            });
-                          }}
-                          type="button"
-                        >
-                          {copy.persistence.addToFolder}
-                        </button>
-                      )}
-                      <button
-                        className="button-secondary"
-                        disabled={snapshot.episodes.length <= 1}
-                        onClick={() => {
-                          setDeleteEpisodeId(episode.id);
-                          setEpisodeMenuId(null);
-                          setEpisodeMenuPosition(null);
-                          setFolderPickerEpisodeId(null);
-                        }}
-                        type="button"
-                      >
-                        {copy.persistence.delete}
-                      </button>
-                    </div>
-                  )
-                : null}
-            </div>
-          </div>
-        )}
-      </li>
-    );
-  }
-
-  // 사이드바 폴더 항목을 렌더링하는 함수
-  function renderFolderItem(folder: SidebarFolder & { visibleEpisodes: StoryEpisode[] }) {
-    const isRenaming = renamingFolderId === folder.id;
-    const isSorting = sortingFolderId === folder.id;
-    const isActive = activeFolder?.id === folder.id;
-
-    return (
-      <li className={`sidebar-folder-item${isActive ? " is-active" : ""}`} key={folder.id}>
-        {isRenaming ? (
-          <form
-            className="sidebar-episode-rename"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitFolderRename(folder.id);
-            }}
-          >
-            <input
-              onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                setFolderRenameDraft(event.target.value);
-              }}
-              type="text"
-              value={folderRenameDraft}
-            />
-            <div className="control-row">
-              <button type="submit">{copy.persistence.saveEpisode}</button>
-              <button
-                className="button-secondary"
-                onClick={() => {
-                  setRenamingFolderId(null);
-                  setFolderRenameDraft("");
-                }}
-                type="button"
-              >
-                {copy.persistence.cancel}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <div className={`sidebar-folder-card${isActive ? " is-active" : ""}`}>
-            <button
-              className={`sidebar-folder-button${isActive ? " is-active" : ""}`}
-              onClick={() => {
-                setSidebarFolders((current) =>
-                  current.map((entry) =>
-                    entry.id === folder.id
-                      ? { ...entry, isCollapsed: !entry.isCollapsed }
-                      : entry
-                  )
-                );
-              }}
-              type="button"
-            >
-              <span className="sidebar-folder-copy">
-                <SidebarItemIcon kind="folder" />
-                <strong>{folder.name}</strong>
-              </span>
-            </button>
-            <div className="sidebar-folder-actions">
-              <button
-                aria-label={`${folder.isPinned ? copy.persistence.unpinEpisode : copy.persistence.pinEpisode} ${folder.name}`}
-                className="button-secondary sidebar-inline-pin-button"
-                onClick={() => {
-                  toggleFolderPin(folder.id);
-                }}
-                type="button"
-              >
-                {folder.isPinned ? copy.persistence.unpinEpisode : copy.persistence.pinEpisode}
-              </button>
-              <button
-                aria-label={`${copy.workspace.utilities} ${folder.name}`}
-                className="button-secondary sidebar-episode-menu-button"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setEpisodeMenuId(null);
-                  setEpisodeMenuPosition(null);
-                  setFolderMenuId((current) => {
-                    const nextId = current === folder.id ? null : folder.id;
-                    setFolderMenuPosition(nextId ? getViewportMenuPosition(rect) : null);
-                    setFolderEpisodePickerFolderId(null);
-                    setFolderEpisodePickerPosition(null);
-                    return nextId;
-                  });
-                  setFolderPickerPosition(null);
-                  setFolderPickerEpisodeId(null);
-                  setObjectMenuId(null);
-                  setObjectMenuPosition(null);
-                }}
-                ref={(element) => {
-                  if (element) {
-                    folderMenuButtonRefs.current.set(folder.id, element);
-                  } else {
-                    folderMenuButtonRefs.current.delete(folder.id);
-                  }
-                }}
-                type="button"
-              >
-                ...
-              </button>
-            </div>
-            {folderMenuId === folder.id
-              ? renderViewportOverlay(
-                  <div
-                    className="sidebar-folder-menu-overlay sidebar-episode-menu"
-                    style={
-                      folderMenuPosition
-                        ? ({
-                            left: `${folderMenuPosition.left}px`,
-                            top: `${folderMenuPosition.top}px`
-                          } as CSSProperties)
-                        : undefined
-                    }
-                  >
-                    <button
-                      className="button-secondary"
-                      onClick={() => {
-                        beginFolderRename(folder);
-                      }}
-                      type="button"
-                    >
-                      {copy.persistence.renameEpisode}
-                    </button>
-                    <button
-                      className="button-secondary"
-                      onClick={() => {
-                        toggleFolderCollapsed(folder.id);
-                      }}
-                      type="button"
-                    >
-                      {folder.isCollapsed ? copy.persistence.unfold : copy.persistence.fold}
-                    </button>
-                    <button
-                      className="button-secondary"
-                      onClick={(event) => {
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        setFolderEpisodePickerFolderId((current) => {
-                          const nextId = current === folder.id ? null : folder.id;
-                          setFolderEpisodePickerPosition(
-                            nextId ? getViewportMenuPosition(rect, "right-start") : null
-                          );
-                          return nextId;
-                        });
-                      }}
-                      type="button"
-                    >
-                      {copy.persistence.addEpisodes}
-                    </button>
-                    <button
-                      className="button-secondary"
-                      onClick={() => {
-                        toggleFolderSort(folder.id);
-                      }}
-                      type="button"
-                    >
-                      {isSorting ? copy.persistence.cancel : copy.persistence.sortStories}
-                    </button>
-                    <button
-                      className="button-secondary"
-                      onClick={() => {
-                        void deleteFolder(folder.id);
-                      }}
-                      type="button"
-                    >
-                      {copy.persistence.delete}
-                    </button>
-                  </div>
-                )
-              : null}
-            {folderEpisodePickerFolderId === folder.id && folderEpisodePickerPosition
-              ? renderViewportOverlay(
-                  <div
-                    className="sidebar-folder-picker sidebar-folder-picker-popout"
-                    style={
-                      {
-                        left: `${folderEpisodePickerPosition.left}px`,
-                        top: `${folderEpisodePickerPosition.top}px`
-                      } as CSSProperties
-                    }
-                  >
-                    {sortEpisodesForScope(snapshot.episodes, rootFolderScopeId).map((episodeOption) => {
-                      const isInFolder = folder.episodeIds.includes(episodeOption.id);
-
-                      return (
-                        <button
-                          className={`button-secondary sidebar-picker-option${
-                            isInFolder ? " is-selected" : ""
-                          }`}
-                          key={`${folder.id}-${episodeOption.id}`}
-                          onClick={() => {
-                            void toggleEpisodeInFolderPicker(folder.id, episodeOption.id);
-                          }}
-                          type="button"
-                        >
-                          <span className="sidebar-picker-option-prefix">
-                            {isInFolder ? "-" : "+"}
-                          </span>
-                          <span className="sidebar-picker-option-label">
-                            {episodeOption.title}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )
-              : null}
-          </div>
-        )}
-        {!folder.isCollapsed && folder.visibleEpisodes.length > 0 ? (
-          <ul className="sidebar-folder-episode-list">
-            {folder.visibleEpisodes.map((episode) => renderEpisodeItem(episode, folder.id))}
-          </ul>
-        ) : null}
-      </li>
-    );
-  }
-
   return (
     <div
       className={`workspace-shell${detailMode === null ? " workspace-shell-details-closed" : ""}${
@@ -4895,37 +3869,63 @@ export function WorkspaceShell() {
               </section>
             ) : null}
 
-            <section className="sidebar-section sidebar-recents-section">
-              <div className="sidebar-section-header">
-                <strong>{copy.workspace.recentStories}</strong>
-              </div>
-
-              <div className="sidebar-recents-scroll">
-                {visibleFolders.length > 0 || rootEpisodes.length > 0 ? (
-                  <>
-                    {visibleFolders.length > 0 ? (
-                      <ul className="sidebar-folder-list">
-                        {visibleFolders.map((folder) => renderFolderItem(folder))}
-                      </ul>
-                    ) : null}
-
-                    {rootEpisodes.length > 0 ? (
-                      <ul
-                        className={`sidebar-episode-list sidebar-root-episode-list${
-                          visibleFolders.length > 0 ? " has-folders" : ""
-                        }`}
-                      >
-                        {rootEpisodes.map((episode) =>
-                          renderEpisodeItem(episode, rootFolderScopeId)
-                        )}
-                      </ul>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="support-copy">{copy.workspace.recentStoriesEmpty}</p>
-                )}
-              </div>
-            </section>
+            <WorkspaceSidebarRecents
+              activeEpisodeId={activeEpisode?.id ?? null}
+              activeFolderId={activeFolder?.id ?? null}
+              draggedSidebarEpisodeId={draggedSidebarEpisodeId}
+              episodeMenuButtonRefs={episodeMenuButtonRefs}
+              episodeMenuId={episodeMenuId}
+              episodeMenuPosition={episodeMenuPosition}
+              episodeRenameDraft={episodeRenameDraft}
+              folderEpisodePickerFolderId={folderEpisodePickerFolderId}
+              folderEpisodePickerPosition={folderEpisodePickerPosition}
+              folderEpisodePins={folderEpisodePins}
+              folderIdByEpisodeId={folderIdByEpisodeId}
+              folderMenuButtonRefs={folderMenuButtonRefs}
+              folderMenuId={folderMenuId}
+              folderMenuPosition={folderMenuPosition}
+              folderPickerEpisodeId={folderPickerEpisodeId}
+              folderRenameDraft={folderRenameDraft}
+              getViewportMenuPosition={getViewportMenuPosition}
+              onBeginEpisodeRename={beginEpisodeRename}
+              onBeginFolderRename={beginFolderRename}
+              onDeleteFolder={deleteFolder}
+              onDissolveEpisodeFromFolder={dissolveEpisodeFromFolder}
+              onReorderEpisodeWithinFolder={reorderEpisodeWithinFolder}
+              onSelectEpisodeFromSidebar={selectEpisodeFromSidebar}
+              onSubmitEpisodeRename={submitEpisodeRename}
+              onSubmitFolderRename={submitFolderRename}
+              onToggleEpisodeInFolderPicker={toggleEpisodeInFolderPicker}
+              onToggleEpisodePin={toggleEpisodePin}
+              onToggleFolderCollapsed={toggleFolderCollapsed}
+              onToggleFolderPin={toggleFolderPin}
+              onToggleFolderSort={toggleFolderSort}
+              renamingEpisodeId={renamingEpisodeId}
+              renamingFolderId={renamingFolderId}
+              rootEpisodes={rootEpisodes}
+              rootFolderScopeId={rootFolderScopeId}
+              setDeleteEpisodeId={setDeleteEpisodeId}
+              setDraggedSidebarEpisodeId={setDraggedSidebarEpisodeId}
+              setEpisodeMenuId={setEpisodeMenuId}
+              setEpisodeMenuPosition={setEpisodeMenuPosition}
+              setEpisodeRenameDraft={setEpisodeRenameDraft}
+              setFolderEpisodePickerFolderId={setFolderEpisodePickerFolderId}
+              setFolderEpisodePickerPosition={setFolderEpisodePickerPosition}
+              setFolderMenuId={setFolderMenuId}
+              setFolderMenuPosition={setFolderMenuPosition}
+              setFolderPickerEpisodeId={setFolderPickerEpisodeId}
+              setFolderPickerPosition={setFolderPickerPosition}
+              setFolderRenameDraft={setFolderRenameDraft}
+              setObjectMenuId={setObjectMenuId}
+              setObjectMenuPosition={setObjectMenuPosition}
+              setRenamingEpisodeId={setRenamingEpisodeId}
+              setRenamingFolderId={setRenamingFolderId}
+              setSidebarFolders={setSidebarFolders}
+              snapshotEpisodeCount={snapshot.episodes.length}
+              snapshotEpisodes={snapshot.episodes}
+              sortingFolderId={sortingFolderId}
+              visibleFolders={visibleFolders}
+            />
 
             <div className="sidebar-profile-shell">
               <button

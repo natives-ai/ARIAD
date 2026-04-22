@@ -1687,3 +1687,83 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: A standalone refactor plan now exists for `WorkspaceShell.tsx`, separate from the ongoing bug-fix plans, with sequencing and stop conditions defined.
 - Warnings / blockers: No immediate blocker. Implementation should avoid colliding with active same-file bug work in `WorkspaceShell.tsx`.
 - Approval needed: `none`
+
+### 2026-04-22 / loop-104
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `PLANS.md`
+- What changed: Investigated the newly reported major-node swap issue (taller node replacing a shorter end node) and attempted to lock reproduction through the frontend route suite. Stopped before implementation because the current worktree contains an overlapping `WorkspaceShell` refactor in progress: `frontend/src/routes/WorkspaceShell.tsx` now imports `./workspace-shell/WorkspaceSidebarRecents`, but that file is not present in the workspace, so the route suite fails during module resolution before the targeted regression can run. Removed the temporary reproduction edit and left the code unchanged.
+- Tests run: `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (fails during Vite import resolution: missing `frontend/src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`)
+- Result: No functional fix applied in this loop because the current same-file refactor conflict blocks reliable repro/validation.
+- Warnings / blockers: Direct same-file conflict in `WorkspaceShell.tsx` due concurrent refactor work. Safe next step is to either finish/merge that refactor first or move this bugfix onto a clean worktree state.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-105
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.sidebar.tsx`, `frontend/src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`, `PLANS.md`
+- What changed: Started `WORKSPACE_SHELL_REFACTOR_PLAN.md` execution with a low-risk Track 2 slice focused on sidebar responsibility extraction. Moved sidebar episode visibility/sorting derivation (`folderIdByEpisodeId`, root episode list, visible folder list) out of `WorkspaceShell` into `workspaceShell.sidebar.tsx` via reusable helpers (`buildSidebarEpisodeCollections`, `sortEpisodesForScope`, `getScopedPinnedEpisodes`). Added a dedicated sidebar-recents presentational component (`WorkspaceSidebarRecents`) and replaced the inlined recent-stories JSX subtree in `WorkspaceShell` with the new component. Kept state ownership and sidebar action handlers in `WorkspaceShell` to avoid behavior changes in this step.
+- Tests run: `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/workspace-shell/workspaceShell.sidebar.tsx src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows same pre-existing `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Sidebar derivation/render responsibilities are partially separated while route behavior remains stable (`84/84` tests green), and typecheck/build are green.
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` issues unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-106
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/WorkspaceObjectPanel.tsx`, `PLANS.md`
+- What changed: Continued `WORKSPACE_SHELL_REFACTOR_PLAN.md` Track 2 by extracting the right-side object/detail editor subtree into a dedicated component (`WorkspaceObjectPanel`). Moved object detail/create form JSX and related category rendering dependencies out of `WorkspaceShell`, and replaced the previous inline `detailPanel` block with a prop-driven component invocation. Kept state ownership (`detailMode`, `objectEditorDraft`, selection, save handlers) in `WorkspaceShell` for behavior-preserving incremental refactor.
+- Tests run: `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/workspace-shell/WorkspaceObjectPanel.tsx src/routes/WorkspaceShell.tsx` (shows same pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Object/detail panel rendering responsibility is now separated from `WorkspaceShell` while route behavior remains stable (`84/84` tests green), and typecheck/build are green.
+- Warnings / blockers: No new blockers. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` issues unrelated to this slice.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-107
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `MAJOR_LANE_SWAP_PLAN.md`, `PLANS.md`
+- What changed: Captured a rough follow-up plan for the newly reported "tall major node swapping with shorter end node" symptom in a dedicated note, `MAJOR_LANE_SWAP_PLAN.md`. The note records the likely fault line (major reorder threshold vs premature timeline-end extension), the intended fix direction, and a minimal future work sequence so the issue can be resumed after the in-progress `WorkspaceShell` refactor stabilizes.
+- Tests run: none (doc-only update)
+- Result: A lightweight handoff note now exists for the swap/timeline-extension bug without touching active implementation files.
+- Warnings / blockers: Same-file implementation risk remains in `WorkspaceShell.tsx`; defer code changes until the ongoing refactor slice is settled.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-108
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Consolidated the current detailed planning notes into a single root document, `DETAILPLAN.md`, so future execution detail can live under one file rather than being split across many standalone plan docs. The new file currently carries the `WorkspaceShell` refactor plan and the major-lane swap note, plus a short operating convention for how detailed plans should be appended going forward.
+- Tests run: none (doc-only update)
+- Result: There is now a single detailed-plan document for ongoing work, while `PLANS.md` remains the lightweight work-loop log.
+- Warnings / blockers: Existing standalone detailed plan files were left in place for now to avoid breaking any active references from concurrent chats. They can be retired later once the team is fully using `DETAILPLAN.md`.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-109
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Added stable section IDs to `DETAILPLAN.md` so detailed plans can be referenced similarly to `PLANS.md` loop entries. The current sections are now indexed as `detail-001` and `detail-002`, and the operating convention at the top of the file now specifies that future detailed plans should continue with the next `detail-xxx` identifier.
+- Tests run: none (doc-only update)
+- Result: `DETAILPLAN.md` now has explicit, incrementing plan identifiers instead of only topic-based section ordering.
+- Warnings / blockers: None.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-110
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`, `PLANS.md`
+- What changed: Continued `WORKSPACE_SHELL_REFACTOR_PLAN.md` Track 2 by extracting the large canvas node-card rendering subtree from `WorkspaceShell` into a dedicated `CanvasNodeCard` component. Moved node card header/body, inline editor keyboard/token handling, resize handles, and keyword cloud panel rendering into the new component while keeping state ownership and core action handlers in `WorkspaceShell`. While stabilizing this slice, corrected broken package import aliases (`@scenario/*` -> `@scenaairo/*`) in touched route files so typecheck resolves shared/recommendation types correctly.
+- Tests run: `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/workspace-shell/CanvasNodeCard.tsx src/routes/workspace-shell/WorkspaceSidebarRecents.tsx src/routes/WorkspaceShell.tsx` (shows same pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx`; `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Node-card JSX and its inline editor/keyword panel render logic are now separated into `CanvasNodeCard.tsx`, route regression tests remain green (`84/84`), and typecheck/build are green.
+- Warnings / blockers: No new blockers from this slice. Direct lint on `WorkspaceShell.tsx` still reports the same pre-existing `react-hooks/set-state-in-effect` findings unrelated to this loop.
+- Approval needed: `none`
+
+### 2026-04-22 / loop-111
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/useEpisodeCanvasState.ts`, `PLANS.md`
+- What changed: Started `WORKSPACE_SHELL_REFACTOR_PLAN.md` Track 3 by extracting episode-canvas history restore/undo/redo logic into a dedicated hook (`useEpisodeCanvasState`). Moved lane-divider/timeline/node-size canvas UI state ownership plus snapshot-history restore wrappers (`runUndo`/`runRedo`) out of `WorkspaceShell`, while keeping node-size localStorage load/save effects in `WorkspaceShell` to avoid introducing a new lint category in the new hook file.
+- Tests run: `corepack yarn --cwd frontend typecheck`; `corepack yarn --cwd frontend run -T eslint src/routes/workspace-shell/useEpisodeCanvasState.ts src/routes/workspace-shell/CanvasNodeCard.tsx src/routes/workspace-shell/WorkspaceSidebarRecents.tsx src/routes/workspace-shell/WorkspaceObjectPanel.tsx src/routes/workspace-shell/workspaceShell.sidebar.tsx`; `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx` (shows same pre-existing `WorkspaceShell.tsx` `react-hooks/set-state-in-effect` findings); `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.layout.test.ts` (outside sandbox due Vite `spawn EPERM` in sandbox); `corepack yarn --cwd frontend build` (outside sandbox due Vite `spawn EPERM` in sandbox)
+- Result: Canvas state/history orchestration is now split into `useEpisodeCanvasState.ts`, with route/layout regressions still green (`84/84`), and typecheck/build smoke green.
+- Warnings / blockers: No new blocker from this slice. `WorkspaceShell.tsx` direct lint still reports the same pre-existing effect-rule findings; one existing `react-hooks/exhaustive-deps` warning remains in that file.
+- Approval needed: `none`
