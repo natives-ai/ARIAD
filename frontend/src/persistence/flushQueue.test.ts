@@ -3,7 +3,7 @@ import type {
   CloudSyncOperation,
   ProjectLinkageMetadata,
   StoryWorkspaceSnapshot
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import { PersistenceFlushQueue, sortCloudOperations } from "./flushQueue";
 
@@ -77,6 +77,7 @@ describe("persistence flush queue", () => {
         payload: {
           category: "person",
           createdAt: "2026-04-15T00:02:00.000Z",
+          episodeId: "episode_alpha",
           id: "object_alpha",
           name: "Heroine's Mother",
           projectId: "project_alpha",

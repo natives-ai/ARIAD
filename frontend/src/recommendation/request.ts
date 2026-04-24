@@ -1,8 +1,8 @@
 import type {
   KeywordRecommendationRequest,
   SentenceRecommendationRequest
-} from "@scenaairo/recommendation";
-import type { StoryNode, StoryWorkspaceSnapshot } from "@scenaairo/shared";
+} from "@ariad/recommendation";
+import type { StoryNode, StoryWorkspaceSnapshot } from "@ariad/shared";
 
 import { getNodeHeadline } from "../persistence/drawerPayload";
 

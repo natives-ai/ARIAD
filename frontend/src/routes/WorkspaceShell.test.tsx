@@ -304,7 +304,7 @@ describe("workspace shell recommendation flow", () => {
     expect(inlineInput).toHaveValue("Alpha beat");
   });
 
-  it("pins selected keywords first when refreshing the cloud", async () => {
+  it("keeps keyword cloud order stable while selecting and pins selected keywords on refresh", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(
         JSON.stringify({
@@ -350,6 +350,14 @@ describe("workspace shell recommendation flow", () => {
 
     await user.click(screen.getByRole("button", { name: "public fallout" }));
     await user.click(screen.getByRole("button", { name: "relationship shift" }));
+
+    expect(screen.getByTestId("keyword-suggestion-0")).toHaveTextContent("pressure spike");
+    expect(screen.getByTestId("keyword-suggestion-1")).toHaveTextContent("hard choice");
+    expect(screen.getByTestId("keyword-suggestion-2")).toHaveTextContent("public fallout");
+    expect(screen.getByTestId("keyword-suggestion-4")).toHaveTextContent("relationship shift");
+    expect(screen.getByTestId("keyword-suggestion-2")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("keyword-suggestion-4")).toHaveAttribute("aria-pressed", "true");
+    expect(document.activeElement).not.toHaveClass("node-inline-input");
 
     const previousThirdLabel = screen.getByTestId("keyword-suggestion-2").textContent?.trim();
 
@@ -478,7 +486,29 @@ describe("workspace shell recommendation flow", () => {
 
     expect(coatObjectRow).not.toBeNull();
     expect(coatObjectRow as HTMLElement).toHaveTextContent("(1)");
-  });
+
+    await user.clear(refreshedInlineInput);
+    await user.type(refreshedInlineInput, "She checks the @lantern ");
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("lantern", {
+          selector: ".node-object-mention"
+        })
+      ).toBeInTheDocument();
+    });
+
+    await user.clear(refreshedInlineInput);
+    await user.type(refreshedInlineInput, "She checks the @door{enter}");
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("door", {
+          selector: ".node-object-mention"
+        })
+      ).toBeInTheDocument();
+    });
+  }, 10000);
 
   it("offers existing object names as inline object conversions without @ typing", async () => {
     globalThis.fetch = vi.fn(async () =>
@@ -749,6 +779,51 @@ describe("workspace shell recommendation flow", () => {
     expect(screen.queryByRole("button", { name: "Cafe Exit" })).not.toBeInTheDocument();
   });
 
+  it("keeps the object library separated by active episode", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "New Object" }));
+
+    const detailEditor = await screen.findByTestId("detail-editor");
+
+    await user.type(within(detailEditor).getByLabelText("Object Name"), "Cafe Exit");
+    await user.click(within(detailEditor).getByRole("button", { name: "New Object" }));
+
+    const objectList = await screen.findByTestId("object-list");
+
+    expect(within(objectList).getByRole("button", { name: "Cafe Exit" })).toBeInTheDocument();
+    expect(
+      within(objectList).getByRole("button", { name: "Heroine's Mother" })
+    ).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Episode 11" }));
+
+    await waitFor(() => {
+      expect(within(objectList).queryByRole("button", { name: "Cafe Exit" })).not.toBeInTheDocument();
+    });
+    expect(
+      within(objectList).queryByRole("button", { name: "Heroine's Mother" })
+    ).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Episode 12" }));
+
+    expect(await within(objectList).findByRole("button", { name: "Cafe Exit" })).toBeInTheDocument();
+    expect(
+      within(objectList).getByRole("button", { name: "Heroine's Mother" })
+    ).toBeInTheDocument();
+  });
+
   it("moves episodes into folders, dissolves them, and enables folder-scoped sort mode", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -770,6 +845,16 @@ describe("workspace shell recommendation flow", () => {
     expect(await screen.findByText("Act One")).toBeInTheDocument();
 
     const folderItem = screen.getByText("Act One").closest(".sidebar-folder-item") as HTMLElement;
+    const folderCard = within(folderItem).getByText("Act One").closest(".sidebar-folder-card") as HTMLElement;
+    const episode12Item = screen
+      .getByRole("button", { name: "Episode 12" })
+      .closest(".sidebar-episode-item") as HTMLElement;
+
+    fireEvent.dragStart(episode12Item);
+    fireEvent.dragOver(folderCard);
+    fireEvent.drop(folderCard);
+
+    expect(within(folderItem).getByRole("button", { name: "Episode 12" })).toBeInTheDocument();
 
     await user.click(within(folderItem).getByRole("button", { name: "More Act One" }));
     await user.click(await screen.findByRole("button", { name: "Add Episodes" }));
@@ -1020,7 +1105,7 @@ describe("workspace shell recommendation flow", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("allows the selected node to resize horizontally, vertically, and diagonally", async () => {
+  it("allows the selected node to resize from every edge and corner", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -1044,7 +1129,7 @@ describe("workspace shell recommendation flow", () => {
     await user.click(selectedNode);
 
     fireEvent.mouseDown(
-      within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
+      within(selectedNode).getByRole("button", { name: "Resize from right" }),
       {
         clientX: 100,
         clientY: 100
@@ -1058,7 +1143,7 @@ describe("workspace shell recommendation flow", () => {
     });
 
     fireEvent.mouseDown(
-      within(selectedNode).getByRole("button", { name: "Resize vertically" }),
+      within(selectedNode).getByRole("button", { name: "Resize from bottom" }),
       {
         clientX: 100,
         clientY: 100
@@ -1072,7 +1157,7 @@ describe("workspace shell recommendation flow", () => {
     });
 
     fireEvent.mouseDown(
-      within(selectedNode).getByRole("button", { name: "Resize diagonally" }),
+      within(selectedNode).getByRole("button", { name: "Resize from bottom right" }),
       {
         clientX: 100,
         clientY: 100
@@ -1085,5 +1170,42 @@ describe("workspace shell recommendation flow", () => {
       expect(selectedNode.style.width).toBe("348px");
       expect(selectedNode.style.height).toBe("162px");
     });
+
+    const leftBefore = selectedNode.style.left;
+    const topBefore = selectedNode.style.top;
+
+    fireEvent.mouseDown(
+      within(selectedNode).getByRole("button", { name: "Resize from left" }),
+      {
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 76, clientY: 100 });
+    await waitFor(() => {
+      expect(selectedNode.style.width).toBe("372px");
+      expect(selectedNode.style.left).not.toBe(leftBefore);
+    });
+    fireEvent.pointerUp(window);
+
+    fireEvent.mouseDown(
+      within(selectedNode).getByRole("button", { name: "Resize from top" }),
+      {
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 88 });
+    await waitFor(() => {
+      expect(selectedNode.style.height).toBe("174px");
+      expect(selectedNode.style.top).not.toBe(topBefore);
+    });
+    fireEvent.pointerUp(window);
+
+    expect(within(selectedNode).getByRole("button", { name: "Resize from top left" })).toBeInTheDocument();
+    expect(within(selectedNode).getByRole("button", { name: "Resize from top right" })).toBeInTheDocument();
+    expect(
+      within(selectedNode).getByRole("button", { name: "Resize from bottom left" })
+    ).toBeInTheDocument();
   });
 });

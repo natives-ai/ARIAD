@@ -12,6 +12,72 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@ariad/backend@workspace:backend":
+  version: 0.0.0-use.local
+  resolution: "@ariad/backend@workspace:backend"
+  dependencies:
+    "@ariad/recommendation": "file:../recommendation"
+    "@ariad/shared": "file:../shared"
+    fastify: "npm:^5.8.5"
+  languageName: unknown
+  linkType: soft
+
+"@ariad/frontend@workspace:frontend":
+  version: 0.0.0-use.local
+  resolution: "@ariad/frontend@workspace:frontend"
+  dependencies:
+    "@ariad/recommendation": "file:../recommendation"
+    "@ariad/shared": "file:../shared"
+    "@testing-library/dom": "npm:^10.4.1"
+    "@testing-library/jest-dom": "npm:^6.9.1"
+    "@testing-library/react": "npm:^16.3.2"
+    "@testing-library/user-event": "npm:^14.6.1"
+    react: "npm:^19.2.5"
+    react-dom: "npm:^19.2.5"
+    react-router-dom: "npm:^7.14.1"
+  languageName: unknown
+  linkType: soft
+
+"@ariad/recommendation@file:../recommendation::locator=%40ariad%2Fbackend%40workspace%3Abackend":
+  version: 0.0.0
+  resolution: "@ariad/recommendation@file:../recommendation#../recommendation::hash=1c8406&locator=%40ariad%2Fbackend%40workspace%3Abackend"
+  checksum: 10c0/ef3c505ffe510a30896cf09c2cf9b180743cc5c82305e6576c405b9a37445f6d4dd5f3c5b011cdd4af6f73b6729be43714e11dd7bb068e2347050d9d3992f470
+  languageName: node
+  linkType: hard
+
+"@ariad/recommendation@file:../recommendation::locator=%40ariad%2Ffrontend%40workspace%3Afrontend":
+  version: 0.0.0
+  resolution: "@ariad/recommendation@file:../recommendation#../recommendation::hash=1c8406&locator=%40ariad%2Ffrontend%40workspace%3Afrontend"
+  checksum: 10c0/ef3c505ffe510a30896cf09c2cf9b180743cc5c82305e6576c405b9a37445f6d4dd5f3c5b011cdd4af6f73b6729be43714e11dd7bb068e2347050d9d3992f470
+  languageName: node
+  linkType: hard
+
+"@ariad/recommendation@workspace:recommendation":
+  version: 0.0.0-use.local
+  resolution: "@ariad/recommendation@workspace:recommendation"
+  languageName: unknown
+  linkType: soft
+
+"@ariad/shared@file:../shared::locator=%40ariad%2Fbackend%40workspace%3Abackend":
+  version: 0.0.0
+  resolution: "@ariad/shared@file:../shared#../shared::hash=9b3916&locator=%40ariad%2Fbackend%40workspace%3Abackend"
+  checksum: 10c0/6fcb48791de109516fc2b510f096bfde10baf06d5f626387f7474e5ba9788f75a7881d057e9a9624f7545c2f6ff7896020a81009b9c420170ff50cc6be69f6c5
+  languageName: node
+  linkType: hard
+
+"@ariad/shared@file:../shared::locator=%40ariad%2Ffrontend%40workspace%3Afrontend":
+  version: 0.0.0
+  resolution: "@ariad/shared@file:../shared#../shared::hash=9b3916&locator=%40ariad%2Ffrontend%40workspace%3Afrontend"
+  checksum: 10c0/6fcb48791de109516fc2b510f096bfde10baf06d5f626387f7474e5ba9788f75a7881d057e9a9624f7545c2f6ff7896020a81009b9c420170ff50cc6be69f6c5
+  languageName: node
+  linkType: hard
+
+"@ariad/shared@workspace:shared":
+  version: 0.0.0-use.local
+  resolution: "@ariad/shared@workspace:shared"
+  languageName: unknown
+  linkType: soft
+
 "@asamuzakjp/css-color@npm:^5.1.5":
   version: 5.1.11
   resolution: "@asamuzakjp/css-color@npm:5.1.11"
@@ -956,72 +1022,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@scenaairo/backend@workspace:backend":
-  version: 0.0.0-use.local
-  resolution: "@scenaairo/backend@workspace:backend"
-  dependencies:
-    "@scenaairo/recommendation": "file:../recommendation"
-    "@scenaairo/shared": "file:../shared"
-    fastify: "npm:^5.8.5"
-  languageName: unknown
-  linkType: soft
-
-"@scenaairo/frontend@workspace:frontend":
-  version: 0.0.0-use.local
-  resolution: "@scenaairo/frontend@workspace:frontend"
-  dependencies:
-    "@scenaairo/recommendation": "file:../recommendation"
-    "@scenaairo/shared": "file:../shared"
-    "@testing-library/dom": "npm:^10.4.1"
-    "@testing-library/jest-dom": "npm:^6.9.1"
-    "@testing-library/react": "npm:^16.3.2"
-    "@testing-library/user-event": "npm:^14.6.1"
-    react: "npm:^19.2.5"
-    react-dom: "npm:^19.2.5"
-    react-router-dom: "npm:^7.14.1"
-  languageName: unknown
-  linkType: soft
-
-"@scenaairo/recommendation@file:../recommendation::locator=%40scenaairo%2Fbackend%40workspace%3Abackend":
-  version: 0.0.0
-  resolution: "@scenaairo/recommendation@file:../recommendation#../recommendation::hash=57a5bb&locator=%40scenaairo%2Fbackend%40workspace%3Abackend"
-  checksum: 10c0/a29e48946f45bc9e01e9969be7d7e56d260705bc05e24239b3cf911d95e0f87c9710ae791a8c6733ee462633977affd436cbb8e7dd6a5816dabc951482c44e25
-  languageName: node
-  linkType: hard
-
-"@scenaairo/recommendation@file:../recommendation::locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend":
-  version: 0.0.0
-  resolution: "@scenaairo/recommendation@file:../recommendation#../recommendation::hash=57a5bb&locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend"
-  checksum: 10c0/a29e48946f45bc9e01e9969be7d7e56d260705bc05e24239b3cf911d95e0f87c9710ae791a8c6733ee462633977affd436cbb8e7dd6a5816dabc951482c44e25
-  languageName: node
-  linkType: hard
-
-"@scenaairo/recommendation@workspace:recommendation":
-  version: 0.0.0-use.local
-  resolution: "@scenaairo/recommendation@workspace:recommendation"
-  languageName: unknown
-  linkType: soft
-
-"@scenaairo/shared@file:../shared::locator=%40scenaairo%2Fbackend%40workspace%3Abackend":
-  version: 0.0.0
-  resolution: "@scenaairo/shared@file:../shared#../shared::hash=acb652&locator=%40scenaairo%2Fbackend%40workspace%3Abackend"
-  checksum: 10c0/14fac2a85870bb292b2646ec301d0c65545138e64c1b238292c03e977471a5ff3c721079ea23579228f7c124e643d4087234c1f420d23ecf73ee468c1c4fc1a2
-  languageName: node
-  linkType: hard
-
-"@scenaairo/shared@file:../shared::locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend":
-  version: 0.0.0
-  resolution: "@scenaairo/shared@file:../shared#../shared::hash=acb652&locator=%40scenaairo%2Ffrontend%40workspace%3Afrontend"
-  checksum: 10c0/14fac2a85870bb292b2646ec301d0c65545138e64c1b238292c03e977471a5ff3c721079ea23579228f7c124e643d4087234c1f420d23ecf73ee468c1c4fc1a2
-  languageName: node
-  linkType: hard
-
-"@scenaairo/shared@workspace:shared":
-  version: 0.0.0-use.local
-  resolution: "@scenaairo/shared@workspace:shared"
-  languageName: unknown
-  linkType: soft
-
 "@standard-schema/spec@npm:^1.1.0":
   version: 1.1.0
   resolution: "@standard-schema/spec@npm:1.1.0"
@@ -1519,6 +1519,28 @@ __metadata:
   checksum: 10c0/003c7e3e2cff5540bf7a7893775fc614de82b0c5dde8ae823d47b7a28a9d4da1f7ed85f340bdb93d5649caa927755f0e31ecc7ab63edfdfc00c8ef07e505e03e
   languageName: node
   linkType: hard
+
+"ariad@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "ariad@workspace:."
+  dependencies:
+    "@eslint/js": "npm:^9.39.4"
+    "@playwright/test": "npm:^1.59.1"
+    "@types/node": "npm:^25.6.0"
+    "@types/react": "npm:^19.2.14"
+    "@types/react-dom": "npm:^19.2.3"
+    "@vitejs/plugin-react": "npm:^6.0.1"
+    eslint: "npm:^9.39.4"
+    eslint-plugin-react-hooks: "npm:^7.0.1"
+    globals: "npm:^17.5.0"
+    jsdom: "npm:^29.0.2"
+    tsx: "npm:^4.21.0"
+    typescript: "npm:^6.0.2"
+    typescript-eslint: "npm:^8.58.2"
+    vite: "npm:^8.0.8"
+    vitest: "npm:^4.1.4"
+  languageName: unknown
+  linkType: soft
 
 "assertion-error@npm:^2.0.1":
   version: 2.0.1
@@ -3451,28 +3473,6 @@ __metadata:
   checksum: 10c0/3847b839f060ef3476eb8623d099aa502ad658f5c40fd60c105ebce86d244389b0d76fcae30f4d0c728d7705ceb2f7e9b34bb54717b6a7dbedaf5dad2d9a4b74
   languageName: node
   linkType: hard
-
-"scenaairo@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "scenaairo@workspace:."
-  dependencies:
-    "@eslint/js": "npm:^9.39.4"
-    "@playwright/test": "npm:^1.59.1"
-    "@types/node": "npm:^25.6.0"
-    "@types/react": "npm:^19.2.14"
-    "@types/react-dom": "npm:^19.2.3"
-    "@vitejs/plugin-react": "npm:^6.0.1"
-    eslint: "npm:^9.39.4"
-    eslint-plugin-react-hooks: "npm:^7.0.1"
-    globals: "npm:^17.5.0"
-    jsdom: "npm:^29.0.2"
-    tsx: "npm:^4.21.0"
-    typescript: "npm:^6.0.2"
-    typescript-eslint: "npm:^8.58.2"
-    vite: "npm:^8.0.8"
-    vitest: "npm:^4.1.4"
-  languageName: unknown
-  linkType: soft
 
 "scheduler@npm:^0.27.0":
   version: 0.27.0

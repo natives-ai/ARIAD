@@ -2,7 +2,7 @@ import type {
   GlobalProjectRegistry,
   ProjectLinkageMetadata,
   StoryWorkspaceSnapshot
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import type { StorageLike } from "../auth/stubAuthBoundary";
 

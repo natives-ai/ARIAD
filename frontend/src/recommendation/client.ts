@@ -3,7 +3,7 @@ import type {
   KeywordRecommendationResponse,
   SentenceRecommendationRequest,
   SentenceRecommendationResponse
-} from "@scenaairo/recommendation";
+} from "@ariad/recommendation";
 
 export class RecommendationClient {
   constructor(private readonly apiBaseUrl: string) {}

@@ -2,7 +2,7 @@
 
 ## 0. Meta
 
-- Product: **SCENAAIRO**
+- Product: **ARIAD**
 - Spec stage: **Initial product specification ready for implementation planning**
 - Default product language: **English**
 - Planned future localizations: **Korean, Japanese**
@@ -13,7 +13,7 @@
 
 ## 1. Product goal
 
-SCENAAIRO helps a solo serial webtoon creator reach a usable structure draft for the current episode faster without feeling that the product has taken over authorship.
+ARIAD helps a solo serial webtoon creator reach a usable structure draft for the current episode faster without feeling that the product has taken over authorship.
 
 The product is **not** a full auto-writing system. It is a **canvas-based structure editor with AI-assisted node content support**.
 
@@ -56,7 +56,7 @@ The product is **not** a full auto-writing system. It is a **canvas-based struct
   - Story / episode list
   - Similar mental model to a conversation/sidebar navigator
   - Clicking an item loads that episode page
-  - Does **not** continuously display other episodes’ node graphs
+  - Does **not** continuously display other episodes??node graphs
 
 - **Top bar**
   - Global reference object library
@@ -284,7 +284,7 @@ Sentence suggestions open only when:
 ### 9.5 Sentence suggestion style
 
 - Default should be approximately **one sentence**
-- Typical upper range: **2–3 sentences**
+- Typical upper range: **2?? sentences**
 - Soft maximum: **do not exceed 4 sentences**
 - This is to avoid crossing the line into over-authoring
 
@@ -511,7 +511,7 @@ If the user wants to keep children, they should move them first.
 ### 17.1 Hover
 Pointer resting on a node.
 Purpose:
-- communicate “this is interactive”
+- communicate ?�this is interactive??
 - no major controls required yet
 
 ### 17.2 Selected

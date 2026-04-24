@@ -2,11 +2,11 @@ import type { FastifyInstance } from "fastify";
 import type {
   KeywordRecommendationRequest,
   SentenceRecommendationRequest
-} from "@scenaairo/recommendation";
+} from "@ariad/recommendation";
 import {
   createHeuristicRecommendationProvider,
   createRecommendationService
-} from "@scenaairo/recommendation";
+} from "@ariad/recommendation";
 
 export async function registerRecommendationRoutes(app: FastifyInstance) {
   const service = createRecommendationService(createHeuristicRecommendationProvider());

@@ -1,4 +1,4 @@
-import type { AuthSession } from "@scenaairo/shared";
+import type { AuthSession } from "@ariad/shared";
 
 const SESSION_KEY = "auth-session";
 const defaultGuestSession: AuthSession = {

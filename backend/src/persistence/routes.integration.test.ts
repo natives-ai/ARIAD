@@ -7,10 +7,10 @@ import type {
   CloudSyncOperation,
   ImportProjectRequest,
   SyncProjectRequest
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 import type {
   StoryWorkspaceSnapshot
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import { buildApp } from "../app.js";
 
@@ -47,6 +47,7 @@ function createSnapshot(now: string): StoryWorkspaceSnapshot {
       {
         category: "person",
         createdAt: now,
+        episodeId: "episode_alpha",
         id: "object_alpha",
         name: "Her Mother's Warning",
         projectId: "project_alpha",
@@ -81,7 +82,7 @@ describe("persistence routes integration", () => {
   let cloudDataDir: string;
 
   beforeEach(async () => {
-    cloudDataDir = await mkdtemp(path.join(os.tmpdir(), "scenaairo-cloud-"));
+    cloudDataDir = await mkdtemp(path.join(os.tmpdir(), "ARIAD-cloud-"));
   });
 
   afterEach(async () => {
@@ -144,6 +145,7 @@ describe("persistence routes integration", () => {
         payload: {
           category: "place",
           createdAt: "2026-04-15T00:10:00.000Z",
+          episodeId: "episode_alpha",
           id: "object_beta",
           name: "Cafe Exit",
           projectId: "project_alpha",

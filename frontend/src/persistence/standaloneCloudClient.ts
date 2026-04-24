@@ -8,7 +8,7 @@ import type {
   ProjectLinkageMetadata,
   StoryWorkspaceSnapshot,
   SyncProjectResponse
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import type { StorageLike } from "../auth/stubAuthBoundary";
 
@@ -120,12 +120,28 @@ export class StandaloneCloudPersistenceClient {
     for (const operation of payload.operations) {
       if (operation.action === "delete") {
         switch (operation.kind) {
-          case "episode":
+          case "episode": {
+            const deletedObjectIds = new Set(
+              nextSnapshot.objects
+                .filter((object) => object.episodeId === operation.entityId)
+                .map((object) => object.id)
+            );
             nextSnapshot = {
               ...nextSnapshot,
-              episodes: deleteById(nextSnapshot.episodes, operation.entityId)
+              episodes: deleteById(nextSnapshot.episodes, operation.entityId),
+              nodes: nextSnapshot.nodes
+                .filter((node) => node.episodeId !== operation.entityId)
+                .map((node) => ({
+                  ...node,
+                  objectIds: node.objectIds.filter((objectId) => !deletedObjectIds.has(objectId))
+                })),
+              objects: nextSnapshot.objects.filter((object) => object.episodeId !== operation.entityId),
+              temporaryDrawer: nextSnapshot.temporaryDrawer.filter(
+                (item) => item.episodeId !== operation.entityId
+              )
             };
             break;
+          }
           case "node":
             nextSnapshot = {
               ...nextSnapshot,

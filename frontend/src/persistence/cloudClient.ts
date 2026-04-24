@@ -5,7 +5,7 @@ import type {
   ListProjectsResponse,
   SyncProjectRequest,
   SyncProjectResponse
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {

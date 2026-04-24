@@ -1,4 +1,4 @@
-﻿import {
+import {
   useEffect,
   useRef,
   useState,
@@ -10,13 +10,13 @@
 } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
-import type { KeywordSuggestion } from "@scenaairo/recommendation";
+import type { KeywordSuggestion } from "@ariad/recommendation";
 import type {
   StoryEpisode,
   StoryNode,
   StoryNodeLevel,
   StoryObjectCategory
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import { StubAuthBoundary } from "../auth/stubAuthBoundary";
 import { copy } from "../copy";
@@ -125,7 +125,15 @@ interface SidebarFolder {
 }
 
 type EpisodePinMap = Record<string, string[]>;
-type NodeResizeDirection = "diagonal" | "horizontal" | "vertical";
+type NodeResizeDirection =
+  | "east"
+  | "north"
+  | "northeast"
+  | "northwest"
+  | "south"
+  | "southeast"
+  | "southwest"
+  | "west";
 
 interface NodeSize {
   height: number;
@@ -488,12 +496,12 @@ function renderTextWithObjectMentions(value: string) {
 }
 
 function buildDisplayedKeywordSuggestions(
-  selectedKeywords: string[],
+  pinnedKeywords: string[],
   suggestions: KeywordSuggestion[],
   refreshCycle: number
 ) {
-  const selectedLookup = new Set(selectedKeywords.map((keyword) => keyword.toLowerCase()));
-  const pinnedSuggestions = selectedKeywords.map((keyword) => {
+  const pinnedLookup = new Set(pinnedKeywords.map((keyword) => keyword.toLowerCase()));
+  const pinnedSuggestions = pinnedKeywords.map((keyword) => {
     const existingSuggestion =
       suggestions.find(
         (suggestion) => suggestion.label.toLowerCase() === keyword.toLowerCase()
@@ -507,7 +515,7 @@ function buildDisplayedKeywordSuggestions(
     );
   });
   const remainingSuggestions = suggestions.filter(
-    (suggestion) => !selectedLookup.has(suggestion.label.toLowerCase())
+    (suggestion) => !pinnedLookup.has(suggestion.label.toLowerCase())
   );
 
   if (remainingSuggestions.length === 0) {
@@ -1101,6 +1109,7 @@ export function WorkspaceShell() {
   const [keywordSuggestions, setKeywordSuggestions] = useState<KeywordSuggestion[]>([]);
   const [keywordRefreshCycle, setKeywordRefreshCycle] = useState(0);
   const [selectedAiKeywords, setSelectedAiKeywords] = useState<string[]>([]);
+  const [keywordCloudPinnedKeywords, setKeywordCloudPinnedKeywords] = useState<string[]>([]);
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [isLoadingKeywords, setIsLoadingKeywords] = useState(false);
   const [detailMode, setDetailMode] = useState<DetailEditorMode | null>(null);
@@ -1169,6 +1178,9 @@ export function WorkspaceShell() {
   }));
   const [timelineEndY, setTimelineEndY] = useState(initialTimelineEndY);
   const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
+  const [nodePlacementOverrides, setNodePlacementOverrides] = useState<
+    Record<string, { x: number; y: number }>
+  >({});
   const [inlineNodeTextDraft, setInlineNodeTextDraft] = useState("");
   const [rewirePreviewPoint, setRewirePreviewPoint] = useState<{
     x: number;
@@ -1218,7 +1230,7 @@ export function WorkspaceShell() {
   const endMajorNodeIdRef = useRef<string | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
   const contentMinHeightsRef = useRef<Record<string, number>>({});
-  const autoNodeHeightsRef = useRef<Record<string, number>>({});
+  const manuallySizedNodeIdsRef = useRef<Set<string>>(new Set());
   const canvasDragStateRef = useRef<
     | {
         kind: "divider";
@@ -1230,9 +1242,13 @@ export function WorkspaceShell() {
         stageTop: number;
       }
     | {
+        currentX: number;
+        currentY: number;
         direction: NodeResizeDirection;
         initialHeight: number;
         initialWidth: number;
+        initialX: number;
+        initialY: number;
         kind: "node-resize";
         nodeId: string;
         pointerStartX: number;
@@ -1270,11 +1286,15 @@ export function WorkspaceShell() {
       return;
     }
 
+    const activeEpisodeObjects = state.snapshot.objects.filter(
+      (object) => object.episodeId === state.snapshot.project.activeEpisodeId
+    );
+
     if (
       selectedObjectId === null ||
-      !state.snapshot.objects.some((object) => object.id === selectedObjectId)
+      !activeEpisodeObjects.some((object) => object.id === selectedObjectId)
     ) {
-      setSelectedObjectId(state.snapshot.objects[0]?.id ?? null);
+      setSelectedObjectId(activeEpisodeObjects[0]?.id ?? null);
     }
   }, [selectedObjectId, state]);
 
@@ -1322,20 +1342,22 @@ export function WorkspaceShell() {
       return;
     }
 
-    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}`;
+    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}:${activeEpisodeId ?? "no-episode"}`;
     setPinnedObjectIds(parseStoredStringArray(window.localStorage.getItem(key)));
-  }, [activeProjectId, env.storagePrefix]);
+  }, [activeEpisodeId, activeProjectId, env.storagePrefix]);
 
   useEffect(() => {
     if (!activeProjectId) {
       return;
     }
 
-    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}`;
+    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}:${activeEpisodeId ?? "no-episode"}`;
     window.localStorage.setItem(key, JSON.stringify(pinnedObjectIds));
-  }, [activeProjectId, env.storagePrefix, pinnedObjectIds]);
+  }, [activeEpisodeId, activeProjectId, env.storagePrefix, pinnedObjectIds]);
 
   useEffect(() => {
+    setNodePlacementOverrides({});
+
     if (!activeEpisodeId) {
       setNodeSizes({});
       return;
@@ -1670,15 +1692,45 @@ export function WorkspaceShell() {
         const deltaY = (event.clientY - dragState.pointerStartY) / canvasZoom;
         const minContentHeight =
           contentMinHeightsRef.current[dragState.nodeId] ?? nodeCardHeight;
-        const nextHeight =
-          dragState.direction === "horizontal"
-            ? dragState.initialHeight
-            : Math.max(minContentHeight, dragState.initialHeight + deltaY);
-        const nextWidth =
-          dragState.direction === "vertical"
-            ? dragState.initialWidth
-            : Math.max(nodeCardWidth, dragState.initialWidth + deltaX);
+        const resizesFromLeft =
+          dragState.direction === "west" ||
+          dragState.direction === "northwest" ||
+          dragState.direction === "southwest";
+        const resizesFromRight =
+          dragState.direction === "east" ||
+          dragState.direction === "northeast" ||
+          dragState.direction === "southeast";
+        const resizesFromTop =
+          dragState.direction === "north" ||
+          dragState.direction === "northeast" ||
+          dragState.direction === "northwest";
+        const resizesFromBottom =
+          dragState.direction === "south" ||
+          dragState.direction === "southeast" ||
+          dragState.direction === "southwest";
+        const nextWidth = resizesFromLeft
+          ? Math.max(nodeCardWidth, dragState.initialWidth - deltaX)
+          : resizesFromRight
+            ? Math.max(nodeCardWidth, dragState.initialWidth + deltaX)
+            : dragState.initialWidth;
+        const nextHeight = resizesFromTop
+          ? Math.max(minContentHeight, dragState.initialHeight - deltaY)
+          : resizesFromBottom
+            ? Math.max(minContentHeight, dragState.initialHeight + deltaY)
+            : dragState.initialHeight;
+        const nextPlacement = {
+          x: resizesFromLeft
+            ? dragState.initialX + dragState.initialWidth - nextWidth
+            : dragState.initialX,
+          y: resizesFromTop
+            ? dragState.initialY + dragState.initialHeight - nextHeight
+            : dragState.initialY
+        };
         const nodePlacement = nodePlacementsRef.current.get(dragState.nodeId);
+
+        manuallySizedNodeIdsRef.current.add(dragState.nodeId);
+        dragState.currentX = nextPlacement.x;
+        dragState.currentY = nextPlacement.y;
 
         setNodeSizes((current) => ({
           ...current,
@@ -1687,6 +1739,10 @@ export function WorkspaceShell() {
             width: nextWidth
           }
         }));
+        setNodePlacementOverrides((current) => ({
+          ...current,
+          [dragState.nodeId]: nextPlacement
+        }));
 
         if (nodePlacement) {
           const nextLowestBottom = Math.max(
@@ -1694,7 +1750,7 @@ export function WorkspaceShell() {
             ...visibleNodesRef.current.map((node) => {
               const placement =
                 node.id === dragState.nodeId
-                  ? nodePlacement
+                  ? nextPlacement
                   : nodePlacementsRef.current.get(node.id);
               const size =
                 node.id === dragState.nodeId
@@ -1707,7 +1763,7 @@ export function WorkspaceShell() {
               return (placement?.y ?? 0) + size.height;
             })
           );
-          const nextBottom = nodePlacement.y + nextHeight;
+          const nextBottom = nextPlacement.y + nextHeight;
           const nextTimelineEnd =
             dragState.nodeId === endMajorNodeIdRef.current
               ? Math.max(nextLowestBottom, nextBottom)
@@ -1744,6 +1800,25 @@ export function WorkspaceShell() {
       }
 
       if (dragState?.kind === "node-resize" && selectedNodeIdRef.current === dragState.nodeId) {
+        const placementChanged =
+          dragState.currentX !== dragState.initialX || dragState.currentY !== dragState.initialY;
+
+        if (placementChanged) {
+          void controller.updateNodePlacement(dragState.nodeId, {
+            canvasX: dragState.currentX,
+            canvasY: dragState.currentY
+          });
+        }
+
+        setNodePlacementOverrides((current) => {
+          if (!(dragState.nodeId in current)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[dragState.nodeId];
+          return next;
+        });
         window.requestAnimationFrame(() => {
           syncSelectedNodeInputHeight(dragState.nodeId, selectedNodeInputRef.current);
         });
@@ -1775,12 +1850,16 @@ export function WorkspaceShell() {
   const selectedNode =
     (selectedNodeId ? nodesById.get(selectedNodeId) : null) ?? orderedNodes[0] ?? null;
   const selectedNodeIdentity = selectedNodeId ?? orderedNodes[0]?.id ?? null;
-  const objectsById = new Map((state?.snapshot.objects ?? []).map((object) => [object.id, object]));
+  const activeEpisodeObjects =
+    state && activeEpisodeId
+      ? state.snapshot.objects.filter((object) => object.episodeId === activeEpisodeId)
+      : [];
+  const objectsById = new Map(activeEpisodeObjects.map((object) => [object.id, object]));
   const selectedObject =
     state === null
       ? null
       : (selectedObjectId ? objectsById.get(selectedObjectId) ?? null : null) ||
-        state.snapshot.objects.at(0) ||
+        activeEpisodeObjects.at(0) ||
         null;
   const isAuthenticated = state ? state.session.mode === "authenticated" : false;
   const isBusy =
@@ -2259,6 +2338,7 @@ export function WorkspaceShell() {
 
   for (const node of visibleNodes) {
     const nodeSize = getNodeSize(nodeSizes, node.id);
+    const overridePlacement = nodePlacementOverrides[node.id];
     const fallbackPlacement = getFallbackNodePlacementWithinBounds(
       node,
       orderedNodes,
@@ -2277,16 +2357,17 @@ export function WorkspaceShell() {
 
     nodePlacements.set(
       node.id,
-      resolveNodeOverlapPlacement(
-        node.id,
-        snappedPlacement,
-        nodeSize,
-        nodePlacements,
-        nodeSizes,
-        visibleNodes
-          .filter((entry) => entry.level === node.level)
-          .map((entry) => entry.id)
-      )
+      overridePlacement ??
+        resolveNodeOverlapPlacement(
+          node.id,
+          snappedPlacement,
+          nodeSize,
+          nodePlacements,
+          nodeSizes,
+          visibleNodes
+            .filter((entry) => entry.level === node.level)
+            .map((entry) => entry.id)
+        )
     );
   }
   const majorLaneTimelineLocalCenterX =
@@ -2632,14 +2713,23 @@ export function WorkspaceShell() {
     event: ReactMouseEvent<HTMLButtonElement>
   ) {
     const nodeSize = getNodeSize(nodeSizes, nodeId);
+    const nodePlacement = nodePlacements.get(nodeId);
+
+    if (!nodePlacement) {
+      return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
     setSelectedNodeId(nodeId);
     canvasDragStateRef.current = {
+      currentX: nodePlacement.x,
+      currentY: nodePlacement.y,
       direction,
       initialHeight: nodeSize.height,
       initialWidth: nodeSize.width,
+      initialX: nodePlacement.x,
+      initialY: nodePlacement.y,
       kind: "node-resize",
       nodeId,
       pointerStartX: event.clientX,
@@ -2675,8 +2765,13 @@ export function WorkspaceShell() {
   async function syncObjectMentionsForNode(nodeId: string, rawText: string) {
     const mentionNames = extractObjectMentionNames(rawText);
     const liveSnapshot = controller.getState()?.snapshot ?? snapshot;
+    const currentNode =
+      liveSnapshot.nodes.find((node) => node.id === nodeId) ?? nodesById.get(nodeId) ?? null;
+    const mentionEpisodeId = currentNode?.episodeId ?? activeEpisodeId;
     const existingObjectIdsByName = new Map(
-      liveSnapshot.objects.map((object) => [object.name.toLowerCase(), object.id])
+      liveSnapshot.objects
+        .filter((object) => object.episodeId === mentionEpisodeId)
+        .map((object) => [object.name.toLowerCase(), object.id])
     );
     const nextObjectIds: string[] = [];
 
@@ -2685,7 +2780,8 @@ export function WorkspaceShell() {
       let objectId = existingObjectIdsByName.get(normalizedName) ?? null;
 
       if (!objectId) {
-        const pendingObjectPromise = pendingMentionObjectIdsRef.current.get(normalizedName);
+        const pendingKey = `${mentionEpisodeId ?? "no-episode"}:${normalizedName}`;
+        const pendingObjectPromise = pendingMentionObjectIdsRef.current.get(pendingKey);
 
         if (pendingObjectPromise) {
           objectId = await pendingObjectPromise;
@@ -2697,10 +2793,10 @@ export function WorkspaceShell() {
               summary: ""
             })
             .finally(() => {
-              pendingMentionObjectIdsRef.current.delete(normalizedName);
+              pendingMentionObjectIdsRef.current.delete(pendingKey);
             });
 
-          pendingMentionObjectIdsRef.current.set(normalizedName, createObjectPromise);
+          pendingMentionObjectIdsRef.current.set(pendingKey, createObjectPromise);
           objectId = await createObjectPromise;
         }
 
@@ -2714,10 +2810,6 @@ export function WorkspaceShell() {
       }
     }
 
-    const currentNode =
-      controller.getState()?.snapshot.nodes.find((node) => node.id === nodeId) ??
-      nodesById.get(nodeId) ??
-      null;
     const currentObjectIds = currentNode?.objectIds ?? [];
 
     for (const objectId of currentObjectIds) {
@@ -2751,7 +2843,7 @@ export function WorkspaceShell() {
     const caretIndex = input.selectionStart ?? value.length;
     const nextQuery =
       getOpenObjectMentionQuery(value, caretIndex) ??
-      getClosedObjectWordQuery(value, caretIndex, snapshot.objects);
+      getClosedObjectWordQuery(value, caretIndex, activeEpisodeObjects);
 
     setObjectMentionQuery(nextQuery);
 
@@ -2765,6 +2857,27 @@ export function WorkspaceShell() {
     setActiveObjectMentionIndex(0);
   }
 
+  function syncTimelineEndAfterEndNodeResize(
+    nodeId: string,
+    nextSize: NodeSize
+  ) {
+    if (nodeId !== endMajorNodeIdRef.current) {
+      return;
+    }
+
+    const nextLowestBottom = Math.max(
+      0,
+      ...visibleNodesRef.current.map((node) => {
+        const placement = nodePlacementsRef.current.get(node.id);
+        const size = node.id === nodeId ? nextSize : getNodeSize(nodeSizesRef.current, node.id);
+
+        return (placement?.y ?? 0) + size.height;
+      })
+    );
+
+    setTimelineEndY(Math.max(timelineStartY + 120, nextLowestBottom));
+  }
+
   function syncSelectedNodeInputHeight(
     nodeId: string,
     input: HTMLTextAreaElement | null
@@ -2776,46 +2889,49 @@ export function WorkspaceShell() {
     input.style.height = "0px";
     input.style.height = `${Math.max(28, input.scrollHeight)}px`;
 
-    const editorHeight = input.closest(".node-inline-editor")?.scrollHeight ?? input.scrollHeight;
-    const requiredHeight = Math.max(nodeCardHeight, Math.ceil(editorHeight + 30));
+    const requiredHeight = Math.max(nodeCardHeight, Math.ceil(input.scrollHeight + 30));
     contentMinHeightsRef.current[nodeId] = requiredHeight;
+    let syncedEndNodeSize: NodeSize | null = null;
 
     setNodeSizes((current) => {
       const existing = getNodeSize(current, nodeId);
-      const previousAutoHeight = autoNodeHeightsRef.current[nodeId] ?? nodeCardHeight;
-      const isAutoSized = Math.abs(existing.height - previousAutoHeight) <= 1;
+      const isManuallySized = manuallySizedNodeIdsRef.current.has(nodeId);
 
-      if (!isAutoSized && requiredHeight <= existing.height) {
+      if (isManuallySized && requiredHeight <= existing.height) {
         return current;
       }
 
-      const nextHeight = Math.max(requiredHeight, isAutoSized ? requiredHeight : existing.height);
-
-      autoNodeHeightsRef.current[nodeId] = nextHeight;
+      const nextHeight = Math.max(requiredHeight, isManuallySized ? existing.height : requiredHeight);
 
       if (nextHeight === existing.height) {
         return current;
       }
 
+      syncedEndNodeSize = {
+        ...existing,
+        height: nextHeight
+      };
+
       return {
         ...current,
-        [nodeId]: {
-          ...existing,
-          height: nextHeight
-        }
+        [nodeId]: syncedEndNodeSize
       };
     });
+
+    if (syncedEndNodeSize) {
+      syncTimelineEndAfterEndNodeResize(nodeId, syncedEndNodeSize);
+    }
   }
 
   function applyObjectMentionSelection(
     objectName: string,
-    withTrailingSpace = false
+    trailingText = ""
   ) {
     if (!objectMentionQuery || !selectedNode) {
       return;
     }
 
-    const mentionText = `${getObjectToken(objectName)}${withTrailingSpace ? " " : ""}`;
+    const mentionText = `${getObjectToken(objectName)}${trailingText}`;
     const nextText = `${inlineNodeTextDraft.slice(0, objectMentionQuery.start)}${mentionText}${inlineNodeTextDraft.slice(objectMentionQuery.end)}`;
     const nextCaret = objectMentionQuery.start + mentionText.length;
 
@@ -2830,6 +2946,23 @@ export function WorkspaceShell() {
       selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
       syncSelectedNodeInputHeight(selectedNode.id, selectedNodeInputRef.current);
     });
+  }
+
+  function finalizeOpenObjectMention(trailingText: string) {
+    if (!objectMentionQuery || objectMentionQuery.mode !== "mention" || !selectedNode) {
+      return false;
+    }
+
+    const mentionName =
+      objectMentionSuggestions[activeObjectMentionIndex]?.name ??
+      objectMentionQuery.query.trim();
+
+    if (!mentionName) {
+      return false;
+    }
+
+    applyObjectMentionSelection(mentionName, trailingText);
+    return true;
   }
 
   async function placeDraft(
@@ -3052,10 +3185,13 @@ export function WorkspaceShell() {
     const parentNode = node.parentId ? nodesById.get(node.parentId) ?? null : null;
     const inlineDraft = buildInlineEditorText(node.text, node.keywords);
     const nextSelectedKeywords = extractInlineKeywords(inlineDraft);
+    const liveSelectedKeywords =
+      options?.refresh && aiPanelNodeId === node.id ? selectedAiKeywords : nextSelectedKeywords;
 
     setAiPanelNodeId(node.id);
     setKeywordSuggestions([]);
-    setSelectedAiKeywords(nextSelectedKeywords);
+    setSelectedAiKeywords(liveSelectedKeywords);
+    setKeywordCloudPinnedKeywords(liveSelectedKeywords);
     setKeywordRefreshCycle((current) => (options?.refresh ? current + 1 : 0));
     setRecommendationError(null);
     setIsLoadingKeywords(true);
@@ -3083,7 +3219,7 @@ export function WorkspaceShell() {
         : buildInlineEditorText(node.text, node.keywords);
     const selectionStart = selectedNodeInputRef.current?.selectionStart ?? baseText.length;
     const selectionEnd = selectedNodeInputRef.current?.selectionEnd ?? selectionStart;
-    const { nextCaret, nextText } = toggleInlineKeywordToken(
+    const { nextText } = toggleInlineKeywordToken(
       baseText,
       keyword,
       selectionStart,
@@ -3098,19 +3234,17 @@ export function WorkspaceShell() {
 
     if (selectedNode?.id === node.id) {
       window.requestAnimationFrame(() => {
-        selectedNodeInputRef.current?.focus();
-        selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
         syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
       });
     }
   }
   const objectUsageCounts = new Map(
-    snapshot.objects.map((object) => [
+    activeEpisodeObjects.map((object) => [
       object.id,
       orderedNodes.filter((node) => node.objectIds.includes(object.id)).length
     ])
   );
-  const filteredObjects = snapshot.objects.filter((object) => {
+  const filteredObjects = activeEpisodeObjects.filter((object) => {
     const query = objectSearchQuery.trim().toLowerCase();
 
     if (!query) {
@@ -3157,7 +3291,7 @@ export function WorkspaceShell() {
   const objectMentionSuggestions =
     objectMentionQuery === null
       ? []
-      : snapshot.objects
+      : activeEpisodeObjects
           .filter((object) =>
             objectMentionQuery.mode === "word"
               ? object.name.toLowerCase() === objectMentionQuery.query.trim().toLowerCase()
@@ -3170,7 +3304,7 @@ export function WorkspaceShell() {
           .sort((left, right) => left.name.localeCompare(right.name))
           .slice(0, 8);
   const displayedKeywordSuggestions = buildDisplayedKeywordSuggestions(
-    selectedAiKeywords,
+    keywordCloudPinnedKeywords,
     keywordSuggestions,
     keywordRefreshCycle
   );
@@ -3381,6 +3515,10 @@ export function WorkspaceShell() {
                     syncSelectedNodeInputHeight(node.id, event.currentTarget);
                     syncInlineObjectMentions(node.id, nextValue);
 
+                    window.requestAnimationFrame(() => {
+                      syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+                    });
+
                     if (nextValue !== event.target.value) {
                       window.requestAnimationFrame(() => {
                         selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
@@ -3426,15 +3564,24 @@ export function WorkspaceShell() {
                     if (
                       activeMentionSuggestion &&
                       (event.key === "Enter" ||
-                        event.key === "Tab" ||
-                        (objectMentionQuery?.mode === "mention" && event.key === " "))
+                        event.key === "Tab")
                     ) {
                       event.preventDefault();
                       applyObjectMentionSelection(
                         activeMentionSuggestion.name,
-                        objectMentionQuery?.mode === "mention" && event.key === " "
+                        event.key === "Enter" && objectMentionQuery?.mode === "mention" ? "\n" : ""
                       );
                       return;
+                    }
+
+                    if (
+                      objectMentionQuery?.mode === "mention" &&
+                      (event.key === " " || event.key === "Enter")
+                    ) {
+                      if (finalizeOpenObjectMention(event.key === "Enter" ? "\n" : " ")) {
+                        event.preventDefault();
+                        return;
+                      }
                     }
 
                     if (objectMentionSuggestions.length > 0 && event.key === "ArrowDown") {
@@ -3482,30 +3629,28 @@ export function WorkspaceShell() {
         </div>
         {isSelected ? (
           <>
-            <button
-              aria-label="Resize horizontally"
-              className="node-resize-handle node-resize-handle-horizontal"
-              onMouseDown={(event) => {
-                beginNodeResize(node.id, "horizontal", event);
-              }}
-              type="button"
-            />
-            <button
-              aria-label="Resize vertically"
-              className="node-resize-handle node-resize-handle-vertical"
-              onMouseDown={(event) => {
-                beginNodeResize(node.id, "vertical", event);
-              }}
-              type="button"
-            />
-            <button
-              aria-label="Resize diagonally"
-              className="node-resize-handle node-resize-handle-diagonal"
-              onMouseDown={(event) => {
-                beginNodeResize(node.id, "diagonal", event);
-              }}
-              type="button"
-            />
+            {(
+              [
+                ["northwest", "Resize from top left"],
+                ["north", "Resize from top"],
+                ["northeast", "Resize from top right"],
+                ["east", "Resize from right"],
+                ["southeast", "Resize from bottom right"],
+                ["south", "Resize from bottom"],
+                ["southwest", "Resize from bottom left"],
+                ["west", "Resize from left"]
+              ] satisfies Array<[NodeResizeDirection, string]>
+            ).map(([direction, label]) => (
+              <button
+                aria-label={label}
+                className={`node-resize-handle node-resize-handle-${direction}`}
+                key={direction}
+                onMouseDown={(event) => {
+                  beginNodeResize(node.id, direction, event);
+                }}
+                type="button"
+              />
+            ))}
           </>
         ) : null}
 
@@ -4214,6 +4359,11 @@ export function WorkspaceShell() {
   function assignEpisodeToFolder(episodeId: string, folderId: string) {
     setSidebarFolders((current) => {
       const timestamp = new Date().toISOString();
+      const targetFolder = current.find((folder) => folder.id === folderId);
+
+      if (targetFolder?.episodeIds.includes(episodeId)) {
+        return current;
+      }
 
       return current.map((folder) => {
         const nextEpisodeIds = folder.episodeIds.filter((entry) => entry !== episodeId);
@@ -4225,6 +4375,7 @@ export function WorkspaceShell() {
         return {
           ...folder,
           episodeIds: nextEpisodeIds,
+          isCollapsed: folder.id === folderId ? false : folder.isCollapsed,
           updatedAt:
             folder.id === folderId || folder.episodeIds.includes(episodeId)
               ? timestamp
@@ -4441,7 +4592,7 @@ export function WorkspaceShell() {
     return (
       <li
         className={`sidebar-episode-item${isActive ? " is-active" : ""}${isSortable ? " is-sortable" : ""}`}
-        draggable={isSortable}
+        draggable={!isRenaming}
         key={episode.id}
         onDragEnd={() => {
           setDraggedSidebarEpisodeId(null);
@@ -4454,7 +4605,7 @@ export function WorkspaceShell() {
           event.preventDefault();
         }}
         onDragStart={() => {
-          if (!isSortable) {
+          if (isRenaming) {
             return;
           }
 
@@ -4663,7 +4814,29 @@ export function WorkspaceShell() {
             </div>
           </form>
         ) : (
-          <div className="sidebar-folder-card">
+          <div
+            className={`sidebar-folder-card${
+              draggedSidebarEpisodeId && !folder.episodeIds.includes(draggedSidebarEpisodeId)
+                ? " is-drop-target"
+                : ""
+            }`}
+            onDragOver={(event) => {
+              if (!draggedSidebarEpisodeId || folder.episodeIds.includes(draggedSidebarEpisodeId)) {
+                return;
+              }
+
+              event.preventDefault();
+            }}
+            onDrop={(event) => {
+              if (!draggedSidebarEpisodeId || folder.episodeIds.includes(draggedSidebarEpisodeId)) {
+                return;
+              }
+
+              event.preventDefault();
+              assignEpisodeToFolder(draggedSidebarEpisodeId, folder.id);
+              setDraggedSidebarEpisodeId(null);
+            }}
+          >
             <button
               className="sidebar-folder-button"
               onClick={() => {
@@ -5170,6 +5343,7 @@ export function WorkspaceShell() {
         <div className="object-toolbar object-toolbar-compact">
           <div className="object-toolbar-heading">
             <h2>{copy.workspace.objects}</h2>
+            <span>{activeEpisode?.title ?? "Current episode"}</span>
           </div>
           <label className="object-search-field object-search-field-compact">
             <span className="visually-hidden">{copy.workspace.objectSearch}</span>

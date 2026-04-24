@@ -2,7 +2,7 @@ import type {
   CloudSyncOperation,
   StoryWorkspaceSnapshot,
   SyncProjectResponse
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 const defaultRank: Record<CloudSyncOperation["kind"], number> = {
   episode: 3,
@@ -94,6 +94,13 @@ function getDependencyKeys(
         availableOperations.has(`project:${operation.payload.projectId}`)
       ) {
         dependencies.push(`project:${operation.payload.projectId}`);
+      }
+
+      if (
+        !hasEpisode(operation.payload.episodeId, remoteSnapshot, new Set()) &&
+        availableOperations.has(`episode:${operation.payload.episodeId}`)
+      ) {
+        dependencies.push(`episode:${operation.payload.episodeId}`);
       }
 
       return dependencies;

@@ -9,9 +9,46 @@ describe("frontend routes baseline", () => {
     window.localStorage.clear();
   });
 
-  it("renders the workspace shell", async () => {
+  it("renders the ARIAD landing page", () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Lock the next episode structure before the deadline locks you."
+      })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "See how ARIAD works" })).toHaveAttribute(
+      "href",
+      "/explanation"
+    );
+    expect(screen.getByRole("link", { name: "Start structuring an episode" })).toHaveAttribute(
+      "href",
+      "/workspace"
+    );
+  });
+
+  it("renders the explanation page", () => {
+    render(
+      <MemoryRouter initialEntries={["/explanation"]}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "ARIAD is a canvas-based structure editor for the episode you need to finish next."
+      })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Why ARIAD is not just a chat box" })).toBeInTheDocument();
+  });
+
+  it("renders the workspace shell", async () => {
+    render(
+      <MemoryRouter initialEntries={["/workspace"]}>
         <AppRoutes />
       </MemoryRouter>
     );

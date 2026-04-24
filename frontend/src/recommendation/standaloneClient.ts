@@ -5,7 +5,7 @@ import {
   type KeywordRecommendationResponse,
   type SentenceRecommendationRequest,
   type SentenceRecommendationResponse
-} from "@scenaairo/recommendation";
+} from "@ariad/recommendation";
 
 export class StandaloneRecommendationClient {
   private readonly service = createRecommendationService(

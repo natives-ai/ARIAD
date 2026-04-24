@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-const forceCompat = process.env.SCENAAIRO_FORCE_COMPAT === "1";
+const forceCompat = process.env.ARIAD_FORCE_COMPAT === "1";
 const startupWindowMs = 4000;
 
 function mirrorStream(stream, write, chunks) {
@@ -169,12 +169,12 @@ async function runLongRunningCommand(commandArgs, env = process.env) {
 
 async function runCompatBackend() {
   process.stderr.write(
-    "[SCENAAIRO] Backend dev server hit a spawn restriction. Falling back to compatible dist mode.\n"
+    "[ARIAD] Backend dev server hit a spawn restriction. Falling back to compatible dist mode.\n"
   );
 
-  await runBuild(["workspace", "@scenaairo/shared", "build"]);
-  await runBuild(["workspace", "@scenaairo/recommendation", "build"]);
-  await runBuild(["workspace", "@scenaairo/backend", "build"]);
+  await runBuild(["workspace", "@ariad/shared", "build"]);
+  await runBuild(["workspace", "@ariad/recommendation", "build"]);
+  await runBuild(["workspace", "@ariad/backend", "build"]);
 
   const result = await runLongRunningCommand(["node", "backend/dist/server.js"]);
   process.exit(result.code ?? 1);
@@ -186,7 +186,7 @@ async function main() {
     return;
   }
 
-  const result = await runLongRunningCommand(["workspace", "@scenaairo/backend", "dev"]);
+  const result = await runLongRunningCommand(["workspace", "@ariad/backend", "dev"]);
 
   if (shouldUseCompat(result.output)) {
     await runCompatBackend();

@@ -1,5 +1,5 @@
 {
-  "name": "scenaairo",
+  "name": "ariad",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,10 +19,10 @@
     "dev:backend": "node scripts/dev-backend.mjs",
     "host:local": "powershell -ExecutionPolicy Bypass -File scripts/launch-local.ps1",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "yarn workspace @scenaairo/shared typecheck && yarn workspace @scenaairo/recommendation typecheck && yarn workspace @scenaairo/backend typecheck && yarn workspace @scenaairo/frontend typecheck",
-    "test": "yarn workspace @scenaairo/shared test && yarn workspace @scenaairo/recommendation test && yarn workspace @scenaairo/backend test && yarn workspace @scenaairo/frontend test",
-    "integration": "yarn workspace @scenaairo/backend integration",
-    "build": "yarn workspace @scenaairo/shared build && yarn workspace @scenaairo/recommendation build && yarn workspace @scenaairo/backend build && yarn workspace @scenaairo/frontend build",
+    "typecheck": "yarn workspace @ariad/shared typecheck && yarn workspace @ariad/recommendation typecheck && yarn workspace @ariad/backend typecheck && yarn workspace @ariad/frontend typecheck",
+    "test": "yarn workspace @ariad/shared test && yarn workspace @ariad/recommendation test && yarn workspace @ariad/backend test && yarn workspace @ariad/frontend test",
+    "integration": "yarn workspace @ariad/backend integration",
+    "build": "yarn workspace @ariad/shared build && yarn workspace @ariad/recommendation build && yarn workspace @ariad/backend build && yarn workspace @ariad/frontend build",
     "e2e": "playwright test"
   },
   "devDependencies": {

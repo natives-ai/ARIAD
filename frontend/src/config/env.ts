@@ -29,6 +29,6 @@ export function loadFrontendEnv(): FrontendEnv {
     appEnv: parseAppEnv(import.meta.env.VITE_APP_ENV),
     authCallbackPath: import.meta.env.VITE_AUTH_CALLBACK_PATH ?? "/auth/callback",
     runtimeMode,
-    storagePrefix: import.meta.env.VITE_STORAGE_PREFIX ?? "scenaairo"
+    storagePrefix: import.meta.env.VITE_STORAGE_PREFIX ?? "ARIAD"
   };
 }

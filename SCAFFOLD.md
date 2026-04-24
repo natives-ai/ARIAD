@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document defines the initial technical scaffold for SCENAAIRO. It is not a full architecture document and it is not a vendor lock-in document. Its role is to fix the initial structural boundaries, persistence policies, quality gates, and safety disciplines that the repo should start with.
+This document defines the initial technical scaffold for ARIAD. It is not a full architecture document and it is not a vendor lock-in document. Its role is to fix the initial structural boundaries, persistence policies, quality gates, and safety disciplines that the repo should start with.
 
 The scaffold should support fast implementation without collapsing structural clarity. It should also make later expansion possible without forcing heavyweight production operations too early.
 
@@ -10,7 +10,7 @@ The scaffold should support fast implementation without collapsing structural cl
 
 ### 2.1 Workspace scaffold
 
-SCENAAIRO starts as a workspace-style scaffold rather than a single undifferentiated app. The initial scaffold should separate the main functional boundaries of the product so that frontend, backend, recommendation logic, and shared contracts can evolve without being tangled together.
+ARIAD starts as a workspace-style scaffold rather than a single undifferentiated app. The initial scaffold should separate the main functional boundaries of the product so that frontend, backend, recommendation logic, and shared contracts can evolve without being tangled together.
 
 ### 2.2 Production-aware balanced foundation
 
@@ -130,7 +130,7 @@ Guest mode and logged-in mode must be separated at the persistence level.
 
 ### 6.2 Local-only means persistence scope, not LLM isolation
 
-“Local-only” refers to where project data is stored by the application. It does **not** mean recommendation requests are executed locally. Recommendation calls may send the required context to an external LLM provider. The persistence policy and the recommendation provider boundary must remain conceptually separate.
+?�Local-only??refers to where project data is stored by the application. It does **not** mean recommendation requests are executed locally. Recommendation calls may send the required context to an external LLM provider. The persistence policy and the recommendation provider boundary must remain conceptually separate.
 
 ### 6.3 Login import policy
 

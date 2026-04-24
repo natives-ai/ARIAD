@@ -1,4 +1,4 @@
-import type { StoryNode, TemporaryDrawerItem } from "@scenaairo/shared";
+import type { StoryNode, TemporaryDrawerItem } from "@ariad/shared";
 
 import { sortNodesByOrder } from "./nodeTree";
 

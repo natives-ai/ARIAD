@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type {
   KeywordRecommendationRequest,
   SentenceRecommendationRequest
-} from "@scenaairo/recommendation";
+} from "@ariad/recommendation";
 
 import { buildApp } from "../app.js";
 

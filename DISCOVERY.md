@@ -1,7 +1,7 @@
 # DISCOVERY.md
 
 ## 0. Meta
-- Product: **SCENAAIRO**
+- Product: **ARIAD**
 - Stage: **Discovery baseline locked**
 - Primary format: **Webtoon**
 - Primary user: **Solo creator currently serializing on a recurring schedule**
@@ -9,7 +9,7 @@
 - Planned future localizations: **Korean, Japanese**
 
 ## 1. One-line summary
-SCENAAIRO is an AI-assisted storytelling support product for solo serial webtoon creators who need to reach a usable structure draft for the current episode faster without losing creative ownership.
+ARIAD is an AI-assisted storytelling support product for solo serial webtoon creators who need to reach a usable structure draft for the current episode faster without losing creative ownership.
 
 ## 2. Core problem
 ### 2.1 Primary problem
@@ -22,7 +22,7 @@ That bottleneck does not remain inside writing. It propagates into:
 - higher skip/hiatus risk
 
 ### 2.2 Most painful bottleneck
-The most important bottleneck is not ‚Äúwriting everything from scratch,‚Äù but **locking the episode structure early enough**.
+The most important bottleneck is not ?úwriting everything from scratch,??but **locking the episode structure early enough**.
 
 In practice, creators often already know:
 - the world
@@ -46,8 +46,8 @@ If the structure draft is late:
 - hiatus risk rises
 - long-term audience trust, ratings, and continuation stability can degrade
 
-The first user-visible value is not ‚Äúhigher views.‚Äù
-It is **saving enough time to stabilize the next episode‚Äôs production process**.
+The first user-visible value is not ?úhigher views.??
+It is **saving enough time to stabilize the next episode?ôs production process**.
 
 ## 4. Target user
 ### 4.1 Primary target
@@ -73,13 +73,13 @@ The first product focus is **not**:
 
 ## 5. Representative user situation
 ### 5.1 Baseline scenario
-A solo webtoon creator uploads this week‚Äôs episode and must immediately begin the next one.
+A solo webtoon creator uploads this week?ôs episode and must immediately begin the next one.
 They already know the broad episode requirement, but cannot settle the internal unfolding quickly enough.
 
 ### 5.2 Example of the bottleneck
 The creator may know:
 - the episode begins with a meeting at a caf√©
-- the episode must end with the heroine‚Äôs mother telling the male lead to leave her daughter
+- the episode must end with the heroine?ôs mother telling the male lead to leave her daughter
 
 But they do not yet know:
 - what happens between those points
@@ -202,7 +202,7 @@ Longer-term signals may include fewer production collapses, better quality stabi
 
 ## 17. Open questions for later phases
 - How strongly do real target creators describe this as their top bottleneck?
-- How narrow should the first user segment become inside ‚Äúsolo serial webtoon creators‚Äù?
+- How narrow should the first user segment become inside ?úsolo serial webtoon creators??
 - What level of AI intervention still feels acceptable to creators?
 - What input format gives the best tradeoff between quality and user effort?
 - What pricing threshold maps to meaningful time savings?
@@ -211,7 +211,7 @@ Longer-term signals may include fewer production collapses, better quality stabi
 ## 18. Major risks
 - the external observation of the problem may not perfectly match creator self-perception
 - AI may feel either too weak to matter or too invasive to trust
-- structurally useful suggestions may still fail to feel like ‚Äúmy work‚Äù to the user
+- structurally useful suggestions may still fail to feel like ?úmy work??to the user
 - repeat value may be weaker than initial curiosity if workflow differentiation is not strong enough
 
 ## 19. Discovery completion note

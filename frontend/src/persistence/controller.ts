@@ -12,11 +12,12 @@ import type {
   StoryNode,
   StoryNodeContentMode,
   StoryNodeLevel,
+  StoryObject,
   StoryObjectCategory,
   StoryWorkspaceSnapshot,
   SyncProjectResponse,
   TemporaryDrawerItem
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import {
   getNodeDrawerLabel,
@@ -336,6 +337,38 @@ function getActiveEpisode(snapshot: StoryWorkspaceSnapshot) {
 
 function getOrderedEpisodeNodes(snapshot: StoryWorkspaceSnapshot, episodeId: string) {
   return sortNodesByOrder(snapshot.nodes.filter((node) => node.episodeId === episodeId));
+}
+
+function normalizeObjectEpisodeScope(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
+  const fallbackEpisodeId = getActiveEpisode(snapshot)?.id ?? snapshot.episodes[0]?.id ?? "";
+  const nodeEpisodeByObjectId = new Map<string, string>();
+
+  for (const node of snapshot.nodes) {
+    for (const objectId of node.objectIds) {
+      if (!nodeEpisodeByObjectId.has(objectId)) {
+        nodeEpisodeByObjectId.set(objectId, node.episodeId);
+      }
+    }
+  }
+
+  const objects = snapshot.objects.map((object) => ({
+    ...object,
+    episodeId:
+      (object as StoryObject & { episodeId?: string }).episodeId ??
+      nodeEpisodeByObjectId.get(object.id) ??
+      fallbackEpisodeId
+  }));
+  const objectEpisodeById = new Map(objects.map((object) => [object.id, object.episodeId]));
+  const nodes = snapshot.nodes.map((node) => ({
+    ...node,
+    objectIds: node.objectIds.filter((objectId) => objectEpisodeById.get(objectId) === node.episodeId)
+  }));
+
+  return {
+    ...snapshot,
+    nodes,
+    objects
+  };
 }
 
 function mergeEpisodeNodes(
@@ -893,7 +926,20 @@ export class WorkspacePersistenceController {
           : current.snapshot.project.activeEpisodeId,
       updatedAt: timestamp
     };
-    const nextNodes = current.snapshot.nodes.filter((node) => node.episodeId !== episodeId);
+    const deletedObjectIds = new Set(
+      current.snapshot.objects
+        .filter((object) => object.episodeId === episodeId)
+        .map((object) => object.id)
+    );
+    const nextObjects = current.snapshot.objects.filter(
+      (object) => object.episodeId !== episodeId
+    );
+    const nextNodes = current.snapshot.nodes
+      .filter((node) => node.episodeId !== episodeId)
+      .map((node) => ({
+        ...node,
+        objectIds: node.objectIds.filter((objectId) => !deletedObjectIds.has(objectId))
+      }));
     const nextDrawer = current.snapshot.temporaryDrawer.filter(
       (item) => item.episodeId !== episodeId
     );
@@ -901,6 +947,7 @@ export class WorkspacePersistenceController {
       ...current.snapshot,
       episodes: remainingEpisodes,
       nodes: nextNodes,
+      objects: nextObjects,
       project: nextProject,
       temporaryDrawer: nextDrawer
     };
@@ -914,6 +961,11 @@ export class WorkspacePersistenceController {
       ...createEpisodeOperations(
         current.snapshot.episodes,
         remainingEpisodes,
+        current.snapshot.project.id
+      ),
+      ...createObjectOperations(
+        current.snapshot.objects,
+        nextObjects,
         current.snapshot.project.id
       ),
       ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
@@ -1106,10 +1158,17 @@ export class WorkspacePersistenceController {
       return null;
     }
 
+    const activeEpisode = getActiveEpisode(current.snapshot);
+
+    if (!activeEpisode) {
+      return null;
+    }
+
     const timestamp = this.now();
-    const nextObject = {
+    const nextObject: StoryObject = {
       category: draft.category,
       createdAt: timestamp,
+      episodeId: activeEpisode.id,
       id: this.createId("object"),
       name,
       projectId: current.snapshot.project.id,
@@ -1211,8 +1270,10 @@ export class WorkspacePersistenceController {
 
   async attachObjectToNode(nodeId: string, objectId: string) {
     const current = this.requireState();
+    const targetNode = current.snapshot.nodes.find((node) => node.id === nodeId);
+    const targetObject = current.snapshot.objects.find((object) => object.id === objectId);
 
-    if (!current.snapshot.objects.some((object) => object.id === objectId)) {
+    if (!targetNode || !targetObject || targetObject.episodeId !== targetNode.episodeId) {
       return;
     }
 
@@ -1673,9 +1734,10 @@ export class WorkspacePersistenceController {
       registry.activeProjectId ?? registry.projects[0]?.projectId ?? null;
 
     if (activeProjectId) {
-      const snapshot = this.dependencies.local.getSnapshot(activeProjectId);
+      const storedSnapshot = this.dependencies.local.getSnapshot(activeProjectId);
 
-      if (snapshot) {
+      if (storedSnapshot) {
+        const snapshot = normalizeObjectEpisodeScope(storedSnapshot);
         const linkage = this.dependencies.local.getLinkage(activeProjectId);
         const nextRegistry = upsertRegistryEntry(
           registry,
@@ -1692,7 +1754,7 @@ export class WorkspacePersistenceController {
       }
     }
 
-    const snapshot = createSampleWorkspace(this.now(), this.createId);
+    const snapshot = normalizeObjectEpisodeScope(createSampleWorkspace(this.now(), this.createId));
     const nextRegistry = upsertRegistryEntry(
       registry,
       createRegistryEntry(snapshot, null, this.now())
@@ -1852,7 +1914,7 @@ export class WorkspacePersistenceController {
     snapshot: StoryWorkspaceSnapshot,
     linkage: ProjectLinkageMetadata | null
   ) {
-    const nextSnapshot = cloneSnapshot(snapshot);
+    const nextSnapshot = normalizeObjectEpisodeScope(cloneSnapshot(snapshot));
     const nextLinkage = cloneLinkage(linkage);
     const registry = upsertRegistryEntry(
       this.dependencies.local.getRegistry(),

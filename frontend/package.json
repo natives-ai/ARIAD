@@ -1,5 +1,5 @@
 {
-  "name": "@scenaairo/frontend",
+  "name": "@ariad/frontend",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
     "test": "yarn run -T vitest run"
   },
   "dependencies": {
-    "@scenaairo/recommendation": "file:../recommendation",
-    "@scenaairo/shared": "file:../shared",
+    "@ariad/recommendation": "file:../recommendation",
+    "@ariad/shared": "file:../shared",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.1"

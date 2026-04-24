@@ -1,6 +1,31 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const modifierKey = process.platform === "darwin" ? "Meta" : "Control";
+test("renders the ARIAD landing and explanation pages", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page).toHaveTitle("ARIAD");
+  await expect(
+    page.getByRole("heading", {
+      name: "Lock the next episode structure before the deadline locks you."
+    })
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Start structuring an episode" })).toHaveAttribute(
+    "href",
+    "/workspace"
+  );
+
+  await page.getByRole("link", { name: "See how ARIAD works" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "ARIAD is a canvas-based structure editor for the episode you need to finish next."
+    })
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open workspace" }).first()).toHaveAttribute(
+    "href",
+    "/workspace"
+  );
+});
 
 async function openSelectedNodeMenu(page: Page) {
   const selectedNode = page.locator(".node-card.is-selected").first();
@@ -8,7 +33,7 @@ async function openSelectedNodeMenu(page: Page) {
 }
 
 test("supports the core canvas v1 structure flows", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await expect(page).toHaveTitle("ARIAD");
   await expect(page.getByRole("heading", { name: "ARIAD" })).toBeVisible();
@@ -174,7 +199,7 @@ test("supports the core canvas v1 structure flows", async ({ page }) => {
 });
 
 test("supports the explicit keyword-first recommendation flow", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   const selectedTitle = page.getByTestId("selected-node-title");
 
@@ -232,7 +257,7 @@ test("supports the explicit keyword-first recommendation flow", async ({ page })
 test("prevents minor-lane nodes from overlapping when placed in the same area", async ({
   page
 }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await page.getByRole("button", { name: "Create Node" }).click();
   await page.getByTestId("lane-minor").click({
@@ -269,8 +294,55 @@ test("prevents minor-lane nodes from overlapping when placed in the same area", 
   expect(nodesOverlap).toBe(false);
 });
 
+test("keeps the timeline end node anchored when inline text shrinks", async ({ page }) => {
+  await page.goto("/workspace");
+
+  await page.getByRole("button", { name: "Create Node" }).click();
+  await page.getByTestId("lane-major").click({
+    position: {
+      x: 160,
+      y: 380
+    }
+  });
+
+  const endNode = page.locator(".node-card.node-card-level-major.is-selected").first();
+
+  await expect(endNode).toHaveClass(/is-end-node/);
+
+  const initialBox = await endNode.boundingBox();
+
+  if (!initialBox) {
+    throw new Error("End node initial bounding box was not available.");
+  }
+
+  await endNode.getByRole("textbox").fill(
+    [
+      "A long confrontation setup.",
+      "The mother pauses before the order.",
+      "The lead realizes the warning is final.",
+      "The scene needs enough text to grow."
+    ].join("\n")
+  );
+
+  await expect.poll(async () => (await endNode.boundingBox())?.height ?? 0).toBeGreaterThan(
+    initialBox.height
+  );
+  const grownBox = await endNode.boundingBox();
+
+  if (!grownBox) {
+    throw new Error("End node grown bounding box was not available.");
+  }
+
+  await endNode.getByRole("textbox").fill("Final warning.");
+
+  await expect.poll(async () => (await endNode.boundingBox())?.height ?? 0).toBeLessThan(
+    grownBox.height
+  );
+  await expect(endNode).toHaveClass(/is-end-node/);
+});
+
 test("supports reference-object creation and detail editing", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await page.getByRole("button", { name: "New Object" }).first().click();
 
@@ -289,6 +361,10 @@ test("supports reference-object creation and detail editing", async ({ page }) =
   await expect(
     objectList.locator(".object-row-name", { hasText: "Heroine's Mother" })
   ).toHaveCount(0);
+  await page.getByRole("button", { exact: true, name: "Episode 11" }).click();
+  await expect(objectList.locator(".object-row-name", { hasText: "Cafe Exit" })).toHaveCount(0);
+  await page.getByRole("button", { exact: true, name: "Episode 12" }).click();
+  await expect(objectList.locator(".object-row-name", { hasText: "Cafe Exit" })).toBeVisible();
   await page.getByTestId("object-search").clear();
 
   const cafeExitRow = page.locator(".object-row", {
@@ -320,7 +396,7 @@ test("supports reference-object creation and detail editing", async ({ page }) =
 });
 
 test("supports @mention object reuse and creation inside node text", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await page.getByRole("button", { name: "Create Node" }).click();
   await page.getByTestId("lane-major").click({
@@ -379,7 +455,7 @@ test("supports @mention object reuse and creation inside node text", async ({ pa
 test("supports keyboard copy, paste, undo, redo, and escape safeguards", async ({
   page
 }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await expect(page.getByTestId("node-count")).toHaveText("Nodes: 1");
 

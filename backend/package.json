@@ -1,5 +1,5 @@
 {
-  "name": "@scenaairo/backend",
+  "name": "@ariad/backend",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,8 +17,8 @@
     "integration": "yarn run -T vitest run --pool threads src/persistence/routes.integration.test.ts src/recommendation/routes.integration.test.ts"
   },
   "dependencies": {
-    "@scenaairo/recommendation": "file:../recommendation",
-    "@scenaairo/shared": "file:../shared",
+    "@ariad/recommendation": "file:../recommendation",
+    "@ariad/shared": "file:../shared",
     "fastify": "^5.8.5"
   }
 }

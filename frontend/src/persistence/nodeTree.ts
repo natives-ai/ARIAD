@@ -1,4 +1,4 @@
-import type { StoryNode, StoryNodeLevel } from "@scenaairo/shared";
+import type { StoryNode, StoryNodeLevel } from "@ariad/shared";
 
 const nodeLevelOrder: StoryNodeLevel[] = ["major", "minor", "detail"];
 

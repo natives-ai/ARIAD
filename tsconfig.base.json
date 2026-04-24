@@ -15,10 +15,10 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "paths": {
-      "@scenaairo/recommendation": ["./recommendation/src/index.ts"],
-      "@scenaairo/recommendation/*": ["./recommendation/src/*"],
-      "@scenaairo/shared": ["./shared/src/index.ts"],
-      "@scenaairo/shared/*": ["./shared/src/*"]
+      "@ariad/recommendation": ["./recommendation/src/index.ts"],
+      "@ariad/recommendation/*": ["./recommendation/src/*"],
+      "@ariad/shared": ["./shared/src/index.ts"],
+      "@ariad/shared/*": ["./shared/src/*"]
     }
   }
 }

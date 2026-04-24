@@ -1,8 +1,8 @@
 import type {
   StoryWorkspaceSnapshot,
   TemporaryDrawerItem
-} from "@scenaairo/shared";
-import type { PersistedEntityKind } from "@scenaairo/shared";
+} from "@ariad/shared";
+import type { PersistedEntityKind } from "@ariad/shared";
 
 import { createStableId } from "./stableId";
 
@@ -98,6 +98,7 @@ export function createSampleWorkspace(
       {
         category: "person",
         createdAt: now,
+        episodeId: activeEpisodeId,
         id: objectId,
         name: "Heroine's Mother",
         projectId,

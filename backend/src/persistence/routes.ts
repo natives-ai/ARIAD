@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type {
   ImportProjectRequest,
   SyncProjectRequest
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import { FileBackedPersistenceStore } from "./store.js";
 

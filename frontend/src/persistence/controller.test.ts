@@ -5,7 +5,7 @@ import type {
   ImportProjectResponse,
   ProjectLinkageMetadata,
   StoryWorkspaceSnapshot
-} from "@scenaairo/shared";
+} from "@ariad/shared";
 
 import { StubAuthBoundary, type StorageLike } from "../auth/stubAuthBoundary";
 import { WorkspacePersistenceController } from "./controller";

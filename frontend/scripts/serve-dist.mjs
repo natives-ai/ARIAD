@@ -5,10 +5,10 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const frontendHost = process.env.SCENAAIRO_FRONTEND_HOST ?? "127.0.0.1";
-const frontendPort = Number(process.env.SCENAAIRO_FRONTEND_PORT ?? "5173");
-const backendHost = process.env.SCENAAIRO_BACKEND_HOST ?? "127.0.0.1";
-const backendPort = Number(process.env.SCENAAIRO_BACKEND_PORT ?? "3001");
+const frontendHost = process.env.ARIAD_FRONTEND_HOST ?? "127.0.0.1";
+const frontendPort = Number(process.env.ARIAD_FRONTEND_PORT ?? "5173");
+const backendHost = process.env.ARIAD_BACKEND_HOST ?? "127.0.0.1";
+const backendPort = Number(process.env.ARIAD_BACKEND_PORT ?? "3001");
 
 const frontendRoot = fileURLToPath(new URL("..", import.meta.url));
 const distRoot = join(frontendRoot, "dist");
@@ -106,8 +106,8 @@ function serveStaticFile(clientRequest, clientResponse) {
 }
 
 if (!existsSync(join(distRoot, "service.html"))) {
-  console.error("[SCENAAIRO] frontend/dist/service.html is missing.");
-  console.error("[SCENAAIRO] Run `yarn build` before starting the dist server.");
+  console.error("[ARIAD] frontend/dist/service.html is missing.");
+  console.error("[ARIAD] Run `yarn build` before starting the dist server.");
   process.exit(1);
 }
 
@@ -122,9 +122,9 @@ const server = createServer((clientRequest, clientResponse) => {
 
 server.listen(frontendPort, frontendHost, () => {
   console.log(
-    `[SCENAAIRO] Dist server listening on http://${frontendHost}:${frontendPort}`
+    `[ARIAD] Dist server listening on http://${frontendHost}:${frontendPort}`
   );
   console.log(
-    `[SCENAAIRO] Proxying /api to http://${backendHost}:${backendPort}`
+    `[ARIAD] Proxying /api to http://${backendHost}:${backendPort}`
   );
 });

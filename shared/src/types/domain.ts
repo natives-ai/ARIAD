@@ -35,6 +35,7 @@ export interface StoryEpisode {
 export interface StoryObject {
   id: EntityId;
   projectId: EntityId;
+  episodeId: EntityId;
   category: StoryObjectCategory;
   name: string;
   summary: string;
