@@ -282,6 +282,22 @@ export class PersistenceFlushQueue {
     }
   }
 
+  // 현재 스코프의 대기 연산으로 큐 내용을 교체합니다.
+  replacePending(operations: CloudSyncOperation[]) {
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
+    }
+
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId);
+      this.retryTimeoutId = null;
+    }
+
+    this.retryAttempt = 0;
+    this.pending = [...operations];
+  }
+
   // 새 동기화 연산을 큐에 적재하고 디바운스 플러시를 예약합니다.
   schedule(operations: CloudSyncOperation[]) {
     if (operations.length === 0) {

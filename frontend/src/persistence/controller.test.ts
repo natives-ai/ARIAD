@@ -1,5 +1,7 @@
+﻿// 이 파일은 워크스페이스 퍼시스턴스 컨트롤러의 인증/캐시 회귀를 검증합니다.
 import { describe, expect, it } from "vitest";
 import type {
+  AuthSession,
   CloudSyncOperation,
   GlobalProjectRegistryEntry,
   ImportProjectResponse,
@@ -40,19 +42,56 @@ class MemoryStorage implements StorageLike {
   }
 }
 
+// 테스트에서 원하는 세션 전환을 제어하는 인증 경계를 제공합니다.
+class ControlledAuthBoundary {
+  private currentSession: AuthSession;
+  private nextSignInSession: AuthSession;
+
+  constructor(initialSession: AuthSession) {
+    this.currentSession = { ...initialSession };
+    this.nextSignInSession = { ...initialSession };
+  }
+
+  setNextSignInSession(session: AuthSession) {
+    this.nextSignInSession = { ...session };
+  }
+
+  getCurrentAccountId() {
+    return this.currentSession.accountId;
+  }
+
+  async getCurrentSession() {
+    return { ...this.currentSession };
+  }
+
+  async signIn() {
+    this.currentSession = { ...this.nextSignInSession };
+    return { ...this.currentSession };
+  }
+
+  async signOut() {
+    this.currentSession = {
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    };
+    return { ...this.currentSession };
+  }
+}
+
 interface StoredProjectRecord {
   linkage: ProjectLinkageMetadata;
   snapshot: StoryWorkspaceSnapshot;
 }
 
 class FakeCloudPersistenceGateway {
-  private readonly accounts = new Map<string, Map<string, StoredProjectRecord>>();
+  private readonly projects = new Map<string, StoredProjectRecord>();
   private readonly lastSyncOperationsByProject = new Map<string, CloudSyncOperation[]>();
 
   constructor(private readonly now: () => string) {}
 
-  async getProject(accountId: string, projectId: string) {
-    const project = this.accounts.get(accountId)?.get(projectId);
+  async getProject(projectId: string) {
+    const project = this.projects.get(projectId);
 
     if (!project) {
       return {
@@ -68,15 +107,14 @@ class FakeCloudPersistenceGateway {
   }
 
   async importProject(
-    accountId: string,
     payload: {
       linkage: ProjectLinkageMetadata | null;
       snapshot: StoryWorkspaceSnapshot;
     }
   ) {
-    const account = this.ensureAccount(accountId);
     const projectId = payload.snapshot.project.id;
-    const existing = account.get(projectId);
+    const fallbackAccountId = payload.linkage?.linkedAccountId ?? "demo-account";
+    const existing = this.projects.get(projectId);
 
     if (existing) {
       return {
@@ -91,10 +129,10 @@ class FakeCloudPersistenceGateway {
       entityId: payload.linkage?.entityId ?? projectId,
       lastImportedAt: this.now(),
       lastSyncedAt: this.now(),
-      linkedAccountId: accountId
+      linkedAccountId: fallbackAccountId
     };
 
-    account.set(projectId, {
+    this.projects.set(projectId, {
       linkage,
       snapshot: cloneSnapshot(payload.snapshot)
     });
@@ -106,8 +144,8 @@ class FakeCloudPersistenceGateway {
     };
   }
 
-  async listProjects(accountId: string) {
-    const projects = [...(this.accounts.get(accountId)?.values() ?? [])].map(
+  async listProjects() {
+    const projects = [...this.projects.values()].map(
       ({ linkage, snapshot }): GlobalProjectRegistryEntry => ({
         cloudLinked: linkage.cloudLinked,
         lastOpenedAt: snapshot.project.updatedAt,
@@ -125,21 +163,19 @@ class FakeCloudPersistenceGateway {
   }
 
   async syncProject(
-    accountId: string,
     projectId: string,
     payload: {
       operations: CloudSyncOperation[];
     }
   ) {
-    const account = this.ensureAccount(accountId);
-    const current = account.get(projectId);
+    const current = this.projects.get(projectId);
 
     if (!current) {
       throw new Error("missing_project");
     }
 
     this.lastSyncOperationsByProject.set(
-      `${accountId}:${projectId}`,
+      projectId,
       payload.operations.map((operation) =>
         JSON.parse(JSON.stringify(operation)) as CloudSyncOperation
       )
@@ -220,7 +256,7 @@ class FakeCloudPersistenceGateway {
       lastSyncedAt: this.now()
     };
 
-    account.set(projectId, {
+    this.projects.set(projectId, {
       linkage,
       snapshot
     });
@@ -231,8 +267,199 @@ class FakeCloudPersistenceGateway {
     };
   }
 
-  getLastSyncOperations(accountId: string, projectId: string) {
-    return [...(this.lastSyncOperationsByProject.get(`${accountId}:${projectId}`) ?? [])];
+  getLastSyncOperations(projectId: string) {
+    return [...(this.lastSyncOperationsByProject.get(projectId) ?? [])];
+  }
+
+  seedProject(
+    snapshot: StoryWorkspaceSnapshot,
+    linkage: ProjectLinkageMetadata
+  ) {
+    this.projects.set(snapshot.project.id, {
+      linkage: { ...linkage },
+      snapshot: cloneSnapshot(snapshot)
+    });
+  }
+}
+
+// 현재 인증 계정 기준으로만 프로젝트를 노출하는 클라우드 게이트웨이 테스트 더블입니다.
+class SessionScopedCloudPersistenceGateway {
+  private readonly projectsByAccount = new Map<string, Map<string, StoredProjectRecord>>();
+
+  constructor(
+    private readonly now: () => string,
+    private readonly getCurrentAccountId: () => string | null
+  ) {}
+
+  async getProject(projectId: string) {
+    const currentProjects = this.getCurrentAccountProjects();
+    const project = currentProjects?.get(projectId);
+
+    if (!project) {
+      return {
+        linkage: null,
+        snapshot: null
+      };
+    }
+
+    return {
+      linkage: { ...project.linkage },
+      snapshot: cloneSnapshot(project.snapshot)
+    };
+  }
+
+  async importProject(payload: {
+    linkage: ProjectLinkageMetadata | null;
+    snapshot: StoryWorkspaceSnapshot;
+  }) {
+    const accountId = this.requireCurrentAccountId();
+    const accountProjects = this.ensureAccountProjects(accountId);
+    const projectId = payload.snapshot.project.id;
+    const existing = accountProjects.get(projectId);
+
+    if (existing) {
+      return {
+        created: false,
+        linkage: { ...existing.linkage },
+        snapshot: cloneSnapshot(existing.snapshot)
+      };
+    }
+
+    const linkage: ProjectLinkageMetadata = {
+      cloudLinked: true,
+      entityId: payload.linkage?.entityId ?? projectId,
+      lastImportedAt: this.now(),
+      lastSyncedAt: this.now(),
+      linkedAccountId: accountId
+    };
+
+    accountProjects.set(projectId, {
+      linkage,
+      snapshot: cloneSnapshot(payload.snapshot)
+    });
+
+    return {
+      created: true,
+      linkage: { ...linkage },
+      snapshot: cloneSnapshot(payload.snapshot)
+    };
+  }
+
+  async listProjects() {
+    const accountProjects = this.getCurrentAccountProjects();
+    const projects = [...(accountProjects?.values() ?? [])].map(
+      ({ linkage, snapshot }): GlobalProjectRegistryEntry => ({
+        cloudLinked: linkage.cloudLinked,
+        lastOpenedAt: snapshot.project.updatedAt,
+        linkedAccountId: linkage.linkedAccountId,
+        projectId: snapshot.project.id,
+        summary: snapshot.project.summary,
+        title: snapshot.project.title,
+        updatedAt: snapshot.project.updatedAt
+      })
+    );
+
+    return { projects };
+  }
+
+  async syncProject(
+    projectId: string,
+    payload: {
+      operations: CloudSyncOperation[];
+    }
+  ) {
+    const accountId = this.requireCurrentAccountId();
+    const accountProjects = this.ensureAccountProjects(accountId);
+    const current = accountProjects.get(projectId);
+
+    if (!current) {
+      throw new Error("missing_project");
+    }
+
+    let snapshot = cloneSnapshot(current.snapshot);
+
+    for (const operation of payload.operations) {
+      if (operation.action === "delete") {
+        switch (operation.kind) {
+          case "project":
+            throw new Error("project_delete_not_supported");
+          case "episode":
+            snapshot = {
+              ...snapshot,
+              episodes: removeById(snapshot.episodes, operation.entityId)
+            };
+            break;
+          case "object":
+            snapshot = {
+              ...snapshot,
+              objects: removeById(snapshot.objects, operation.entityId)
+            };
+            break;
+          case "node":
+            snapshot = {
+              ...snapshot,
+              nodes: removeById(snapshot.nodes, operation.entityId)
+            };
+            break;
+          case "temporary_drawer":
+            snapshot = {
+              ...snapshot,
+              temporaryDrawer: removeById(snapshot.temporaryDrawer, operation.entityId)
+            };
+            break;
+        }
+
+        continue;
+      }
+
+      switch (operation.kind) {
+        case "project":
+          snapshot = {
+            ...snapshot,
+            project: operation.payload
+          };
+          break;
+        case "episode":
+          snapshot = {
+            ...snapshot,
+            episodes: upsertById(snapshot.episodes, operation.payload)
+          };
+          break;
+        case "object":
+          snapshot = {
+            ...snapshot,
+            objects: upsertById(snapshot.objects, operation.payload)
+          };
+          break;
+        case "node":
+          snapshot = {
+            ...snapshot,
+            nodes: upsertById(snapshot.nodes, operation.payload)
+          };
+          break;
+        case "temporary_drawer":
+          snapshot = {
+            ...snapshot,
+            temporaryDrawer: upsertById(snapshot.temporaryDrawer, operation.payload)
+          };
+          break;
+      }
+    }
+
+    const linkage: ProjectLinkageMetadata = {
+      ...current.linkage,
+      lastSyncedAt: this.now()
+    };
+
+    accountProjects.set(projectId, {
+      linkage,
+      snapshot
+    });
+
+    return {
+      linkage: { ...linkage },
+      snapshot: cloneSnapshot(snapshot)
+    };
   }
 
   seedProject(
@@ -240,27 +467,53 @@ class FakeCloudPersistenceGateway {
     snapshot: StoryWorkspaceSnapshot,
     linkage: ProjectLinkageMetadata
   ) {
-    this.ensureAccount(accountId).set(snapshot.project.id, {
+    const accountProjects = this.ensureAccountProjects(accountId);
+    accountProjects.set(snapshot.project.id, {
       linkage: { ...linkage },
       snapshot: cloneSnapshot(snapshot)
     });
   }
 
-  private ensureAccount(accountId: string) {
-    this.accounts.set(accountId, this.accounts.get(accountId) ?? new Map());
-    return this.accounts.get(accountId)!;
+  private getCurrentAccountProjects() {
+    const accountId = this.getCurrentAccountId();
+
+    if (!accountId) {
+      return null;
+    }
+
+    return this.projectsByAccount.get(accountId) ?? null;
+  }
+
+  private ensureAccountProjects(accountId: string) {
+    const existing = this.projectsByAccount.get(accountId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, StoredProjectRecord>();
+    this.projectsByAccount.set(accountId, created);
+    return created;
+  }
+
+  private requireCurrentAccountId() {
+    const accountId = this.getCurrentAccountId();
+
+    if (!accountId) {
+      throw new Error("not_authenticated");
+    }
+
+    return accountId;
   }
 }
 
 class ImportFailureCloudPersistenceGateway extends FakeCloudPersistenceGateway {
   override async importProject(
-    _accountId: string,
     _payload: {
       linkage: ProjectLinkageMetadata | null;
       snapshot: StoryWorkspaceSnapshot;
     }
   ): Promise<ImportProjectResponse> {
-    void _accountId;
     void _payload;
     throw new Error("import_failed");
   }
@@ -270,7 +523,6 @@ class SyncFailureOnceCloudPersistenceGateway extends FakeCloudPersistenceGateway
   private shouldFailNextSync = true;
 
   override async syncProject(
-    accountId: string,
     projectId: string,
     payload: {
       operations: CloudSyncOperation[];
@@ -281,7 +533,7 @@ class SyncFailureOnceCloudPersistenceGateway extends FakeCloudPersistenceGateway
       throw new Error("transient_sync_failure");
     }
 
-    return super.syncProject(accountId, projectId, payload);
+    return super.syncProject(projectId, payload);
   }
 }
 
@@ -293,6 +545,17 @@ function createClock() {
     tick += 1;
     return `2026-04-15T00:00:${seconds}.000Z`;
   };
+}
+
+// 스냅샷에 레거시 샘플 에피소드 타이틀이 포함되는지 확인합니다.
+function hasLegacySampleEpisodeTitles(snapshot: StoryWorkspaceSnapshot) {
+  const episodeTitles = new Set(snapshot.episodes.map((episode) => episode.title));
+  return (
+    episodeTitles.has("Episode 12") &&
+    episodeTitles.has("Episode 11") &&
+    episodeTitles.has("Episode 10") &&
+    episodeTitles.has("Episode 9")
+  );
 }
 
 describe("workspace persistence controller", () => {
@@ -324,7 +587,314 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
-  it("imports on sign-in, syncs new nodes, and recovers from cloud state", async () => {
+  it("boots authenticated state from the current account scope instead of guest local cache", async () => {
+    const now = createClock();
+    const sharedStorage = new MemoryStorage();
+    const guestSeeder = new WorkspacePersistenceController({
+      auth: new StubAuthBoundary(sharedStorage, "test"),
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(sharedStorage, "test"),
+      now
+    });
+
+    await guestSeeder.initialize();
+    const guestSnapshot = cloneSnapshot(guestSeeder.getState()!.snapshot);
+    guestSeeder.dispose();
+
+    const remoteSeedController = new WorkspacePersistenceController({
+      auth: new StubAuthBoundary(new MemoryStorage(), "remote-seed"),
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(new MemoryStorage(), "remote-seed"),
+      now
+    });
+
+    await remoteSeedController.initialize();
+    const remoteSnapshot = cloneSnapshot(remoteSeedController.getState()!.snapshot);
+    remoteSeedController.dispose();
+
+    const auth = new ControlledAuthBoundary({
+      accountId: "account-a",
+      displayName: "Account A",
+      mode: "authenticated"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    cloud.seedProject("account-a", remoteSnapshot, {
+      cloudLinked: true,
+      entityId: remoteSnapshot.project.id,
+      lastImportedAt: now(),
+      lastSyncedAt: now(),
+      linkedAccountId: "account-a"
+    });
+
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(sharedStorage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const state = controller.getState()!;
+
+    expect(state.session.mode).toBe("authenticated");
+    expect(state.session.accountId).toBe("account-a");
+    expect(state.snapshot.project.id).toBe(remoteSnapshot.project.id);
+    expect(state.snapshot.project.id).not.toBe(guestSnapshot.project.id);
+    expect(state.linkage?.linkedAccountId).toBe("account-a");
+    expect(state.syncStatus).toBe("synced");
+
+    controller.dispose();
+  });
+
+  it("keeps a newly authenticated account empty when cloud projects do not exist", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new ControlledAuthBoundary({
+      accountId: "account-empty",
+      displayName: "Empty Account",
+      mode: "authenticated"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const state = controller.getState()!;
+
+    expect(state.session.mode).toBe("authenticated");
+    expect(state.session.accountId).toBe("account-empty");
+    expect(state.cloudProjectCount).toBe(0);
+    expect(state.linkage).toBeNull();
+    expect(state.snapshot.episodes).toHaveLength(0);
+    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(state.snapshot.temporaryDrawer).toHaveLength(0);
+    expect(state.syncStatus).toBe("authenticated-empty");
+    expect(state.registry.activeProjectId).toBeNull();
+    expect(state.registry.projects).toHaveLength(0);
+
+    controller.dispose();
+  });
+
+  it("creates the first authenticated project only after explicit empty-state action", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new ControlledAuthBoundary({
+      accountId: "account-empty",
+      displayName: "Empty Account",
+      mode: "authenticated"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    const createdProjectId = await controller.createWorkspaceFromEmptyState();
+    const state = controller.getState()!;
+    const cloudProjects = await cloud.listProjects();
+
+    expect(createdProjectId).toBeTruthy();
+    expect(state.syncStatus).toBe("synced");
+    expect(state.cloudProjectCount).toBe(1);
+    expect(state.linkage?.cloudLinked).toBe(true);
+    expect(state.linkage?.linkedAccountId).toBe("account-empty");
+    expect(state.snapshot.project.id).toBe(createdProjectId);
+    expect(state.snapshot.episodes).toHaveLength(1);
+    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(cloudProjects.projects).toHaveLength(1);
+    expect(cloudProjects.projects[0]?.projectId).toBe(createdProjectId);
+
+    controller.dispose();
+  });
+
+  it("does not import guest sample snapshot when signing in to a new authenticated account", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new ControlledAuthBoundary({
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    expect(hasLegacySampleEpisodeTitles(controller.getState()!.snapshot)).toBe(true);
+
+    auth.setNextSignInSession({
+      accountId: "account-new",
+      displayName: "Account New",
+      mode: "authenticated"
+    });
+    await controller.signIn();
+
+    const state = controller.getState()!;
+    const cloudProjects = await cloud.listProjects();
+
+    expect(state.session.mode).toBe("authenticated");
+    expect(state.session.accountId).toBe("account-new");
+    expect(state.syncStatus).toBe("authenticated-empty");
+    expect(state.linkage).toBeNull();
+    expect(state.snapshot.episodes).toHaveLength(0);
+    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(cloudProjects.projects).toHaveLength(0);
+
+    controller.dispose();
+  });
+
+  it("removes guest sample cache on sign-out and keeps it removed after guest reinitialize", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new ControlledAuthBoundary({
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    expect(hasLegacySampleEpisodeTitles(controller.getState()!.snapshot)).toBe(true);
+
+    auth.setNextSignInSession({
+      accountId: "account-a",
+      displayName: "Account A",
+      mode: "authenticated"
+    });
+    await controller.signIn();
+    await controller.signOut();
+
+    const signedOutState = controller.getState()!;
+    expect(signedOutState.session.mode).toBe("guest");
+    expect(hasLegacySampleEpisodeTitles(signedOutState.snapshot)).toBe(false);
+
+    controller.dispose();
+
+    const guestAuth = new ControlledAuthBoundary({
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    });
+    const reloadedController = new WorkspacePersistenceController({
+      auth: guestAuth,
+      cloud: new SessionScopedCloudPersistenceGateway(now, () => guestAuth.getCurrentAccountId()),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await reloadedController.initialize();
+
+    const reloadedState = reloadedController.getState()!;
+    expect(reloadedState.session.mode).toBe("guest");
+    expect(hasLegacySampleEpisodeTitles(reloadedState.snapshot)).toBe(false);
+
+    reloadedController.dispose();
+  });
+
+  it("replaces the visible authenticated snapshot with a fresh guest workspace on sign-out", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new ControlledAuthBoundary({
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    });
+    auth.setNextSignInSession({
+      accountId: "account-a",
+      displayName: "Account A",
+      mode: "authenticated"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    await controller.signIn();
+    const authenticatedProjectId = controller.getState()!.snapshot.project.id;
+
+    await controller.signOut();
+
+    const state = controller.getState()!;
+
+    expect(state.session.mode).toBe("guest");
+    expect(state.syncStatus).toBe("guest-local");
+    expect(state.snapshot.project.id).not.toBe(authenticatedProjectId);
+    expect(state.linkage).toBeNull();
+
+    controller.dispose();
+  });
+
+  it("does not carry the previous authenticated project across account switches", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new ControlledAuthBoundary({
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    auth.setNextSignInSession({
+      accountId: "account-a",
+      displayName: "Account A",
+      mode: "authenticated"
+    });
+    await controller.signIn();
+    const accountAProjectId = await controller.createWorkspaceFromEmptyState();
+
+    await controller.signOut();
+
+    auth.setNextSignInSession({
+      accountId: "account-b",
+      displayName: "Account B",
+      mode: "authenticated"
+    });
+    await controller.signIn();
+
+    const state = controller.getState()!;
+
+    expect(state.session.mode).toBe("authenticated");
+    expect(state.session.accountId).toBe("account-b");
+    expect(state.syncStatus).toBe("authenticated-empty");
+    expect(state.linkage).toBeNull();
+    expect(state.snapshot.project.id).not.toBe(accountAProjectId);
+
+    controller.dispose();
+  });
+
+  it("keeps sign-in empty by default, then syncs and recovers after explicit first project creation", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
     const auth = new StubAuthBoundary(storage, "test");
@@ -339,28 +909,37 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const initialProjectId = controller.getState()!.snapshot.project.id;
-
     await controller.signIn();
 
     let state = controller.getState()!;
 
     expect(state.session.mode).toBe("authenticated");
+    expect(state.syncStatus).toBe("authenticated-empty");
+    expect(state.linkage).toBeNull();
+    expect(state.cloudProjectCount).toBe(0);
+    expect(state.snapshot.episodes).toHaveLength(0);
+
+    const initialProjectId = await controller.createWorkspaceFromEmptyState();
+
+    state = controller.getState()!;
+
+    expect(initialProjectId).toBeTruthy();
     expect(state.linkage?.cloudLinked).toBe(true);
     expect(state.linkage?.linkedAccountId).toBe("demo-account");
     expect(state.cloudProjectCount).toBe(1);
+    expect(state.snapshot.episodes).toHaveLength(1);
 
     await controller.addSampleNode();
     await controller.flushNow();
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(state.snapshot.nodes).toHaveLength(1);
     expect(state.syncStatus).toBe("synced");
 
-    const remoteAfterSync = await cloud.getProject("demo-account", initialProjectId);
+    const remoteAfterSync = await cloud.getProject(initialProjectId!);
 
-    expect(remoteAfterSync.snapshot?.nodes).toHaveLength(2);
+    expect(remoteAfterSync.snapshot?.nodes).toHaveLength(1);
 
     const recoveredSnapshot = cloneSnapshot(remoteAfterSync.snapshot!);
 
@@ -374,13 +953,13 @@ describe("workspace persistence controller", () => {
       sourceNodeId: recoveredSnapshot.nodes.at(-1)?.id ?? null,
       updatedAt: now()
     });
-    cloud.seedProject("demo-account", recoveredSnapshot, remoteAfterSync.linkage!);
+    cloud.seedProject(recoveredSnapshot, remoteAfterSync.linkage!);
 
     await controller.recoverFromCloud();
 
     state = controller.getState()!;
 
-    expect(state.snapshot.temporaryDrawer).toHaveLength(2);
+    expect(state.snapshot.temporaryDrawer).toHaveLength(1);
     expect(state.snapshot.temporaryDrawer.at(-1)?.label).toBe("Recovered cloud beat");
 
     await controller.signOut();
@@ -390,7 +969,7 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
-  it("keeps the local snapshot visible when sign-in import fails", async () => {
+  it("keeps authenticated empty state visible when first project creation import fails", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
     const auth = new StubAuthBoundary(storage, "test");
@@ -403,17 +982,16 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const initialState = controller.getState()!;
-
     await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
 
     const state = controller.getState()!;
 
     expect(state.session.mode).toBe("authenticated");
     expect(state.syncStatus).toBe("error");
     expect(state.lastError).toBe("import_failed");
-    expect(state.snapshot.project.id).toBe(initialState.snapshot.project.id);
-    expect(state.snapshot.nodes).toHaveLength(initialState.snapshot.nodes.length);
+    expect(state.snapshot.episodes).toHaveLength(1);
+    expect(state.snapshot.nodes).toHaveLength(0);
     expect(state.linkage).toBeNull();
 
     controller.dispose();
@@ -485,6 +1063,42 @@ describe("workspace persistence controller", () => {
     state = controller.getState()!;
 
     expect(state.snapshot.nodes.find((node) => node.id === detailId)?.parentId).toBe(
+      secondMajorId
+    );
+
+    controller.dispose();
+  });
+
+  it("keeps a rewired parent when the node is moved with preserved parent intent", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const secondMajorId = (await controller.createNode("major", 1))!;
+    const minorId = (await controller.createNode("minor", 1))!;
+
+    await controller.rewireNode(minorId, secondMajorId);
+
+    let state = controller.getState()!;
+
+    expect(state.snapshot.nodes.find((node) => node.id === minorId)?.parentId).toBe(
+      secondMajorId
+    );
+
+    await controller.moveNode(minorId, 0, {
+      preserveParent: true
+    });
+
+    state = controller.getState()!;
+    expect(state.snapshot.nodes.find((node) => node.id === minorId)?.parentId).toBe(
       secondMajorId
     );
 
@@ -603,9 +1217,10 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
     await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
+    const nodeId = (await controller.createNode("major", 0))!;
 
     const initialDrawerCount = controller.getState()!.snapshot.temporaryDrawer.length;
-    const nodeId = controller.getState()!.snapshot.nodes[0]!.id;
     const objectId = await controller.createObject({
       category: "place",
       name: "Cafe Exit",
@@ -624,13 +1239,13 @@ describe("workspace persistence controller", () => {
 
     const state = controller.getState()!;
 
-    expect(state.snapshot.objects).toHaveLength(2);
+    expect(state.snapshot.objects).toHaveLength(1);
     expect(state.snapshot.nodes.find((node) => node.id === nodeId)?.objectIds).toContain(
       objectId
     );
     expect(state.snapshot.temporaryDrawer).toHaveLength(initialDrawerCount);
 
-    const remoteSnapshot = await cloud.getProject("demo-account", state.snapshot.project.id);
+    const remoteSnapshot = await cloud.getProject(state.snapshot.project.id);
 
     expect(remoteSnapshot.snapshot?.objects.some((object) => object.id === objectId)).toBe(
       true
@@ -643,12 +1258,9 @@ describe("workspace persistence controller", () => {
     await controller.flushNow();
 
     const deletedState = controller.getState()!;
-    const remoteAfterDelete = await cloud.getProject(
-      "demo-account",
-      deletedState.snapshot.project.id
-    );
+    const remoteAfterDelete = await cloud.getProject(deletedState.snapshot.project.id);
 
-    expect(deletedState.snapshot.objects).toHaveLength(1);
+    expect(deletedState.snapshot.objects).toHaveLength(0);
     expect(
       deletedState.snapshot.nodes.find((node) => node.id === nodeId)?.objectIds
     ).not.toContain(objectId);
@@ -674,8 +1286,9 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
     await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
 
-    const initialMajorId = controller.getState()!.snapshot.nodes[0]!.id;
+    const initialMajorId = (await controller.createNode("major", 0))!;
     const secondMajorId = (await controller.createNode("major", 1))!;
     const minorId = (await controller.createNode("minor", 1))!;
     const detailId = (await controller.createNode("detail", 2))!;
@@ -686,7 +1299,6 @@ describe("workspace persistence controller", () => {
 
     const state = controller.getState()!;
     const syncedOperations = cloud.getLastSyncOperations(
-      "demo-account",
       state.snapshot.project.id
     );
     const syncedNodeUpserts = syncedOperations
@@ -722,13 +1334,14 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
     await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
 
     const projectId = controller.getState()!.snapshot.project.id;
     const createdNodeId = await controller.createNode("minor", 1, {
       canvasX: 452,
       canvasY: 244
     });
-    const syncedOperations = cloud.getLastSyncOperations("demo-account", projectId);
+    const syncedOperations = cloud.getLastSyncOperations(projectId);
     const syncedNodeIds = syncedOperations
       .filter((operation): operation is Extract<CloudSyncOperation, { action: "upsert"; kind: "node" }> => {
         return operation.action === "upsert" && operation.kind === "node";
@@ -806,12 +1419,13 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
     await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
     await controller.addSampleNode();
     await controller.flushNow();
 
     let state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(state.snapshot.nodes).toHaveLength(1);
     expect(state.syncStatus).toBe("error");
     expect(state.lastError).toBe("transient_sync_failure");
 
@@ -819,13 +1433,13 @@ describe("workspace persistence controller", () => {
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(state.snapshot.nodes).toHaveLength(1);
     expect(state.syncStatus).toBe("synced");
     expect(state.lastError).toBeNull();
 
-    const remoteSnapshot = await cloud.getProject("demo-account", state.snapshot.project.id);
+    const remoteSnapshot = await cloud.getProject(state.snapshot.project.id);
 
-    expect(remoteSnapshot.snapshot?.nodes).toHaveLength(2);
+    expect(remoteSnapshot.snapshot?.nodes).toHaveLength(1);
 
     controller.dispose();
   });
@@ -890,8 +1504,9 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
     await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
 
-    const majorId = controller.getState()!.snapshot.nodes[0]!.id;
+    const majorId = (await controller.createNode("major", 0))!;
     const minorId = (await controller.createNode("minor", 1))!;
 
     await controller.updateNodeVisualState(majorId, {
@@ -907,7 +1522,7 @@ describe("workspace persistence controller", () => {
     const state = controller.getState()!;
     const majorNode = state.snapshot.nodes.find((node) => node.id === majorId);
     const minorNode = state.snapshot.nodes.find((node) => node.id === minorId);
-    const remoteSnapshot = await cloud.getProject("demo-account", state.snapshot.project.id);
+    const remoteSnapshot = await cloud.getProject(state.snapshot.project.id);
 
     expect(majorNode?.isCollapsed).toBe(true);
     expect(majorNode?.isImportant).toBe(true);

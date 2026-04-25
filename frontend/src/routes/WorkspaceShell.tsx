@@ -1,5 +1,6 @@
 ﻿// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -17,6 +18,7 @@ import type {
 } from "@scenaairo/shared";
 
 import { StubAuthBoundary } from "../auth/stubAuthBoundary";
+import { SessionAuthBoundary } from "../auth/sessionAuthBoundary";
 import { copy } from "../copy";
 import { loadFrontendEnv } from "../config/env";
 import { CloudPersistenceClient } from "../persistence/cloudClient";
@@ -89,17 +91,17 @@ import {
   getObjectToken,
   normalizeInlineObjectMentions,
   getClosedObjectWordQuery,
+  renderTextWithObjectMentions,
   buildDisplayedKeywordSuggestions,
   toggleInlineKeywordToken,
+  removeInlineSelectionWithTokenBoundaries,
+  removeAdjacentInlineToken,
   getObjectMentionSignature,
   deriveNodeContentMode
 } from "./workspace-shell/workspaceShell.inlineEditor";
 import { cloneCopiedNodes } from "./workspace-shell/workspaceShell.node";
-// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
-// 이 파일은 워크스페이스 캔버스와 편집 상호작용을 관리합니다.
 import {
-  parseStoredStringArray,
-  parseStoredNodeSizeMap
+  parseStoredStringArray
 } from "./workspace-shell/workspaceShell.storage";
 import {
   parseStoredFolderList,
@@ -109,7 +111,6 @@ import {
 } from "./workspace-shell/workspaceShell.sidebar";
 import { WorkspaceSidebarRecents } from "./workspace-shell/WorkspaceSidebarRecents";
 import { WorkspaceObjectPanel } from "./workspace-shell/WorkspaceObjectPanel";
-import { CanvasNodeCard } from "./workspace-shell/CanvasNodeCard";
 import { useEpisodeCanvasState } from "./workspace-shell/useEpisodeCanvasState";
 import type {
   DragPayload,
@@ -122,6 +123,31 @@ import type {
   ObjectMentionQuery
 } from "./workspace-shell/workspaceShell.types";
 
+// 로그인 실패 코드를 사용자 메시지로 변환합니다.
+function describeSignInError(error: unknown) {
+  const message = toMessage(error);
+  const code = message.split(":")[0];
+
+  switch (code) {
+    case "google_client_id_is_not_configured":
+    case "google_identity_sdk_not_loaded":
+      return copy.persistence.signInWithGoogleNotConfigured;
+    case "google_auth_not_configured":
+    case "google_prompt_not_displayed":
+    case "google_identity_script_load_failed":
+    case "google_prompt_skipped":
+    case "invalid_google_credential_response":
+    case "browser_environment_required":
+    case "google_login_request_failed":
+    case "google_token_verification_failed":
+    case "google_login_failed":
+    case "credential_required":
+      return copy.persistence.signInUnavailable;
+    default:
+      return message;
+  }
+}
+
 // 이 컴포넌트는 워크스페이스 화면 전체를 렌더링합니다.
 export function WorkspaceShell() {
   const isDrawerUiEnabled = false;
@@ -132,7 +158,12 @@ export function WorkspaceShell() {
   const [controller] = useState(
     () =>
       new WorkspacePersistenceController({
-        auth: new StubAuthBoundary(window.localStorage, env.storagePrefix),
+        auth:
+          env.runtimeMode === "standalone"
+            ? new StubAuthBoundary(window.localStorage, env.storagePrefix)
+            : new SessionAuthBoundary(env.apiBaseUrl, {
+                googleClientId: env.googleClientId
+              }),
         cloud:
           env.runtimeMode === "standalone"
             ? new StandaloneCloudPersistenceClient(window.localStorage, env.storagePrefix)
@@ -217,6 +248,8 @@ export function WorkspaceShell() {
   const [draggedSidebarEpisodeId, setDraggedSidebarEpisodeId] = useState<string | null>(null);
   const [pinnedObjectIds, setPinnedObjectIds] = useState<string[]>([]);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [authSignInError, setAuthSignInError] = useState<string | null>(null);
+  const [isAuthSignInInProgress, setIsAuthSignInInProgress] = useState(false);
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [canvasZoom, setCanvasZoom] = useState(1);
@@ -383,6 +416,10 @@ export function WorkspaceShell() {
 
   const activeProjectId = state?.snapshot.project.id ?? null;
   const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
+  const cacheScopeKey =
+    state && state.session.mode === "authenticated" && state.session.accountId
+      ? `account:${state.session.accountId}`
+      : "guest";
   const {
     laneDividerXs,
     nodeSizes,
@@ -395,8 +432,10 @@ export function WorkspaceShell() {
     timelineEndY
   } = useEpisodeCanvasState({
     activeEpisodeId,
+    cacheScopeKey,
     controller,
-    snapshotNodes: state?.snapshot.nodes ?? emptyNodes
+    snapshotNodes: state?.snapshot.nodes ?? emptyNodes,
+    storagePrefix: env.storagePrefix
   });
 
   useEffect(() => {
@@ -436,67 +475,47 @@ export function WorkspaceShell() {
       return;
     }
 
-    const foldersKey = `${env.storagePrefix}:sidebar-folders:${activeProjectId}`;
-    const pinsKey = `${env.storagePrefix}:folder-episode-pins:${activeProjectId}`;
+    const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeProjectId}`;
+    const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeProjectId}`;
     setSidebarFolders(parseStoredFolderList(window.localStorage.getItem(foldersKey)));
     setFolderEpisodePins(parseStoredEpisodePinMap(window.localStorage.getItem(pinsKey)));
-  }, [activeProjectId, env.storagePrefix]);
+  }, [activeProjectId, cacheScopeKey, env.storagePrefix]);
 
   useEffect(() => {
     if (!activeProjectId) {
       return;
     }
 
-    const foldersKey = `${env.storagePrefix}:sidebar-folders:${activeProjectId}`;
+    const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeProjectId}`;
     window.localStorage.setItem(foldersKey, JSON.stringify(sidebarFolders));
-  }, [activeProjectId, env.storagePrefix, sidebarFolders]);
+  }, [activeProjectId, cacheScopeKey, env.storagePrefix, sidebarFolders]);
 
   useEffect(() => {
     if (!activeProjectId) {
       return;
     }
 
-    const pinsKey = `${env.storagePrefix}:folder-episode-pins:${activeProjectId}`;
+    const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeProjectId}`;
     window.localStorage.setItem(pinsKey, JSON.stringify(folderEpisodePins));
-  }, [activeProjectId, env.storagePrefix, folderEpisodePins]);
+  }, [activeProjectId, cacheScopeKey, env.storagePrefix, folderEpisodePins]);
 
   useEffect(() => {
     if (!activeProjectId) {
       return;
     }
 
-    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}`;
+    const key = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeProjectId}`;
     setPinnedObjectIds(parseStoredStringArray(window.localStorage.getItem(key)));
-  }, [activeProjectId, env.storagePrefix]);
+  }, [activeProjectId, cacheScopeKey, env.storagePrefix]);
 
   useEffect(() => {
     if (!activeProjectId) {
       return;
     }
 
-    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}`;
+    const key = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeProjectId}`;
     window.localStorage.setItem(key, JSON.stringify(pinnedObjectIds));
-  }, [activeProjectId, env.storagePrefix, pinnedObjectIds]);
-
-  useEffect(() => {
-    if (!activeEpisodeId) {
-      setNodeSizes({});
-      return;
-    }
-
-    const key = `${env.storagePrefix}:node-sizes:${activeEpisodeId}`;
-    setNodeSizes(parseStoredNodeSizeMap(window.localStorage.getItem(key)));
-  }, [activeEpisodeId, env.storagePrefix, setNodeSizes]);
-
-  // undo 복원 시 같은 노드 id의 크기를 되살리기 위해 삭제된 엔트리를 즉시 정리하지 않습니다.
-  useEffect(() => {
-    if (!activeEpisodeId) {
-      return;
-    }
-
-    const key = `${env.storagePrefix}:node-sizes:${activeEpisodeId}`;
-    window.localStorage.setItem(key, JSON.stringify(nodeSizes));
-  }, [activeEpisodeId, env.storagePrefix, nodeSizes]);
+  }, [activeProjectId, cacheScopeKey, env.storagePrefix, pinnedObjectIds]);
 
   useEffect(() => {
     if (!isEpisodeSearchVisible || isSidebarCollapsed) {
@@ -1061,15 +1080,7 @@ export function WorkspaceShell() {
       window.removeEventListener("pointerup", clearPointerDrag);
       window.removeEventListener("pointercancel", clearPointerDrag);
     };
-  }, [
-    canvasZoom,
-    controller,
-    nodeSizesRef,
-    setLaneDividerXs,
-    setNodeSizes,
-    setTimelineEndY,
-    syncSelectedNodeInputHeight
-  ]);
+  }, [canvasZoom, controller]);
 
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -1165,10 +1176,49 @@ export function WorkspaceShell() {
     ? (episodesById.get(selectedObject.episodeId)?.title ?? copy.workspace.objectEpisodeMissing)
     : null;
   const isAuthenticated = state ? state.session.mode === "authenticated" : false;
+  const isGoogleSignInEnabled = env.isGoogleClientIdConfigured;
+  const signInLabel = isGoogleSignInEnabled
+    ? copy.persistence.signInWithGoogle
+    : copy.persistence.signIn;
   const isBusy =
     state === null
       ? true
-      : state.syncStatus === "booting" || state.syncStatus === "importing";
+      : state.syncStatus === "booting" ||
+        state.syncStatus === "importing" ||
+        state.syncStatus === "syncing";
+  const isAuthBusy = isBusy || isAuthSignInInProgress;
+
+  const handleSignInWithGoogle = useCallback(() => {
+    setIsMoreVisible(false);
+    setAuthSignInError(null);
+
+    if (!isGoogleSignInEnabled) {
+      setAuthSignInError(copy.persistence.signInWithGoogleNotConfigured);
+      return;
+    }
+
+    if (isAuthSignInInProgress) {
+      return;
+    }
+
+    setIsAuthSignInInProgress(true);
+
+    void (async () => {
+      try {
+        await controller.signIn();
+      } catch (error) {
+        setAuthSignInError(describeSignInError(error));
+      } finally {
+        setIsAuthSignInInProgress(false);
+      }
+    })();
+  }, [controller, isGoogleSignInEnabled, isAuthSignInInProgress]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      setAuthSignInError(null);
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (previousActiveEpisodeIdRef.current === activeEpisodeId) {
@@ -1255,12 +1305,7 @@ export function WorkspaceShell() {
     return () => {
       window.cancelAnimationFrame(animationId);
     };
-  }, [
-    inlineNodeTextDraft.length,
-    selectedNode,
-    selectedNodeIdentity,
-    syncSelectedNodeInputHeight
-  ]);
+  }, [inlineNodeTextDraft.length, selectedNode, selectedNodeIdentity]);
 
   useEffect(() => {
     if (!selectedNode) {
@@ -1279,13 +1324,7 @@ export function WorkspaceShell() {
     return () => {
       window.cancelAnimationFrame(animationId);
     };
-  }, [
-    selectedAiKeywords,
-    inlineNodeTextDraft,
-    selectedNode,
-    selectedNodeIdentity,
-    syncSelectedNodeInputHeight
-  ]);
+  }, [selectedAiKeywords, inlineNodeTextDraft, selectedNode, selectedNodeIdentity]);
 
   useEffect(() => {
     if (detailMode === "object" && selectedObject) {
@@ -1584,6 +1623,102 @@ export function WorkspaceShell() {
     );
   }
 
+  const isWorkspaceEmptyState =
+    state.snapshot.episodes.length === 0 &&
+    state.snapshot.nodes.length === 0 &&
+    state.snapshot.temporaryDrawer.length === 0;
+  const isAuthenticatedEmptyState =
+    state.session.mode === "authenticated" &&
+    state.linkage === null &&
+    isWorkspaceEmptyState &&
+    (state.cloudProjectCount === 0 ||
+      state.syncStatus === "authenticated-empty" ||
+      state.syncStatus === "error");
+  const isGuestEmptyState =
+    state.session.mode === "guest" &&
+    state.linkage === null &&
+    isWorkspaceEmptyState;
+  const isEmptyStateBusy =
+    isAuthSignInInProgress ||
+    state.syncStatus === "importing" ||
+    state.syncStatus === "syncing";
+
+  if (isAuthenticatedEmptyState || isGuestEmptyState) {
+    return (
+      <div className="workspace-shell workspace-shell-loading">
+        <section className="panel panel-canvas">
+          <span className="eyebrow">Center</span>
+          <h1>{copy.workspace.title}</h1>
+          <p>
+            {isAuthenticatedEmptyState
+              ? copy.persistence.authenticatedEmptyState
+              : copy.persistence.guestEmptyState}
+          </p>
+          <div className="control-row">
+            {isAuthenticatedEmptyState ? (
+              <>
+                <button
+                  disabled={isEmptyStateBusy}
+                  onClick={() => {
+                    setAuthSignInError(null);
+                    setDetailError(null);
+                    void controller.createWorkspaceFromEmptyState().catch((error) => {
+                      setDetailError(toMessage(error));
+                    });
+                  }}
+                  type="button"
+                >
+                  {copy.persistence.createProject}
+                </button>
+                <button
+                  className="button-secondary"
+                  disabled={isEmptyStateBusy}
+                  onClick={() => {
+                    setAuthSignInError(null);
+                    setDetailError(null);
+                    void controller.signOut().catch((error) => {
+                      setAuthSignInError(describeSignInError(error));
+                    });
+                  }}
+                  type="button"
+                >
+                  {copy.persistence.signOut}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  disabled={isEmptyStateBusy}
+                  onClick={() => {
+                    setDetailError(null);
+                    void controller.createEpisode().catch((error) => {
+                      setDetailError(toMessage(error));
+                    });
+                  }}
+                  type="button"
+                >
+                  {copy.persistence.addEpisodes}
+                </button>
+                <button
+                  className="button-secondary"
+                  disabled={isEmptyStateBusy}
+                  onClick={handleSignInWithGoogle}
+                  type="button"
+                >
+                  {isAuthSignInInProgress ? copy.persistence.signingIn : signInLabel}
+                </button>
+              </>
+            )}
+          </div>
+          <p>{describeCloudStatus(state)}</p>
+          {state.lastError ? <p>{`Error: ${state.lastError}`}</p> : null}
+          {authSignInError ? <p>{authSignInError}</p> : null}
+          {detailError ? <p>{detailError}</p> : null}
+        </section>
+      </div>
+    );
+  }
+
   const activeEpisode =
     state.snapshot.episodes.find((episode) => episode.id === activeEpisodeId) ??
     state.snapshot.episodes[0];
@@ -1729,7 +1864,10 @@ export function WorkspaceShell() {
       nodeSize,
       nodePlacements,
       nodeSizes,
-      visibleNodeIdsByLevel[node.level]
+      visibleNodeIdsByLevel[node.level],
+      {
+        gap: 0
+      }
     );
 
     nodePlacements.set(node.id, resolvedPlacement);
@@ -1776,6 +1914,7 @@ export function WorkspaceShell() {
   effectiveFirstDividerXRef.current = effectiveFirstDividerX;
   const deleteTarget =
     deleteTargetId !== null ? nodesById.get(deleteTargetId) ?? null : null;
+  const aiPanelNode = aiPanelNodeId ? nodesById.get(aiPanelNodeId) ?? null : null;
 
   // 이 함수는 같은 레벨 노드의 중심 Y를 기준으로 삽입 인덱스를 계산합니다.
   function getInsertIndexForCanvasY(
@@ -1799,6 +1938,11 @@ export function WorkspaceShell() {
       });
 
     if (sortedLevelNodesByCenterY.length === 0) {
+      if (excludedNodeId) {
+        const originalIndex = orderedNodes.findIndex((node) => node.id === excludedNodeId);
+        return originalIndex === -1 ? orderedNodes.length : originalIndex;
+      }
+
       return orderedNodes.length;
     }
 
@@ -1815,7 +1959,17 @@ export function WorkspaceShell() {
     const anchorNode = anchorEntry?.node;
 
     if (!anchorNode) {
-      return orderedNodes.length;
+      const lastSameLevelIndex = orderedNodes
+        .map((node, index) => ({ node, index }))
+        .filter(({ node }) => node.level === level && node.id !== excludedNodeId)
+        .at(-1)?.index;
+      if (lastSameLevelIndex === undefined) {
+        const originalIndex = orderedNodes.findIndex((node) => node.id === excludedNodeId);
+
+        return originalIndex === -1 ? orderedNodes.length : originalIndex;
+      }
+
+      return Math.min(lastSameLevelIndex + 1, orderedNodes.length);
     }
 
     const orderedIndex = orderedNodes.findIndex((node) => node.id === anchorNode.id);
@@ -2598,7 +2752,9 @@ export function WorkspaceShell() {
       resolvedPlacement.y + nodeSize.height / 2,
       nodeId
     );
-    await controller.moveNode(nodeId, targetInsertIndex);
+    await controller.moveNode(nodeId, targetInsertIndex, {
+      preserveParent: true
+    });
     setSelectedNodeId(nodeId);
     setRewireNodeId(null);
   }
@@ -2940,75 +3096,378 @@ export function WorkspaceShell() {
       extractDisplayText(displayText) || activeKeywords.join(" ") || getNodeHeadline(node);
 
     return (
-      <CanvasNodeCard
-        activeKeywords={activeKeywords}
-        activeObjectMentionIndex={activeObjectMentionIndex}
-        aiPanelNodeId={aiPanelNodeId}
-        applyObjectMentionSelection={applyObjectMentionSelection}
-        beginNodeDrag={beginNodeDrag}
-        beginNodeResize={beginNodeResize}
-        centerCanvasViewportOnNode={centerCanvasViewportOnNode}
-        displayBodyText={displayBodyText}
-        displayedKeywordSuggestions={displayedKeywordSuggestions}
-        displayText={displayText}
-        getViewportMenuPosition={getViewportMenuPosition}
-        hasVisibleKeywords={hasVisibleKeywords}
-        inlineNodeTextDraft={inlineNodeTextDraft}
-        isBusy={isBusy}
-        isDragging={isDragging}
-        isEndMajorNode={isEndMajorNode}
-        isHoveredRewireTarget={isHoveredRewireTarget}
-        isLoadingKeywords={isLoadingKeywords}
-        isNodeMoreMenuOpen={isNodeMoreMenuOpen}
-        isRewireSource={isRewireSource}
-        isRewireTarget={isRewireTarget}
-        isSelected={isSelected}
-        isStartMajorNode={isStartMajorNode}
+      <article
+        className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNode?.id === node.id ? " has-keyword-cloud" : ""}`}
+        data-testid={`node-${node.id}`}
+        draggable={false}
         key={node.id}
-        node={node}
-        nodeCardRefs={nodeCardRefs}
-        nodeMenuButtonRefs={nodeMenuButtonRefs}
-        nodeSize={nodeSize}
-        objectMentionQuery={objectMentionQuery}
-        objectMentionSuggestions={objectMentionSuggestions}
-        onRewireNode={async (sourceNodeId, targetNodeId) => {
-          await controller.rewireNode(sourceNodeId, targetNodeId);
-          rewireHoverTargetIdRef.current = null;
+        onClick={() => {
+          if (suppressNodeClickRef.current === node.id) {
+            suppressNodeClickRef.current = null;
+            return;
+          }
+
+          if (isRewireTarget && rewireNode) {
+            void controller.rewireNode(rewireNode.id, node.id);
+            setSelectedNodeId(rewireNode.id);
+            setRewireNodeId(null);
+            rewireHoverTargetIdRef.current = null;
+            setRewireHoverTargetId(null);
+            setRewirePreviewPoint(null);
+            return;
+          }
+
+          shouldFocusSelectedNodeRef.current = true;
+          setSelectedNodeId(node.id);
         }}
-        openKeywordSuggestions={openKeywordSuggestions}
-        persistInlineNodeContent={persistInlineNodeContent}
-        placement={placement}
-        recommendationError={recommendationError}
-        rewireNode={rewireNode}
-        selectedAiKeywords={selectedAiKeywords}
-        selectedNodeInputRef={selectedNodeInputRef}
-        selectedNodeTitle={selectedNodeTitle}
-        setActiveObjectMentionIndex={setActiveObjectMentionIndex}
-        setAiPanelNodeId={setAiPanelNodeId}
-        setInlineNodeTextDraft={setInlineNodeTextDraft}
-        setIsNodeMoreMenuOpen={setIsNodeMoreMenuOpen}
-        setNodeMenuPosition={setNodeMenuPosition}
-        setObjectMentionMenuPosition={setObjectMentionMenuPosition}
-        setObjectMentionQuery={setObjectMentionQuery}
-        setRecommendationError={setRecommendationError}
-        setRewireHoverTargetId={setRewireHoverTargetId}
-        setRewireNodeId={setRewireNodeId}
-        setRewirePreviewPoint={setRewirePreviewPoint}
-        setSelectedAiKeywords={setSelectedAiKeywords}
-        setSelectedNodeId={setSelectedNodeId}
-        shouldFocusSelectedNodeRef={shouldFocusSelectedNodeRef}
-        shouldShowPlaceholder={shouldShowPlaceholder}
-        suppressNodeClickRef={suppressNodeClickRef}
-        syncInlineObjectMentions={syncInlineObjectMentions}
-        syncSelectedNodeInputHeight={syncSelectedNodeInputHeight}
-        toggleAiKeyword={toggleAiKeyword}
-        toggleNodeCollapsed={async (nodeId, nextCollapsed) => {
-          await controller.updateNodeVisualState(nodeId, {
-            isCollapsed: nextCollapsed
-          });
+        onDoubleClick={(event) => {
+          if (isInteractiveTarget(event.target)) {
+            return;
+          }
+
+          shouldFocusSelectedNodeRef.current = true;
+          setSelectedNodeId(node.id);
+          centerCanvasViewportOnNode(node.id);
         }}
-        updateObjectMentionQueryFromInput={updateObjectMentionQueryFromInput}
-      />
+        onPointerDown={(event) => {
+          beginNodeDrag(node.id, node.level, event);
+        }}
+        ref={(element) => {
+          if (element) {
+            nodeCardRefs.current.set(node.id, element);
+          } else {
+            nodeCardRefs.current.delete(node.id);
+          }
+        }}
+        style={{
+          left: `${placement.x}px`,
+          top: `${placement.y}px`,
+          height: `${nodeSize.height}px`,
+          width: `${nodeSize.width}px`
+        } as CSSProperties}
+      >
+        <div className="node-card-header">
+          <span className="visually-hidden">{node.level} node</span>
+          <div className="node-header-actions">
+            <button
+              aria-label={node.isCollapsed ? copy.persistence.unfold : copy.persistence.fold}
+              className="button-secondary node-header-button"
+              disabled={isBusy}
+              onClick={(event) => {
+                event.stopPropagation();
+                void controller.updateNodeVisualState(node.id, {
+                  isCollapsed: !(node.isCollapsed ?? false)
+                });
+              }}
+              type="button"
+            >
+              {node.isCollapsed ? ">" : "<"}
+            </button>
+            <div className="node-menu-shell">
+              <button
+                aria-expanded={isSelected && isNodeMoreMenuOpen}
+                aria-label={`${copy.persistence.more} ${getNodeHeadline(node)}`}
+                className="button-secondary node-header-button node-more-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const nextOpen = !(isSelected && isNodeMoreMenuOpen);
+                  setSelectedNodeId(node.id);
+                  setIsNodeMoreMenuOpen(nextOpen);
+                  setNodeMenuPosition(
+                    nextOpen
+                      ? getViewportMenuPosition(
+                          (event.currentTarget as HTMLButtonElement).getBoundingClientRect()
+                        )
+                      : null
+                  );
+                }}
+                ref={(element) => {
+                  if (element) {
+                    nodeMenuButtonRefs.current.set(node.id, element);
+                  } else {
+                    nodeMenuButtonRefs.current.delete(node.id);
+                  }
+                }}
+                type="button"
+              >
+                ...
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="node-card-body">
+          {node.contentMode === "text" && activeKeywords.length > 0 ? (
+            <span aria-label="AI-assisted node" className="visually-hidden" />
+          ) : null}
+          <span
+            className="visually-hidden"
+            data-testid={isSelected ? "selected-node-title" : undefined}
+          >
+            {selectedNodeTitle}
+          </span>
+          {isSelected ? (
+            <div
+              className="node-inline-editor"
+              onClick={(event) => {
+                event.stopPropagation();
+                selectedNodeInputRef.current?.focus();
+              }}
+            >
+              <div className="node-inline-input-shell">
+                <div
+                  aria-hidden="true"
+                  className={`node-inline-preview${
+                    !displayBodyText && activeKeywords.length === 0 ? " is-placeholder" : ""
+                  }`}
+                >
+                  {displayText
+                    ? renderTextWithObjectMentions(displayText)
+                    : activeKeywords.length === 0
+                      ? "Type the beat"
+                      : "\u200b"}
+                </div>
+                <textarea
+                  className="node-inline-input"
+                  data-node-id={node.id}
+                  onBlur={() => {
+                    void persistInlineNodeContent(node, inlineNodeTextDraft, activeKeywords);
+                  }}
+                  onChange={(event) => {
+                    const nextValue = normalizeInlineObjectMentions(event.target.value);
+                    const nextCaret = event.target.selectionStart ?? nextValue.length;
+
+                    setInlineNodeTextDraft(nextValue);
+                    setSelectedAiKeywords(extractInlineKeywords(nextValue));
+                    updateObjectMentionQueryFromInput(event.currentTarget, nextValue);
+                    syncSelectedNodeInputHeight(node.id, event.currentTarget);
+                    syncInlineObjectMentions(node.id, nextValue);
+
+                    if (nextValue !== event.target.value) {
+                      window.requestAnimationFrame(() => {
+                        selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
+                      });
+                    }
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    updateObjectMentionQueryFromInput(event.currentTarget);
+                  }}
+                  onKeyDown={(event) => {
+                    const selectionStart = event.currentTarget.selectionStart ?? 0;
+                    const selectionEnd = event.currentTarget.selectionEnd ?? 0;
+                    const activeMentionSuggestion =
+                      objectMentionSuggestions[activeObjectMentionIndex] ?? null;
+
+                    if (selectionStart === selectionEnd) {
+                      const removableToken =
+                        event.key === "Backspace"
+                          ? removeAdjacentInlineToken(inlineNodeTextDraft, selectionStart, "backward")
+                          : event.key === "Delete"
+                            ? removeAdjacentInlineToken(inlineNodeTextDraft, selectionStart, "forward")
+                            : null;
+
+                      if (removableToken) {
+                        event.preventDefault();
+                        setInlineNodeTextDraft(removableToken.nextText);
+                        setSelectedAiKeywords(extractInlineKeywords(removableToken.nextText));
+                        syncInlineObjectMentions(node.id, removableToken.nextText);
+
+                        window.requestAnimationFrame(() => {
+                          selectedNodeInputRef.current?.focus();
+                          selectedNodeInputRef.current?.setSelectionRange(
+                            removableToken.nextCaret,
+                            removableToken.nextCaret
+                          );
+                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+                        });
+                        return;
+                      }
+                    }
+
+                    if (
+                      selectionStart !== selectionEnd &&
+                      (event.key === "Backspace" || event.key === "Delete")
+                    ) {
+                      const removableSelection = removeInlineSelectionWithTokenBoundaries(
+                        inlineNodeTextDraft,
+                        selectionStart,
+                        selectionEnd
+                      );
+
+                      if (removableSelection) {
+                        event.preventDefault();
+                        setInlineNodeTextDraft(removableSelection.nextText);
+                        setSelectedAiKeywords(extractInlineKeywords(removableSelection.nextText));
+                        syncInlineObjectMentions(node.id, removableSelection.nextText);
+
+                        window.requestAnimationFrame(() => {
+                          selectedNodeInputRef.current?.focus();
+                          selectedNodeInputRef.current?.setSelectionRange(
+                            removableSelection.nextCaret,
+                            removableSelection.nextCaret
+                          );
+                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+                        });
+                        return;
+                      }
+                    }
+
+                    if (
+                      activeMentionSuggestion &&
+                      (event.key === "Enter" ||
+                        event.key === "Tab" ||
+                        (objectMentionQuery?.mode === "mention" && event.key === " "))
+                    ) {
+                      event.preventDefault();
+                      applyObjectMentionSelection(
+                        activeMentionSuggestion.name,
+                        objectMentionQuery?.mode === "mention" && event.key === " "
+                      );
+                      return;
+                    }
+
+                    if (objectMentionSuggestions.length > 0 && event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setActiveObjectMentionIndex((current) =>
+                        Math.min(current + 1, objectMentionSuggestions.length - 1)
+                      );
+                      return;
+                    }
+
+                    if (objectMentionSuggestions.length > 0 && event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setActiveObjectMentionIndex((current) => Math.max(current - 1, 0));
+                      return;
+                    }
+
+                    if (objectMentionQuery !== null && event.key === "Escape") {
+                      event.preventDefault();
+                      setObjectMentionQuery(null);
+                      setObjectMentionMenuPosition(null);
+                      setActiveObjectMentionIndex(0);
+                    }
+                  }}
+                  onKeyUp={(event) => {
+                    updateObjectMentionQueryFromInput(event.currentTarget);
+                  }}
+                  placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
+                  ref={selectedNodeInputRef}
+                  rows={1}
+                  value={inlineNodeTextDraft}
+                />
+              </div>
+            </div>
+          ) : displayBodyText || hasVisibleKeywords ? (
+            <div className="node-text-flow">
+              {displayText ? (
+                <span className="node-inline-text">{renderTextWithObjectMentions(displayText)}</span>
+              ) : null}
+            </div>
+          ) : null}
+          {shouldShowPlaceholder ? (
+            <p className="node-simple-text is-placeholder">{displayText}</p>
+          ) : null}
+        </div>
+        {isSelected && !node.isFixed ? (
+          <>
+            <button
+              aria-label="Resize horizontally"
+              className="node-resize-handle node-resize-handle-horizontal"
+              onPointerDown={(event) => {
+                beginNodeResize(node.id, "horizontal", event);
+              }}
+              type="button"
+            />
+            <button
+              aria-label="Resize vertically"
+              className="node-resize-handle node-resize-handle-vertical"
+              onPointerDown={(event) => {
+                beginNodeResize(node.id, "vertical", event);
+              }}
+              type="button"
+            />
+            <button
+              aria-label="Resize diagonally"
+              className="node-resize-handle node-resize-handle-diagonal"
+              onPointerDown={(event) => {
+                beginNodeResize(node.id, "diagonal", event);
+              }}
+              type="button"
+            />
+          </>
+        ) : null}
+
+        {aiPanelNode?.id === node.id ? (
+          <section
+            className="recommendation-panel"
+            data-testid="keyword-cloud"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <div className="recommendation-panel-header">
+              <strong>{copy.persistence.keywordSuggestions}</strong>
+              <div className="recommendation-panel-actions">
+                <button
+                  className="button-secondary"
+                  disabled={isLoadingKeywords}
+                  onClick={() => {
+                    void openKeywordSuggestions(node, { refresh: true });
+                  }}
+                  type="button"
+                >
+                  {copy.persistence.keywordRefresh}
+                </button>
+                <button
+                  className="button-secondary"
+                  onClick={() => {
+                    setAiPanelNodeId(null);
+                    setRecommendationError(null);
+                  }}
+                  type="button"
+                >
+                  {copy.persistence.cancel}
+                </button>
+              </div>
+            </div>
+
+            {recommendationError ? (
+              <p className="recommendation-error">
+                {copy.persistence.recommendationFailed}: {recommendationError}
+              </p>
+            ) : null}
+
+            {isLoadingKeywords ? (
+              <p className="support-copy">Loading keyword suggestions...</p>
+            ) : displayedKeywordSuggestions.length > 0 ? (
+              <div className="keyword-suggestion-grid">
+                {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
+                  const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
+
+                  return (
+                    <button
+                      aria-pressed={isSelectedKeyword}
+                      className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
+                      data-testid={`keyword-suggestion-${suggestionIndex}`}
+                      key={suggestion.label}
+                      onClick={() => {
+                        void toggleAiKeyword(node, suggestion.label);
+                      }}
+                      type="button"
+                    >
+                      <span>{suggestion.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="support-copy">{copy.persistence.keywordCloudEmpty}</p>
+            )}
+          </section>
+        ) : null}
+
+      </article>
     );
   });
   const rewirePreviewLine =
@@ -3937,7 +4396,7 @@ export function WorkspaceShell() {
               >
                 <span aria-hidden="true" className="sidebar-profile-avatar sidebar-profile-avatar-icon" />
                 <span className="sidebar-profile-copy">
-                  <strong>{isAuthenticated ? profileName : copy.persistence.signIn}</strong>
+                  <strong>{isAuthenticated ? profileName : signInLabel}</strong>
                   <span>{isAuthenticated ? "Linked account" : "Guest workspace"}</span>
                 </span>
                 <span className="visually-hidden" data-testid="session-mode">
@@ -3955,6 +4414,21 @@ export function WorkspaceShell() {
               </button>
               {isMoreVisible ? (
                 <div className="sidebar-profile-menu">
+                  {!isAuthenticated && !isGoogleSignInEnabled ? (
+                    <p className="support-copy sidebar-profile-auth-error" role="status">
+                      {copy.persistence.signInWithGoogleNotConfigured}
+                    </p>
+                  ) : null}
+                  {!isAuthenticated && isAuthSignInInProgress ? (
+                    <p className="support-copy sidebar-profile-auth-error" role="status">
+                      {copy.persistence.signingIn}
+                    </p>
+                  ) : null}
+                  {!isAuthenticated && !isGoogleSignInEnabled ? null : authSignInError ? (
+                    <p className="support-copy sidebar-profile-auth-error" role="status">
+                      {authSignInError}
+                    </p>
+                  ) : null}
                   <div className="chip-row">
                     <span className="badge">{isAuthenticated ? "authenticated" : "guest"}</span>
                     <span className="badge" data-testid="cloud-status-sidebar">
@@ -3999,14 +4473,11 @@ export function WorkspaceShell() {
                     ) : (
                       <button
                         className="button-secondary"
-                        disabled={isBusy}
-                        onClick={() => {
-                          setIsMoreVisible(false);
-                          void controller.signIn();
-                        }}
+                        disabled={isAuthBusy || !isGoogleSignInEnabled}
+                        onClick={handleSignInWithGoogle}
                         type="button"
                       >
-                        {copy.persistence.signIn}
+                        {isAuthSignInInProgress ? copy.persistence.signingIn : signInLabel}
                       </button>
                     )}
                   </div>

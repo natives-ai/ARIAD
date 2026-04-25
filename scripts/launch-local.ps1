@@ -1,6 +1,53 @@
+﻿# 이 파일은 로컬 실행용 빌드/서버 기동과 준비 상태 확인을 수행합니다.
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
+
+# 지정한 .env 파일을 읽어 아직 없는 프로세스 환경 변수만 채웁니다.
+function Import-DotEnvFile {
+  param([string] $Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+
+  Get-Content -LiteralPath $Path | ForEach-Object {
+    $Line = $_.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($Line) -or $Line.StartsWith("#")) {
+      return
+    }
+
+    $SeparatorIndex = $Line.IndexOf("=")
+
+    if ($SeparatorIndex -le 0) {
+      return
+    }
+
+    $Key = $Line.Substring(0, $SeparatorIndex).Trim()
+    $Value = $Line.Substring($SeparatorIndex + 1).Trim()
+
+    if ([string]::IsNullOrWhiteSpace($Key)) {
+      return
+    }
+
+    if (
+      $Value.Length -ge 2 -and
+      (($Value.StartsWith('"') -and $Value.EndsWith('"')) -or ($Value.StartsWith("'") -and $Value.EndsWith("'")))
+    ) {
+      $Value = $Value.Substring(1, $Value.Length - 2)
+    }
+
+    if (-not (Test-Path -LiteralPath "Env:$Key")) {
+      Set-Item -LiteralPath "Env:$Key" -Value $Value
+    }
+  }
+}
+
+# backend/.env를 우선 로드하고 루트 .env를 fallback으로 적용합니다.
+Import-DotEnvFile -Path (Join-Path $Root "backend\.env")
+Import-DotEnvFile -Path (Join-Path $Root ".env")
+
 $RuntimeDir = Join-Path $Root ".codex-runtime\launcher"
 $BuildLogPath = Join-Path $RuntimeDir "build.log"
 $BackendLogPath = Join-Path $RuntimeDir "backend.log"

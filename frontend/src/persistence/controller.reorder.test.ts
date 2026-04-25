@@ -56,7 +56,7 @@ interface ReorderCloudOptions {
 
 // ?ъ젙???뚭? ?뚯뒪?몄슜 ?몃찓紐⑤━ ?대씪?곕뱶 寃뚯씠?몄썾?대? ?쒓났?⑸땲??
 class ReorderCloudPersistenceGateway {
-  private readonly accounts = new Map<string, Map<string, StoredProjectRecord>>();
+  private readonly projects = new Map<string, StoredProjectRecord>();
   private remainingSyncFailures: number;
 
   constructor(
@@ -66,8 +66,8 @@ class ReorderCloudPersistenceGateway {
     this.remainingSyncFailures = options.failSyncCount ?? 0;
   }
 
-  async getProject(accountId: string, projectId: string) {
-    const project = this.accounts.get(accountId)?.get(projectId);
+  async getProject(projectId: string) {
+    const project = this.projects.get(projectId);
 
     if (!project) {
       return {
@@ -83,15 +83,14 @@ class ReorderCloudPersistenceGateway {
   }
 
   async importProject(
-    accountId: string,
     payload: {
       linkage: ProjectLinkageMetadata | null;
       snapshot: StoryWorkspaceSnapshot;
     }
   ): Promise<ImportProjectResponse> {
-    const account = this.ensureAccount(accountId);
     const projectId = payload.snapshot.project.id;
-    const existing = account.get(projectId);
+    const fallbackAccountId = payload.linkage?.linkedAccountId ?? "demo-account";
+    const existing = this.projects.get(projectId);
 
     if (existing) {
       return {
@@ -106,10 +105,10 @@ class ReorderCloudPersistenceGateway {
       entityId: payload.linkage?.entityId ?? projectId,
       lastImportedAt: this.now(),
       lastSyncedAt: this.now(),
-      linkedAccountId: accountId
+      linkedAccountId: fallbackAccountId
     };
 
-    account.set(projectId, {
+    this.projects.set(projectId, {
       linkage,
       snapshot: cloneSnapshot(payload.snapshot)
     });
@@ -121,8 +120,8 @@ class ReorderCloudPersistenceGateway {
     };
   }
 
-  async listProjects(accountId: string) {
-    const projects = [...(this.accounts.get(accountId)?.values() ?? [])].map(
+  async listProjects() {
+    const projects = [...this.projects.values()].map(
       ({ linkage, snapshot }): GlobalProjectRegistryEntry => ({
         cloudLinked: linkage.cloudLinked,
         lastOpenedAt: snapshot.project.updatedAt,
@@ -140,7 +139,6 @@ class ReorderCloudPersistenceGateway {
   }
 
   async syncProject(
-    accountId: string,
     projectId: string,
     payload: {
       operations: CloudSyncOperation[];
@@ -151,8 +149,7 @@ class ReorderCloudPersistenceGateway {
       throw new Error("transient_sync_failure");
     }
 
-    const account = this.ensureAccount(accountId);
-    const current = account.get(projectId);
+    const current = this.projects.get(projectId);
 
     if (!current) {
       throw new Error("missing_project");
@@ -232,7 +229,7 @@ class ReorderCloudPersistenceGateway {
       lastSyncedAt: this.now()
     };
 
-    account.set(projectId, {
+    this.projects.set(projectId, {
       linkage,
       snapshot
     });
@@ -241,12 +238,6 @@ class ReorderCloudPersistenceGateway {
       linkage: { ...linkage },
       snapshot: cloneSnapshot(snapshot)
     };
-  }
-
-  // 怨꾩젙蹂??꾨줈?앺듃 ??μ냼瑜?蹂댁옣?⑸땲??
-  private ensureAccount(accountId: string) {
-    this.accounts.set(accountId, this.accounts.get(accountId) ?? new Map());
-    return this.accounts.get(accountId)!;
   }
 }
 
@@ -477,7 +468,7 @@ describe("workspace persistence controller reorder regression", () => {
       await controllerTwo.initialize();
 
       const state = controllerTwo.getState()!;
-      const remote = await cloud.getProject("demo-account", state.snapshot.project.id);
+      const remote = await cloud.getProject(state.snapshot.project.id);
       const remoteNodeIds = [...(remote.snapshot?.nodes ?? [])]
         .filter((node) => node.episodeId === state.snapshot.project.activeEpisodeId)
         .sort((left, right) => left.orderIndex - right.orderIndex)

@@ -1,4 +1,4 @@
-// 이 파일은 초기 로컬 워크스페이스 샘플 데이터를 생성합니다.
+﻿// 이 파일은 초기 로컬 워크스페이스 샘플 데이터를 생성합니다.
 import type {
   StoryWorkspaceSnapshot,
   TemporaryDrawerItem
@@ -11,6 +11,118 @@ function nextId(kind: PersistedEntityKind, createId?: (kind: PersistedEntityKind
   return createId ? createId(kind) : createStableId(kind);
 }
 
+const sampleProjectTitle = "Weekly Episode Workspace";
+const sampleProjectSummary = "A persistence baseline for a recurring webtoon episode workspace.";
+const sampleEpisodeTitles = ["Episode 12", "Episode 11", "Episode 10", "Episode 9"] as const;
+const sampleDrawerLabel = "Unused confrontation beat";
+const sampleObjectName = "Heroine's Mother";
+const sampleNodeKeywords = ["meeting", "pressure", "hesitation"] as const;
+
+// 샘플 워크스페이스 시그니처와 일치하는지 판별합니다.
+export function isLegacySampleWorkspaceSnapshot(snapshot: StoryWorkspaceSnapshot) {
+  if (snapshot.project.title !== sampleProjectTitle) {
+    return false;
+  }
+
+  if (snapshot.project.summary !== sampleProjectSummary) {
+    return false;
+  }
+
+  if (snapshot.episodes.length !== sampleEpisodeTitles.length) {
+    return false;
+  }
+
+  const episodeTitles = snapshot.episodes.map((episode) => episode.title);
+  if (!sampleEpisodeTitles.every((title) => episodeTitles.includes(title))) {
+    return false;
+  }
+
+  if (snapshot.nodes.length !== 1) {
+    return false;
+  }
+
+  const sampleNode = snapshot.nodes[0];
+  if (!sampleNode || sampleNode.level !== "major" || sampleNode.contentMode !== "keywords") {
+    return false;
+  }
+
+  if (
+    sampleNodeKeywords.length !== sampleNode.keywords.length ||
+    !sampleNodeKeywords.every((keyword) => sampleNode.keywords.includes(keyword))
+  ) {
+    return false;
+  }
+
+  if (snapshot.objects.length !== 1 || snapshot.objects[0]?.name !== sampleObjectName) {
+    return false;
+  }
+
+  if (
+    snapshot.temporaryDrawer.length !== 1 ||
+    snapshot.temporaryDrawer[0]?.label !== sampleDrawerLabel
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+// 이 함수는 인증 계정의 빈 상태를 표현하는 최소 워크스페이스 껍데기를 생성합니다.
+export function createEmptyWorkspaceShell(
+  now: string,
+  createId?: (kind: PersistedEntityKind) => string
+): StoryWorkspaceSnapshot {
+  return {
+    episodes: [],
+    nodes: [],
+    objects: [],
+    project: {
+      activeEpisodeId: "",
+      createdAt: now,
+      id: nextId("project", createId),
+      summary: "Create your first project to start structuring this account workspace.",
+      title: "New Workspace",
+      updatedAt: now
+    },
+    temporaryDrawer: []
+  };
+}
+
+// 이 함수는 최초 프로젝트 생성 액션에서 사용할 비샘플 기본 워크스페이스를 생성합니다.
+export function createStarterWorkspace(
+  now: string,
+  createId?: (kind: PersistedEntityKind) => string
+): StoryWorkspaceSnapshot {
+  const projectId = nextId("project", createId);
+  const activeEpisodeId = nextId("episode", createId);
+
+  return {
+    episodes: [
+      {
+        createdAt: now,
+        endpoint: "Define the closing turn for this episode.",
+        id: activeEpisodeId,
+        objective: "Outline the next structural beat for this episode.",
+        projectId,
+        title: "Episode 1",
+        updatedAt: now
+      }
+    ],
+    nodes: [],
+    objects: [],
+    project: {
+      activeEpisodeId,
+      createdAt: now,
+      id: projectId,
+      summary: "Start building your structure draft from an empty project.",
+      title: "My Workspace",
+      updatedAt: now
+    },
+    temporaryDrawer: []
+  };
+}
+
+// 이 함수는 게스트 모드에서 보여줄 샘플 워크스페이스를 생성합니다.
 export function createSampleWorkspace(
   now: string,
   createId?: (kind: PersistedEntityKind) => string
@@ -111,8 +223,8 @@ export function createSampleWorkspace(
       activeEpisodeId,
       createdAt: now,
       id: projectId,
-      summary: "A persistence baseline for a recurring webtoon episode workspace.",
-      title: "Weekly Episode Workspace",
+      summary: sampleProjectSummary,
+      title: sampleProjectTitle,
       updatedAt: now
     },
     temporaryDrawer: [drawerItem]

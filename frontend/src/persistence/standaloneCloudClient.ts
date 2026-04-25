@@ -36,6 +36,7 @@ function deleteById<T extends { id: string }>(items: T[], id: string) {
   return items.filter((item) => item.id !== id);
 }
 
+// 이 클래스는 스탠드얼론 환경을 위한 영속성 클라이언트를 제공합니다.
 export class StandaloneCloudPersistenceClient {
   constructor(
     private readonly storage: StorageLike,
@@ -43,11 +44,11 @@ export class StandaloneCloudPersistenceClient {
     private readonly now: () => string = () => new Date().toISOString()
   ) {}
 
-  async getProject(accountId: string, projectId: string): Promise<GetProjectResponse> {
+  async getProject(projectId: string): Promise<GetProjectResponse> {
     const linkage = this.getLinkage(projectId);
     const snapshot = this.getSnapshot(projectId);
 
-    if (!linkage || !snapshot || linkage.linkedAccountId !== accountId) {
+    if (!linkage || !snapshot) {
       return {
         linkage: null,
         snapshot: null
@@ -61,12 +62,12 @@ export class StandaloneCloudPersistenceClient {
   }
 
   async importProject(
-    accountId: string,
     payload: {
       linkage: ProjectLinkageMetadata | null;
       snapshot: StoryWorkspaceSnapshot;
     }
   ): Promise<ImportProjectResponse> {
+    const fallbackAccountId = payload.linkage?.linkedAccountId ?? "standalone";
     const timestamp = this.now();
     const existing = this.getLinkage(payload.snapshot.project.id);
     const linkage: ProjectLinkageMetadata = {
@@ -74,7 +75,7 @@ export class StandaloneCloudPersistenceClient {
       cloudLinked: true,
       lastImportedAt: existing?.lastImportedAt ?? timestamp,
       lastSyncedAt: timestamp,
-      linkedAccountId: accountId
+      linkedAccountId: fallbackAccountId
     };
 
     if (!existing) {
@@ -92,18 +93,15 @@ export class StandaloneCloudPersistenceClient {
     };
   }
 
-  async listProjects(accountId: string): Promise<ListProjectsResponse> {
+  async listProjects(): Promise<ListProjectsResponse> {
     const registry = this.getRegistry();
 
     return {
-      projects: registry.projects
-        .filter((project) => project.linkedAccountId === accountId)
-        .map((project) => ({ ...project }))
+      projects: registry.projects.map((project) => ({ ...project }))
     };
   }
 
   async syncProject(
-    accountId: string,
     projectId: string,
     payload: {
       operations: CloudSyncOperation[];
@@ -112,7 +110,7 @@ export class StandaloneCloudPersistenceClient {
     const current = this.getSnapshot(projectId);
     const currentLinkage = this.getLinkage(projectId);
 
-    if (!current || !currentLinkage || currentLinkage.linkedAccountId !== accountId) {
+    if (!current || !currentLinkage) {
       throw new Error("project_not_found");
     }
 

@@ -14,11 +14,11 @@
     "typecheck": "yarn run -T tsc -p tsconfig.json --noEmit",
     "lint": "yarn run -T eslint src --max-warnings=0",
     "test": "yarn run -T vitest run --exclude src/**/*.integration.test.ts",
-    "integration": "yarn run -T vitest run --pool threads src/persistence/routes.integration.test.ts src/recommendation/routes.integration.test.ts"
+    "integration": "yarn run -T vitest run --pool threads src/auth/routes.integration.test.ts src/persistence/routes.integration.test.ts src/recommendation/routes.integration.test.ts"
   },
   "dependencies": {
-    "@scenaairo/recommendation": "file:../recommendation",
-    "@scenaairo/shared": "file:../shared",
+    "@scenaairo/recommendation": "workspace:*",
+    "@scenaairo/shared": "workspace:*",
     "fastify": "^5.8.5",
     "mysql2": "^3.15.2"
   }

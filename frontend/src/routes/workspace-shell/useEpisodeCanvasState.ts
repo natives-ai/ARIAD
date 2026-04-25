@@ -1,4 +1,4 @@
-// 이 파일은 에피소드 단위 캔버스 UI 상태와 undo/redo 복원을 관리합니다.
+﻿// 이 파일은 에피소드 단위 캔버스 UI 상태를 관리합니다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StoryNode } from "@scenaairo/shared";
 
@@ -8,6 +8,11 @@ import {
   initialLaneDividerXs,
   initialTimelineEndY
 } from "./workspaceShell.constants";
+import {
+  parseStoredEpisodeCanvasUiState,
+  sanitizeEpisodeCanvasUiState,
+  type EpisodeCanvasUiState
+} from "./workspaceShell.storage";
 import type { NodeSize } from "./workspaceShell.types";
 
 type LaneDividerState = {
@@ -24,11 +29,13 @@ type EpisodeCanvasHistoryState = {
 
 type UseEpisodeCanvasStateParams = {
   activeEpisodeId: string | null;
+  cacheScopeKey: string;
   controller: Pick<WorkspacePersistenceController, "getState" | "redo" | "undo">;
   snapshotNodes: StoryNode[];
+  storagePrefix: string;
 };
 
-// 이 함수는 레인 분할 좌표 상태를 안전하게 복제합니다.
+// 상태 객체를 복사해 참조를 분리합니다.
 function cloneLaneDividerState(value: LaneDividerState): LaneDividerState {
   return {
     detailEdge: value.detailEdge,
@@ -37,14 +44,16 @@ function cloneLaneDividerState(value: LaneDividerState): LaneDividerState {
   };
 }
 
-// 이 함수는 노드 크기 맵을 깊은 복사합니다.
+// 노드 크기 맵을 복사하고 정렬해 저장 순서를 고정합니다.
 function cloneNodeSizeState(nodeSizes: Record<string, NodeSize>) {
   return Object.fromEntries(
-    Object.entries(nodeSizes).map(([nodeId, size]) => [nodeId, { ...size }])
+    (Object.entries(nodeSizes) as Array<[string, NodeSize]>)
+      .map(([nodeId, size]) => [nodeId, { ...size }] as const)
+      .sort(([left], [right]) => left.localeCompare(right))
   );
 }
 
-// 이 함수는 에피소드 캔버스 히스토리 키를 생성합니다.
+// 스냅샷 기반 undo/redo 복원 키를 만듭니다.
 function getEpisodeCanvasHistorySignature(
   episodeId: string | null,
   nodes: StoryNode[]
@@ -63,11 +72,42 @@ function getEpisodeCanvasHistorySignature(
   return `${episodeId}::${nodeSignature}`;
 }
 
-// 이 훅은 에피소드 캔버스 상태와 undo/redo 복원을 제공합니다.
+// 에피소드 UI 상태 저장키를 만듭니다.
+function getEpisodeCanvasUiStorageKey(
+  storagePrefix: string,
+  cacheScopeKey: string,
+  episodeId: string
+) {
+  return `${storagePrefix}:${cacheScopeKey}:episode-canvas-ui:${episodeId}`;
+}
+
+// 예전 스코프 미포함 저장키를 계산합니다.
+function getLegacyEpisodeCanvasUiStorageKey(storagePrefix: string, episodeId: string) {
+  return `${storagePrefix}:episode-canvas-ui:${episodeId}`;
+}
+
+// 로컬 저장값을 기본값으로 보정합니다.
+function sanitizeEpisodeCanvasUiDefaults(
+  storedState: EpisodeCanvasUiState,
+  activeEpisodeNodes: StoryNode[]
+) {
+  return sanitizeEpisodeCanvasUiState(storedState, activeEpisodeNodes, {
+    laneDividerXs: {
+      detailEdge: initialLaneDividerXs.detailEdge,
+      first: initialLaneDividerXs.first,
+      second: initialLaneDividerXs.second
+    },
+    timelineEndY: initialTimelineEndY
+  });
+}
+
+// 상태를 복원하고, undo/redo 동작 시 캔버스 UI를 되돌립니다.
 export function useEpisodeCanvasState({
   activeEpisodeId,
+  cacheScopeKey,
   controller,
-  snapshotNodes
+  snapshotNodes,
+  storagePrefix
 }: UseEpisodeCanvasStateParams) {
   const [laneDividerXs, setLaneDividerXs] = useState<LaneDividerState>(() => ({
     detailEdge: initialLaneDividerXs.detailEdge,
@@ -81,6 +121,7 @@ export function useEpisodeCanvasState({
   const nodeSizesRef = useRef<Record<string, NodeSize>>({});
   const timelineEndYRef = useRef(timelineEndY);
   const episodeCanvasHistoryRef = useRef<Record<string, EpisodeCanvasHistoryState>>({});
+  const isHydratingRef = useRef(false);
 
   const activeEpisodeNodes = useMemo(() => {
     if (!activeEpisodeId) {
@@ -94,7 +135,14 @@ export function useEpisodeCanvasState({
   const activeEpisodeCanvasHistorySignature = useMemo(() => {
     return getEpisodeCanvasHistorySignature(activeEpisodeId, activeEpisodeNodes);
   }, [activeEpisodeId, activeEpisodeNodes]);
+  const activeEpisodeNodeIds = useMemo(() => {
+    return activeEpisodeNodes
+      .map((node) => node.id)
+      .sort()
+      .join("|");
+  }, [activeEpisodeNodes]);
 
+  // 최신 상태를 ref로 항상 유지합니다.
   useEffect(() => {
     laneDividerXsRef.current = laneDividerXs;
   }, [laneDividerXs]);
@@ -103,6 +151,77 @@ export function useEpisodeCanvasState({
     timelineEndYRef.current = timelineEndY;
   }, [timelineEndY]);
 
+  useEffect(() => {
+    nodeSizesRef.current = nodeSizes;
+  }, [nodeSizes]);
+
+  // 에피소드 전환 시 localStorage에서 캔버스 UI를 복원합니다.
+  useEffect(() => {
+    isHydratingRef.current = true;
+
+    if (!activeEpisodeId) {
+      setLaneDividerXs({
+        detailEdge: initialLaneDividerXs.detailEdge,
+        first: initialLaneDividerXs.first,
+        second: initialLaneDividerXs.second
+      });
+      setTimelineEndY(initialTimelineEndY);
+      setNodeSizes({});
+      queueMicrotask(() => {
+        isHydratingRef.current = false;
+      });
+      return;
+    }
+
+    const storageKey = getEpisodeCanvasUiStorageKey(
+      storagePrefix,
+      cacheScopeKey,
+      activeEpisodeId
+    );
+    const legacyStorageKey = getLegacyEpisodeCanvasUiStorageKey(
+      storagePrefix,
+      activeEpisodeId
+    );
+    const storedValue =
+      window.localStorage.getItem(storageKey) ??
+      window.localStorage.getItem(legacyStorageKey);
+    const parsedState = parseStoredEpisodeCanvasUiState(storageKey
+      ? storedValue
+      : null,
+      {
+        laneDividerXs: {
+          detailEdge: initialLaneDividerXs.detailEdge,
+          first: initialLaneDividerXs.first,
+          second: initialLaneDividerXs.second
+        },
+        timelineEndY: initialTimelineEndY
+      });
+    const sanitizedState = sanitizeEpisodeCanvasUiDefaults(parsedState, activeEpisodeNodes);
+
+    setLaneDividerXs(cloneLaneDividerState(sanitizedState.laneDividerXs));
+    setTimelineEndY(sanitizedState.timelineEndY);
+    setNodeSizes(cloneNodeSizeState(sanitizedState.nodeSizes));
+
+    // 구버전 키 값이 있으면 현재 스코프 키로 승격해 다음부터 단일 경로를 사용합니다.
+    if (
+      window.localStorage.getItem(storageKey) === null &&
+      window.localStorage.getItem(legacyStorageKey) !== null
+    ) {
+      window.localStorage.setItem(storageKey, JSON.stringify(sanitizedState));
+    }
+
+    queueMicrotask(() => {
+      isHydratingRef.current = false;
+    });
+  }, [
+    activeEpisodeId,
+    activeEpisodeNodeIds,
+    cacheScopeKey,
+    storagePrefix,
+    activeEpisodeNodes
+  ]);
+
+  // 현재 시그니처 기준으로 undo/redo 복원용 UI 이력을 저장합니다.
   useEffect(() => {
     if (!activeEpisodeCanvasHistorySignature) {
       return;
@@ -115,6 +234,34 @@ export function useEpisodeCanvasState({
     };
   }, [activeEpisodeCanvasHistorySignature, laneDividerXs, nodeSizes, timelineEndY]);
 
+  // 에피소드별 캔버스 UI 상태를 localStorage에 영속화합니다.
+  useEffect(() => {
+    if (!activeEpisodeId || isHydratingRef.current) {
+      return;
+    }
+
+    const storageKey = getEpisodeCanvasUiStorageKey(
+      storagePrefix,
+      cacheScopeKey,
+      activeEpisodeId
+    );
+    const persistState: EpisodeCanvasUiState = {
+      laneDividerXs: cloneLaneDividerState(laneDividerXs),
+      nodeSizes: cloneNodeSizeState(nodeSizes),
+      timelineEndY
+    };
+
+    window.localStorage.setItem(storageKey, JSON.stringify(persistState));
+  }, [
+    activeEpisodeId,
+    cacheScopeKey,
+    laneDividerXs,
+    nodeSizes,
+    storagePrefix,
+    timelineEndY
+  ]);
+
+  // undo/redo 직후 해당 스냅샷 시그니처의 UI를 복원합니다.
   const restoreCanvasUiFromSnapshotHistory = useCallback(() => {
     const snapshot = controller.getState()?.snapshot;
 
@@ -150,10 +297,7 @@ export function useEpisodeCanvasState({
       return;
     }
 
-    if (
-      JSON.stringify(storedState.laneDividerXs) !==
-      JSON.stringify(laneDividerXsRef.current)
-    ) {
+    if (JSON.stringify(storedState.laneDividerXs) !== JSON.stringify(laneDividerXsRef.current)) {
       setLaneDividerXs(cloneLaneDividerState(storedState.laneDividerXs));
     }
 

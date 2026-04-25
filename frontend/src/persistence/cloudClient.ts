@@ -34,9 +34,9 @@ export class CloudPersistenceClient {
   ) {}
 
   // 클라우드 프로젝트 스냅샷을 조회합니다.
-  async getProject(accountId: string, projectId: string): Promise<GetProjectResponse> {
+  async getProject(projectId: string): Promise<GetProjectResponse> {
     const response = await this.fetchImpl(
-      `${this.apiBaseUrl}/persistence/accounts/${accountId}/projects/${projectId}`
+      `${this.apiBaseUrl}/persistence/projects/${projectId}`
     );
 
     return parseJsonResponse<GetProjectResponse>(response);
@@ -44,11 +44,10 @@ export class CloudPersistenceClient {
 
   // 로컬 프로젝트를 클라우드에 import 합니다.
   async importProject(
-    accountId: string,
     payload: ImportProjectRequest
   ): Promise<ImportProjectResponse> {
     const response = await this.fetchImpl(
-      `${this.apiBaseUrl}/persistence/accounts/${accountId}/import`,
+      `${this.apiBaseUrl}/persistence/import`,
       {
         body: JSON.stringify(payload),
         headers: {
@@ -62,9 +61,9 @@ export class CloudPersistenceClient {
   }
 
   // 계정의 클라우드 프로젝트 목록을 조회합니다.
-  async listProjects(accountId: string): Promise<ListProjectsResponse> {
+  async listProjects(): Promise<ListProjectsResponse> {
     const response = await this.fetchImpl(
-      `${this.apiBaseUrl}/persistence/accounts/${accountId}/projects`
+      `${this.apiBaseUrl}/persistence/projects`
     );
 
     return parseJsonResponse<ListProjectsResponse>(response);
@@ -72,12 +71,11 @@ export class CloudPersistenceClient {
 
   // 배치 동기화 연산을 클라우드에 전송합니다.
   async syncProject(
-    accountId: string,
     projectId: string,
     payload: SyncProjectRequest
   ): Promise<SyncProjectResponse> {
     const response = await this.fetchImpl(
-      `${this.apiBaseUrl}/persistence/accounts/${accountId}/projects/${projectId}/sync`,
+      `${this.apiBaseUrl}/persistence/projects/${projectId}/sync`,
       {
         body: JSON.stringify(payload),
         headers: {

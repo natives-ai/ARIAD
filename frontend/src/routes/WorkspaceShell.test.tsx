@@ -92,6 +92,80 @@ describe("workspace shell recommendation flow", () => {
       .sort((left, right) => Math.abs(left - targetX) - Math.abs(right - targetX))[0]!;
   }
 
+  // 연결선 경로에서 시작/끝 좌표를 추출해 parent-자식 관계를 확인합니다.
+  function parsePathCoordinates(d: string) {
+    const coordinates = d
+      .replace(/,/g, " ")
+      .replace(/[a-zA-Z]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .map((value) => Number.parseFloat(value))
+      .filter((value) => !Number.isNaN(value));
+
+    if (coordinates.length < 4) {
+      return null;
+    }
+
+    return {
+      endX: coordinates.at(-2) ?? null,
+      endY: coordinates.at(-1) ?? null,
+      startY: coordinates[1] ?? null,
+      startX: coordinates[0] ?? null
+    };
+  }
+
+  // 특정 노드의 연결선 시작점 Y를 읽어 부모의 연결 위치를 추적합니다.
+  function getConnectionLineStartYForNode(node: HTMLElement) {
+    const nodeMetrics = getNodeCardMetrics(node);
+    const targetX = nodeMetrics.left;
+    const targetY = nodeMetrics.top + nodeMetrics.height / 2;
+
+    const candidates = Array.from(document.querySelectorAll(".connection-layer path"))
+      .map((pathNode) => {
+        const className = pathNode.getAttribute("class") ?? "";
+
+        if (className === "connection-preview-line") {
+          return null;
+        }
+
+        const d = pathNode.getAttribute("d");
+
+        if (!d || !d.includes("C")) {
+          return null;
+        }
+
+        const parsed = parsePathCoordinates(d);
+
+        if (
+          !parsed ||
+          parsed.startX === null ||
+          parsed.startY === null ||
+          parsed.endX === null ||
+          parsed.endY === null
+        ) {
+          return null;
+        }
+
+        if (
+          Math.abs(parsed.endX - targetX) > 1.5 ||
+          Math.abs(parsed.endY - targetY) > 1.5
+        ) {
+          return null;
+        }
+
+        return parsed;
+      })
+      .filter((entry): entry is NonNullable<ReturnType<typeof parsePathCoordinates>> => entry !== null);
+
+    const firstMatch = candidates.at(0);
+
+    if (!firstMatch) {
+      throw new Error("connection_path_not_found_for_node");
+    }
+
+    return firstMatch.startY;
+  }
+
   function pressWorkspaceKey(
     key: string,
     options: Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> = {},
@@ -1259,6 +1333,118 @@ describe("workspace shell recommendation flow", () => {
     );
   }, 10000);
 
+  it("restores episode canvas UI state across reload", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      }
+    )) as typeof fetch;
+
+    const user = userEvent.setup();
+    const { unmount } = render(<WorkspaceShell />);
+    await screen.findByTestId("node-count");
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(2);
+    });
+
+    const resizedTarget = getMajorNodes().at(-1);
+
+    if (!(resizedTarget instanceof HTMLElement)) {
+      throw new Error("canvas_reload_target_major_not_found");
+    }
+
+    const targetTestId = resizedTarget.getAttribute("data-testid");
+    if (!targetTestId) {
+      throw new Error("canvas_reload_target_major_testid_missing");
+    }
+    const targetNodeId = targetTestId.replace(/^node-/, "");
+
+    const timelineEndBefore = parseCssPixels(
+      (screen.getByRole("button", { name: "Move timeline end" }) as HTMLElement).style.top
+    );
+    const secondDividerLeftBefore = parseCssPixels(
+      (screen.getByRole("button", { name: "Resize minor and detail lanes" }) as HTMLElement).style.left
+    );
+    const detailDividerLeftBefore = parseCssPixels(
+      (screen.getByRole("button", { name: "Resize minor detail lane edge" }) as HTMLElement).style.left
+    );
+    const nodeMetricsBefore = getNodeCardMetrics(screen.getByTestId(targetTestId));
+
+    const canvasUiStorageKey = await waitFor(() => {
+      const key = Object.keys(window.localStorage).find((entry) =>
+        entry.includes(":episode-canvas-ui:")
+      );
+
+      if (!key) {
+        throw new Error("episode_canvas_ui_storage_key_missing");
+      }
+
+      return key;
+    });
+    const baseCanvasUiState = JSON.parse(
+      window.localStorage.getItem(canvasUiStorageKey) ?? "{}"
+    ) as {
+      laneDividerXs?: { detailEdge?: number; first?: number; second?: number };
+    };
+    const customCanvasUiState = {
+      laneDividerXs: {
+        detailEdge: detailDividerLeftBefore + 24,
+        first: baseCanvasUiState.laneDividerXs?.first ?? 560,
+        second: secondDividerLeftBefore + 24
+      },
+      nodeSizes: {
+        [targetNodeId]: {
+          height: nodeMetricsBefore.height + 72,
+          width: nodeMetricsBefore.width + 64
+        }
+      },
+      timelineEndY: timelineEndBefore + 140
+    };
+    window.localStorage.setItem(canvasUiStorageKey, JSON.stringify(customCanvasUiState));
+
+    unmount();
+    render(<WorkspaceShell />);
+    await screen.findByTestId("node-count");
+
+    await waitFor(() => {
+      const restoredTimelineEndY = parseCssPixels(
+        (screen.getByRole("button", { name: "Move timeline end" }) as HTMLElement).style.top
+      );
+      const restoredSecondDividerLeft = parseCssPixels(
+        (screen.getByRole("button", { name: "Resize minor and detail lanes" }) as HTMLElement).style.left
+      );
+      const restoredDetailEdgeLeft = parseCssPixels(
+        (screen.getByRole("button", { name: "Resize minor detail lane edge" }) as HTMLElement).style.left
+      );
+      const restoredTargetNode = screen.getByTestId(targetTestId);
+      const restoredTargetMetrics = getNodeCardMetrics(restoredTargetNode);
+
+      expect(restoredTimelineEndY).toBeCloseTo(customCanvasUiState.timelineEndY, 2);
+      expect(
+        Math.abs(restoredSecondDividerLeft - customCanvasUiState.laneDividerXs.second)
+      ).toBeLessThanOrEqual(40);
+      expect(
+        Math.abs(restoredDetailEdgeLeft - customCanvasUiState.laneDividerXs.detailEdge)
+      ).toBeLessThanOrEqual(40);
+      expect(restoredTargetMetrics.width).toBeCloseTo(
+        customCanvasUiState.nodeSizes[targetNodeId]!.width,
+        2
+      );
+      expect(restoredTargetMetrics.height).toBeCloseTo(
+        customCanvasUiState.nodeSizes[targetNodeId]!.height,
+        2
+      );
+    });
+  }, 10000);
+
   it("supports keyboard copy, paste, undo, redo, and escape for the selected node", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -1642,6 +1828,95 @@ describe("workspace shell recommendation flow", () => {
 
     expect(Math.abs(timelineEndTopAfter - endNodeBottomAfter)).toBeLessThan(0.6);
     expect(screen.getByTestId(nonEndMajorNodeId)).not.toHaveClass("is-end-node");
+  });
+
+  it("recomputes timeline end when dragging the previous end major node away", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const endMajorBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(endMajorBefore instanceof HTMLElement)) {
+      throw new Error("previous_end_major_node_not_found");
+    }
+
+    const endMajorNodeIdBefore = endMajorBefore.getAttribute("data-testid");
+
+    if (!endMajorNodeIdBefore) {
+      throw new Error("previous_end_major_node_testid_missing");
+    }
+
+    const endMajorMetrics = getNodeCardMetrics(endMajorBefore);
+
+    await user.click(endMajorBefore);
+    fireEvent.pointerDown(
+      within(endMajorBefore).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: endMajorMetrics.left + 134,
+        clientY: endMajorMetrics.top + 20
+      }
+    );
+    fireEvent.pointerMove(window, {
+      clientX: endMajorMetrics.left + 134,
+      clientY: endMajorMetrics.top + 600
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(parseCssPixels(screen.getByTestId(endMajorNodeIdBefore).style.height)).toBeGreaterThan(500);
+    });
+
+    const resizedEndMajorBeforeDrag = screen.getByTestId(endMajorNodeIdBefore);
+    const resizedEndMetrics = getNodeCardMetrics(resizedEndMajorBeforeDrag);
+
+    fireEvent.pointerDown(resizedEndMajorBeforeDrag, {
+      button: 0,
+      clientX: resizedEndMetrics.left + 36,
+      clientY: resizedEndMetrics.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: resizedEndMetrics.left + 42,
+      clientY: resizedEndMetrics.top - 520
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const movedEndMajor = screen.getByTestId(endMajorNodeIdBefore);
+      expect(movedEndMajor).not.toHaveClass("is-end-node");
+    });
+
+    const timelineEndHandleAfter = screen.getByRole("button", { name: "Move timeline end" });
+    const newEndMajor = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(newEndMajor instanceof HTMLElement)) {
+      throw new Error("new_end_major_node_not_found");
+    }
+
+    const newEndBottom =
+      parseCssPixels(newEndMajor.style.top) + parseCssPixels(newEndMajor.style.height);
+    const timelineEndTopAfter = parseCssPixels((timelineEndHandleAfter as HTMLElement).style.top);
+
+    expect(Math.abs(timelineEndTopAfter - newEndBottom)).toBeLessThan(0.6);
   });
 
   // major 드래그 프리뷰와 커밋 결과가 동일한 위치를 유지하는지 검증합니다.
@@ -2377,7 +2652,7 @@ describe("workspace shell recommendation flow", () => {
       minorLaneAfter.left + minorLaneAfter.width + 0.6
     );
     expect(Math.abs(selectedNodeCenterAfter - minorLaneCenterAfter)).toBeLessThan(0.6);
-    expect(Math.abs(childPortLeftAfter - selectedNodeCenterAfter)).toBeLessThan(0.6);
+    expect(Math.abs(childPortLeftAfter - selectedNodeAfter.left)).toBeLessThan(0.6);
     expect(childPortLeftAfter).toBeGreaterThan(childPortLeftBefore);
   });
 
@@ -2644,6 +2919,114 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
+  it("keeps a dragged minor node connected to its current major parent when moved below another major", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+    const getMinorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-minor")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+      expect(getMinorNodes()).toHaveLength(0);
+    });
+
+    const majorNodesBefore = getMajorNodes();
+    const parentMajor = majorNodesBefore[0];
+    const targetMajor = majorNodesBefore.at(-1);
+
+    if (!(parentMajor instanceof HTMLElement) || !(targetMajor instanceof HTMLElement)) {
+      throw new Error("major_node_not_found_for_minor_parent_drag_test");
+    }
+
+    const parentMajorMetrics = getNodeCardMetrics(parentMajor);
+    const minorLaneMetrics = getLaneColumnMetrics("minor");
+
+    const minorLane = await screen.findByTestId("lane-minor");
+    fireEvent.click(minorLane, {
+      clientX: minorLaneMetrics.left + 10,
+      clientY: parentMajorMetrics.top + parentMajorMetrics.height / 2
+    });
+
+    await waitFor(() => {
+      expect(getMinorNodes()).toHaveLength(1);
+    });
+
+    const draggedMinor = getMinorNodes()[0];
+
+    if (!(draggedMinor instanceof HTMLElement)) {
+      throw new Error("created_minor_node_missing_after_parent_drag");
+    }
+
+    const draggedMinorId = draggedMinor.getAttribute("data-testid");
+
+    if (!draggedMinorId) {
+      throw new Error("created_minor_node_testid_missing");
+    }
+
+    const targetMajorMetrics = getNodeCardMetrics(targetMajor);
+    const draggedMinorMetricsBefore = getNodeCardMetrics(draggedMinor);
+    const parentMajorCenterBefore = parentMajorMetrics.top + parentMajorMetrics.height / 2;
+    const connectionStartYBefore = getConnectionLineStartYForNode(draggedMinor);
+
+    if (connectionStartYBefore === null) {
+      throw new Error("minor_connection_start_missing_before_parent_drag");
+    }
+
+    expect(Math.abs(connectionStartYBefore - parentMajorCenterBefore)).toBeLessThan(0.6);
+
+    fireEvent.pointerDown(draggedMinor, {
+      button: 0,
+      clientX: draggedMinorMetricsBefore.left + 32,
+      clientY: draggedMinorMetricsBefore.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: draggedMinorMetricsBefore.left + 32,
+      clientY: targetMajorMetrics.top + targetMajorMetrics.height + 80
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const afterMinor = screen.getByTestId(draggedMinorId);
+      const movedMinor = getNodeCardMetrics(afterMinor);
+      const connectionStartYAfter = getConnectionLineStartYForNode(afterMinor);
+      const parentMajorAfter = getMajorNodes()[0];
+      const targetMajorAfter = getMajorNodes().at(-1);
+
+      if (!(parentMajorAfter instanceof HTMLElement) || !(targetMajorAfter instanceof HTMLElement)) {
+        throw new Error("major_node_not_found_after_minor_parent_drag_test");
+      }
+
+      if (connectionStartYAfter === null) {
+        throw new Error("minor_connection_start_missing_after_parent_drag");
+      }
+
+      const parentMajorCenterAfter = getNodeCardMetrics(parentMajorAfter).top +
+        getNodeCardMetrics(parentMajorAfter).height / 2;
+      const targetMajorCenterAfter = getNodeCardMetrics(targetMajorAfter).top +
+        getNodeCardMetrics(targetMajorAfter).height / 2;
+
+      expect(movedMinor.top).toBeGreaterThan(targetMajorMetrics.top);
+      expect(Math.abs(connectionStartYAfter - parentMajorCenterAfter)).toBeLessThan(1.5);
+      expect(Math.abs(connectionStartYAfter - targetMajorCenterAfter)).toBeGreaterThan(1.5);
+      expect(movedMinor.top).toBeGreaterThan(draggedMinorMetricsBefore.top);
+    });
+  });
+
   it("reorders major nodes on drag and updates the end-node marker to the last ordered node", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -2705,6 +3088,103 @@ describe("workspace shell recommendation flow", () => {
 
       expect(lastMajorAfter?.getAttribute("data-testid")).toBe(firstMajorTestId);
       expect(lastMajorAfter).toHaveClass("is-end-node");
+    });
+  });
+
+  it("reorders a tall middle major node to the end and keeps the end marker aligned", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes()).toHaveLength(3);
+    });
+
+    const middleMajorBefore = getMajorNodes()[1];
+    const endMajorNodeBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(middleMajorBefore instanceof HTMLElement)) {
+      throw new Error("middle_major_node_not_found");
+    }
+
+    if (!(endMajorNodeBefore instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found_before_tall_swap");
+    }
+
+    const middleMajorTestId = middleMajorBefore.getAttribute("data-testid");
+    const previousEndMajorTestId = endMajorNodeBefore.getAttribute("data-testid");
+
+    if (!middleMajorTestId || !previousEndMajorTestId) {
+      throw new Error("major_node_testid_missing_for_tall_swap");
+    }
+
+    const middleMajorMetricsBeforeResize = getNodeCardMetrics(middleMajorBefore);
+    await user.click(middleMajorBefore);
+    fireEvent.pointerDown(
+      within(middleMajorBefore).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: middleMajorMetricsBeforeResize.left + 134,
+        clientY: middleMajorMetricsBeforeResize.top + 20
+      }
+    );
+    fireEvent.pointerMove(window, {
+      clientX: middleMajorMetricsBeforeResize.left + 134,
+      clientY: middleMajorMetricsBeforeResize.top + 680
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const resizedMiddleMajor = screen.getByTestId(middleMajorTestId);
+
+      expect(parseCssPixels(resizedMiddleMajor.style.height)).toBeGreaterThan(500);
+    });
+
+    const resizedMiddleMajor = screen.getByTestId(middleMajorTestId);
+    const endMajorMetricsBeforeDrag = getNodeCardMetrics(endMajorNodeBefore);
+    const middleMajorMetricsAfterResize = getNodeCardMetrics(resizedMiddleMajor);
+
+    fireEvent.pointerDown(resizedMiddleMajor, {
+      button: 0,
+      clientX: middleMajorMetricsAfterResize.left + 36,
+      clientY: middleMajorMetricsAfterResize.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: middleMajorMetricsAfterResize.left + 42,
+      clientY:
+        endMajorMetricsBeforeDrag.top +
+        endMajorMetricsBeforeDrag.height +
+        Math.max(220, endMajorMetricsBeforeDrag.height + 40)
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const majorNodesAfter = getMajorNodes();
+      const endMajorAfter = majorNodesAfter.at(-1);
+      const timelineEndHandle = screen.getByRole("button", { name: "Move timeline end" });
+      const swappedNode = screen.getByTestId(middleMajorTestId);
+      const swappedMetrics = getNodeCardMetrics(swappedNode);
+      const handleTop = parseCssPixels((timelineEndHandle as HTMLElement).style.top);
+      const swappedBottom = swappedMetrics.top + swappedMetrics.height;
+
+      expect(endMajorAfter?.getAttribute("data-testid")).toBe(middleMajorTestId);
+      expect(swappedNode).toHaveClass("is-end-node");
+      expect(Math.abs(swappedBottom - handleTop)).toBeLessThan(0.6);
+      expect(screen.getByTestId(previousEndMajorTestId)).not.toHaveClass("is-end-node");
     });
   });
 

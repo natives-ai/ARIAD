@@ -149,7 +149,10 @@ export function resolveNodeOverlapPlacement(
   nodeSize: NodeSize,
   resolvedPlacements: Map<string, { x: number; y: number }>,
   nodeSizes: Record<string, NodeSize>,
-  existingNodeIds?: Iterable<string>
+  existingNodeIds?: Iterable<string>,
+  options?: {
+    gap?: number;
+  }
 ) {
   const minY = stageTopPadding;
   const maxY = maxCanvasContentBottom - nodeSize.height;
@@ -157,6 +160,7 @@ export function resolveNodeOverlapPlacement(
     ...placement,
     y: Math.max(minY, Math.min(placement.y, maxY))
   };
+  const overlapGap = options?.gap ?? 18;
   const candidateNodeIds =
     existingNodeIds !== undefined ? [...existingNodeIds] : [...resolvedPlacements.keys()];
   const testedY = new Set<number>();
@@ -184,7 +188,8 @@ export function resolveNodeOverlapPlacement(
         targetPlacement,
         nodeSize,
         otherPlacement,
-        getNodeSize(nodeSizes, otherId)
+        getNodeSize(nodeSizes, otherId),
+        overlapGap
       );
     });
   }
@@ -212,6 +217,57 @@ export function resolveNodeOverlapPlacement(
   }
 
   return nextPlacement;
+}
+
+// 레인 내 실제 겹침이 있는지 확인합니다.
+export function hasLaneNodeOverlap(
+  nodeIds: string[],
+  nodePlacements: Map<string, { x: number; y: number }>,
+  nodeSizes: Record<string, NodeSize>
+) {
+  for (let index = 0; index < nodeIds.length; index += 1) {
+    const currentNodeId = nodeIds[index];
+
+    if (!currentNodeId) {
+      continue;
+    }
+
+    const currentPlacement = nodePlacements.get(currentNodeId);
+
+    if (!currentPlacement) {
+      continue;
+    }
+
+    const currentSize = getNodeSize(nodeSizes, currentNodeId);
+
+    for (let compareIndex = index + 1; compareIndex < nodeIds.length; compareIndex += 1) {
+      const compareNodeId = nodeIds[compareIndex];
+
+      if (!compareNodeId) {
+        continue;
+      }
+
+      const comparePlacement = nodePlacements.get(compareNodeId);
+
+      if (!comparePlacement) {
+        continue;
+      }
+
+      if (
+        rectanglesOverlap(
+          currentPlacement,
+          currentSize,
+          comparePlacement,
+          getNodeSize(nodeSizes, compareNodeId),
+          0
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 // 이 함수는 같은 레인 노드를 세로 간격 규칙으로 순차 재배치합니다.
@@ -327,8 +383,8 @@ export function buildConnectionLines(
 
     const parentSize = getNodeSize(nodeSizes, parentNode.id);
     const childSize = getNodeSize(nodeSizes, node.id);
-    const startX = parentPlacement.x + parentSize.width / 2;
-    const endX = childPlacement.x + childSize.width / 2;
+    const startX = parentPlacement.x + parentSize.width;
+    const endX = childPlacement.x;
     const startY = parentPlacement.y + parentSize.height / 2;
     const endY = childPlacement.y + childSize.height / 2;
     const bendDistance = Math.max(34, Math.abs(endX - startX) * 0.36);

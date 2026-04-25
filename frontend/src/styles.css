@@ -789,8 +789,14 @@ textarea {
 .lane-header p,
 .draft-panel p,
 .drawer-card p,
-.selection-card p {
+.selection-card p,
+.sidebar-profile-auth-error {
   color: var(--ink-soft);
+}
+
+.sidebar-profile-auth-error {
+  margin: 0.3rem 0 0;
+  color: #8d2f35;
 }
 
 .visually-hidden {

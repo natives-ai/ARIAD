@@ -1,7 +1,10 @@
 // 이 파일은 레인 세로 재배치 보정 로직을 검증합니다.
 import { describe, expect, it } from "vitest";
 
-import { applyLaneVerticalReflow } from "./workspaceShell.canvas";
+import {
+  applyLaneVerticalReflow,
+  hasLaneNodeOverlap
+} from "./workspaceShell.canvas";
 
 describe("workspace shell lane vertical reflow", () => {
   it("pushes lower lane nodes down to keep the minimum vertical gap", () => {
@@ -85,5 +88,33 @@ describe("workspace shell lane vertical reflow", () => {
 
     expect(nodePlacements.get("minor-first")?.y).toBe(220);
     expect(nodePlacements.get("minor-second")?.y).toBe(330);
+  });
+
+  it("detects overlap only when lane nodes are actually intersecting", () => {
+    const separatedPlacements = new Map<string, { x: number; y: number }>([
+      ["minor-a", { x: 480, y: 120 }],
+      ["minor-b", { x: 480, y: 240 }]
+    ]);
+    const overlappingPlacements = new Map<string, { x: number; y: number }>([
+      ["minor-a", { x: 480, y: 120 }],
+      ["minor-b", { x: 480, y: 170 }]
+    ]);
+    const nodeSizes = {
+      "minor-a": {
+        height: 96,
+        width: 268
+      },
+      "minor-b": {
+        height: 96,
+        width: 268
+      }
+    };
+
+    expect(
+      hasLaneNodeOverlap(["minor-a", "minor-b"], separatedPlacements, nodeSizes)
+    ).toBe(false);
+    expect(
+      hasLaneNodeOverlap(["minor-a", "minor-b"], overlappingPlacements, nodeSizes)
+    ).toBe(true);
   });
 });

@@ -1,3 +1,4 @@
+﻿// 이 파일은 recommendation 모듈의 요청/응답 및 컨텍스트 타입을 정의합니다.
 export type StoryNodeLevel = "major" | "minor" | "detail";
 
 export interface StorySnapshot {
@@ -17,9 +18,11 @@ export interface RecommendationContext {
   anchors: string[];
   constraints: string[];
   focus: string;
+  lockedFacts?: string[];
   nodeLevel: StoryNodeLevel;
   nodeText: string;
   objectAnchors: string[];
+  parentSummary?: string | null;
   selectedKeywords: string[];
 }
 

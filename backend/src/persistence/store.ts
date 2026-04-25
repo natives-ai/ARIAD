@@ -117,6 +117,7 @@ function normalizeSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnap
     normalizedNodes,
     normalizedEpisodes
   );
+  // canonicalization은 orderIndex만 재정렬하고 노드 배치/시각 필드는 그대로 유지합니다.
 
   return {
     ...clonedSnapshot,

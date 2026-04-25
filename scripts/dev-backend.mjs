@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+﻿import { spawn } from "node:child_process";
+import { loadBackendRuntimeEnv } from "./load-env.mjs";
 
 const forceCompat = process.env.SCENAAIRO_FORCE_COMPAT === "1";
 const startupWindowMs = 4000;
@@ -140,10 +141,24 @@ function startYarnCommand(commandArgs, options = {}) {
   };
 }
 
-async function runBuild(commandArgs) {
-  const session = startYarnCommand(commandArgs);
+async function runBuild(commandArgs, env) {
+  const session = startYarnCommand(commandArgs, { env });
   const result = await session.waitForStartup();
   if (result.code !== 0) {
+    if (result.output && result.output.trim().length > 0) {
+      process.stderr.write(
+        result.output.endsWith("\n") ? result.output : `${result.output}\n`
+      );
+    }
+    if (shouldUseCompat(result.output)) {
+      process.stderr.write(
+        "[SCENAAIRO] This shell blocks child process spawn. Try manual compat start:\n" +
+          "  yarn workspace @scenaairo/shared build\n" +
+          "  yarn workspace @scenaairo/recommendation build\n" +
+          "  yarn workspace @scenaairo/backend build\n" +
+          "  yarn node backend/dist/server.js\n"
+      );
+    }
     process.exit(result.code);
   }
 }
@@ -167,30 +182,41 @@ async function runLongRunningCommand(commandArgs, env = process.env) {
   return startupResult;
 }
 
-async function runCompatBackend() {
+async function runCompatBackend(runtimeEnv) {
   process.stderr.write(
     "[SCENAAIRO] Backend dev server hit a spawn restriction. Falling back to compatible dist mode.\n"
   );
 
-  await runBuild(["workspace", "@scenaairo/shared", "build"]);
-  await runBuild(["workspace", "@scenaairo/recommendation", "build"]);
-  await runBuild(["workspace", "@scenaairo/backend", "build"]);
+  await runBuild(["workspace", "@scenaairo/shared", "build"], runtimeEnv);
+  await runBuild(["workspace", "@scenaairo/recommendation", "build"], runtimeEnv);
+  await runBuild(["workspace", "@scenaairo/backend", "build"], runtimeEnv);
 
-  const result = await runLongRunningCommand(["node", "backend/dist/server.js"]);
+  const result = await runLongRunningCommand(["node", "backend/dist/server.js"], runtimeEnv);
   process.exit(result.code ?? 1);
 }
 
 async function main() {
+  const runtimeEnv = loadBackendRuntimeEnv(process.env, process.cwd());
+
   if (forceCompat) {
-    await runCompatBackend();
+    await runCompatBackend(runtimeEnv);
     return;
   }
 
-  const result = await runLongRunningCommand(["workspace", "@scenaairo/backend", "dev"]);
+  const result = await runLongRunningCommand(
+    ["workspace", "@scenaairo/backend", "dev"],
+    runtimeEnv
+  );
 
   if (shouldUseCompat(result.output)) {
-    await runCompatBackend();
+    await runCompatBackend(runtimeEnv);
     return;
+  }
+
+  if (result.code !== 0 && result.output && result.output.trim().length > 0) {
+    process.stderr.write(
+      result.output.endsWith("\n") ? result.output : `${result.output}\n`
+    );
   }
 
   process.exit(result.code ?? 1);

@@ -24,7 +24,7 @@ import {
   parseDrawerPayload,
   serializeDrawerPayload
 } from "./drawerPayload";
-import type { LocalPersistenceStore } from "./localStore";
+import type { LocalPersistenceStore, PersistenceCacheScope } from "./localStore";
 import { PersistenceFlushQueue } from "./flushQueue";
 import {
   clampInsertIndex,
@@ -35,12 +35,18 @@ import {
   normalizeNodeOrder,
   sortNodesByOrder
 } from "./nodeTree";
-import { createSampleWorkspace } from "./sampleWorkspace";
+import {
+  createEmptyWorkspaceShell,
+  createSampleWorkspace,
+  createStarterWorkspace,
+  isLegacySampleWorkspaceSnapshot
+} from "./sampleWorkspace";
 import { createStableId } from "./stableId";
 
 export type WorkspaceSyncStatus =
   | "booting"
   | "guest-local"
+  | "authenticated-empty"
   | "importing"
   | "syncing"
   | "synced"
@@ -69,17 +75,15 @@ export interface AuthBoundary {
 }
 
 export interface CloudPersistenceGateway {
-  getProject(accountId: string, projectId: string): Promise<GetProjectResponse>;
+  getProject(projectId: string): Promise<GetProjectResponse>;
   importProject(
-    accountId: string,
     payload: {
       linkage: ProjectLinkageMetadata | null;
       snapshot: StoryWorkspaceSnapshot;
     }
   ): Promise<ImportProjectResponse>;
-  listProjects(accountId: string): Promise<ListProjectsResponse>;
+  listProjects(): Promise<ListProjectsResponse>;
   syncProject(
-    accountId: string,
     projectId: string,
     payload: {
       operations: CloudSyncOperation[];
@@ -141,6 +145,15 @@ const defaultNodeHeightByLevel: Record<StoryNodeLevel, number> = {
 
 const nodeVerticalSpacing = 148;
 const minimumNodeVerticalGap = 8;
+
+// 게스트/계정별 로컬 캐시 스코프를 계산합니다.
+function getCacheScopeForSession(session: AuthSession): PersistenceCacheScope {
+  if (session.mode === "authenticated" && session.accountId) {
+    return `account:${session.accountId}`;
+  }
+
+  return "guest";
+}
 
 function cloneSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as StoryWorkspaceSnapshot;
@@ -642,7 +655,6 @@ export class WorkspacePersistenceController {
         }
 
         return this.dependencies.cloud.syncProject(
-          current.session.accountId,
           current.snapshot.project.id,
           {
             operations
@@ -693,37 +705,128 @@ export class WorkspacePersistenceController {
 
   async signIn() {
     const session = await this.dependencies.auth.signIn();
-    const current = this.requireState();
+    this.remoteSnapshot = null;
+    this.setLocalCacheScope(session);
+    this.reloadPendingSyncOperations();
 
+    if (session.mode === "authenticated" && session.accountId !== null) {
+      const loaded = this.loadOrSeedWorkspace({
+        seedIfMissing: false
+      });
+
+      if (loaded) {
+        this.resetHistory();
+        this.replaceState({
+          cloudProjectCount: null,
+          lastError: null,
+          linkage: loaded.linkage,
+          registry: loaded.registry,
+          session,
+          snapshot: loaded.snapshot,
+          syncStatus: "importing"
+        });
+
+        await this.connectAuthenticatedSession(
+          session,
+          loaded.snapshot,
+          loaded.linkage
+        );
+        return;
+      }
+
+      await this.bootstrapAuthenticatedSession(session);
+      return;
+    }
+
+    const current = this.requireState();
     this.replaceState({
       ...current,
-      session
-    });
-
-    await this.connectAuthenticatedSession(
-      session,
-      current.snapshot,
-      current.linkage
-    );
-  }
-
-  async signOut() {
-    await this.flushQueue.flushNow();
-    const session = await this.dependencies.auth.signOut();
-    const current = this.requireState();
-
-    this.replaceState({
-      ...current,
-      cloudProjectCount: null,
       lastError: null,
       session,
       syncStatus: "guest-local"
     });
   }
 
+  async signOut() {
+    await this.flushQueue.flushNow();
+    const session = await this.dependencies.auth.signOut();
+    this.remoteSnapshot = null;
+    this.setLocalCacheScope(session);
+    this.reloadPendingSyncOperations();
+    this.sanitizeGuestSampleCache();
+    const loaded = this.loadOrSeedWorkspace({
+      seedIfMissing: false
+    });
+    this.resetHistory();
+
+    if (loaded) {
+      this.replaceState({
+        cloudProjectCount: null,
+        lastError: null,
+        linkage: loaded.linkage,
+        registry: loaded.registry,
+        session,
+        snapshot: loaded.snapshot,
+        syncStatus: "guest-local"
+      });
+      return;
+    }
+
+    this.setGuestEmptyState(session, null);
+  }
+
+  // 빈 인증 상태에서 최초 프로젝트를 생성하고 계정 저장소에 연결합니다.
+  async createWorkspaceFromEmptyState() {
+    const current = this.requireState();
+
+    if (
+      current.session.mode !== "authenticated" ||
+      current.session.accountId === null ||
+      current.linkage?.cloudLinked
+    ) {
+      return null;
+    }
+
+    const starterSnapshot = normalizeWorkspaceSnapshotObjectBindings(
+      createStarterWorkspace(this.now(), this.createId)
+    );
+    this.resetHistory();
+
+    this.replaceState({
+      cloudProjectCount: current.cloudProjectCount,
+      lastError: null,
+      linkage: null,
+      registry: current.registry,
+      session: current.session,
+      snapshot: cloneSnapshot(starterSnapshot),
+      syncStatus: "importing"
+    });
+
+    await this.connectAuthenticatedSession(current.session, starterSnapshot, null);
+
+    return this.state?.snapshot.project.id ?? null;
+  }
+
   async reloadLocal() {
     const current = this.requireState();
-    const loaded = this.loadOrSeedWorkspace();
+    const loaded = this.loadOrSeedWorkspace({
+      seedIfMissing: current.session.mode !== "authenticated"
+    });
+
+    if (!loaded) {
+      if (current.session.mode === "authenticated") {
+        this.resetHistory();
+        this.setAuthenticatedEmptyState(current.session, {
+          cloudProjectCount: current.cloudProjectCount,
+          lastError: null,
+          syncStatus: "authenticated-empty"
+        });
+        return;
+      }
+
+      throw new Error("workspace_seed_failed");
+    }
+
     this.resetHistory();
 
     this.replaceState({
@@ -753,7 +856,6 @@ export class WorkspacePersistenceController {
 
     try {
       const response = await this.dependencies.cloud.getProject(
-        current.session.accountId,
         current.snapshot.project.id
       );
 
@@ -772,7 +874,7 @@ export class WorkspacePersistenceController {
       this.remoteSnapshot = cloneSnapshot(normalizedSnapshot);
       const registry = this.persistWorkspace(normalizedSnapshot, response.linkage);
       const cloudProjectCount = await this.getCloudProjectCount(
-        current.session.accountId
+        
       );
       this.resetHistory();
 
@@ -1554,7 +1656,13 @@ export class WorkspacePersistenceController {
   }
 
   // 이 함수는 노드 이동 intent를 반영하고 필요 시 서버 canonical 순서를 즉시 반영합니다.
-  async moveNode(nodeId: string, insertAtIndex: number) {
+  async moveNode(
+    nodeId: string,
+    insertAtIndex: number,
+    options: {
+      preserveParent?: boolean;
+    } = {}
+  ) {
     const current = this.requireState();
     const rootNode = current.snapshot.nodes.find((node) => node.id === nodeId);
 
@@ -1591,6 +1699,7 @@ export class WorkspacePersistenceController {
       adjustedIndex,
       subtreeIds
     );
+    const preserveParent = options.preserveParent === true;
     const reorderOrderHints = shouldUseCanonicalReorder
       ? createReorderOrderIndexHints(
           remainingNodes,
@@ -1603,15 +1712,18 @@ export class WorkspacePersistenceController {
         ? {
             ...node,
             orderIndex: reorderOrderHints[index] ?? node.orderIndex,
-            parentId: node.id === rootNode.id ? parentId : node.parentId,
+            parentId:
+              node.id === rootNode.id && !preserveParent
+                ? parentId
+                : node.parentId,
             updatedAt: timestamp
           }
-        : (node.id === rootNode.id
+        : node.id === rootNode.id && !preserveParent
             ? {
                 ...node,
                 parentId
               }
-            : node)
+            : node
     );
     const nextEpisodeNodes = shouldUseCanonicalReorder
       ? [
@@ -1961,7 +2073,50 @@ export class WorkspacePersistenceController {
 
   private async initializeInternal() {
     const session = await this.dependencies.auth.getCurrentSession();
-    const loaded = this.loadOrSeedWorkspace();
+    this.remoteSnapshot = null;
+    this.setLocalCacheScope(session);
+    this.reloadPendingSyncOperations();
+
+    if (session.mode === "authenticated" && session.accountId !== null) {
+      const loaded = this.loadOrSeedWorkspace({
+        seedIfMissing: false
+      });
+
+      if (loaded) {
+        this.resetHistory();
+        this.replaceState({
+          cloudProjectCount: null,
+          lastError: null,
+          linkage: loaded.linkage,
+          registry: loaded.registry,
+          session,
+          snapshot: loaded.snapshot,
+          syncStatus: "importing"
+        });
+
+        await this.connectAuthenticatedSession(
+          session,
+          loaded.snapshot,
+          loaded.linkage
+        );
+        return;
+      }
+
+      await this.bootstrapAuthenticatedSession(session);
+      return;
+    }
+
+    const removedGuestSampleCache = this.sanitizeGuestSampleCache();
+    const loaded = this.loadOrSeedWorkspace({
+      seedIfMissing: !removedGuestSampleCache
+    });
+
+    if (!loaded) {
+      this.resetHistory();
+      this.setGuestEmptyState(session, null);
+      return;
+    }
+
     this.resetHistory();
 
     this.replaceState({
@@ -1971,23 +2126,12 @@ export class WorkspacePersistenceController {
       registry: loaded.registry,
       session,
       snapshot: loaded.snapshot,
-      syncStatus:
-        session.mode === "authenticated" ? "importing" : "guest-local"
+      syncStatus: "guest-local"
     });
-
-    if (
-      session.mode === "authenticated" &&
-      session.accountId !== null
-    ) {
-      await this.connectAuthenticatedSession(
-        session,
-        loaded.snapshot,
-        loaded.linkage
-      );
-    }
   }
 
-  private loadOrSeedWorkspace() {
+  // 현재 스코프에서 저장된 워크스페이스를 읽고 필요하면 샘플을 시드합니다.
+  private loadOrSeedWorkspace(options: { seedIfMissing: boolean }) {
     const registry = this.dependencies.local.getRegistry();
     const activeProjectId =
       registry.activeProjectId ?? registry.projects[0]?.projectId ?? null;
@@ -2016,6 +2160,16 @@ export class WorkspacePersistenceController {
       }
     }
 
+    if (!options.seedIfMissing) {
+      return null;
+    }
+
+    return this.seedWorkspace();
+  }
+
+  // 현재 스코프에 새 샘플 워크스페이스를 생성해 저장합니다.
+  private seedWorkspace() {
+    const registry = this.dependencies.local.getRegistry();
     const snapshot = normalizeWorkspaceSnapshotObjectBindings(
       createSampleWorkspace(this.now(), this.createId)
     );
@@ -2032,6 +2186,170 @@ export class WorkspacePersistenceController {
       registry: nextRegistry,
       snapshot
     };
+  }
+
+  // 인증 계정의 프로젝트가 없을 때 빈 상태를 명시적으로 설정합니다.
+  private setAuthenticatedEmptyState(
+    session: AuthSession,
+    options: {
+      cloudProjectCount: number | null;
+      lastError: string | null;
+      syncStatus: "authenticated-empty" | "error";
+    }
+  ) {
+    const emptySnapshot = normalizeWorkspaceSnapshotObjectBindings(
+      createEmptyWorkspaceShell(this.now(), this.createId)
+    );
+    const emptyRegistry: GlobalProjectRegistry = {
+      activeProjectId: null,
+      projects: []
+    };
+
+    this.remoteSnapshot = null;
+    this.dependencies.local.saveRegistry(emptyRegistry);
+
+    this.replaceState({
+      cloudProjectCount: options.cloudProjectCount,
+      lastError: options.lastError,
+      linkage: null,
+      registry: emptyRegistry,
+      session,
+      snapshot: emptySnapshot,
+      syncStatus: options.syncStatus
+    });
+  }
+
+  // 게스트 모드에서 사용할 빈 워크스페이스 상태를 설정합니다.
+  private setGuestEmptyState(session: AuthSession, lastError: string | null) {
+    const emptySnapshot = normalizeWorkspaceSnapshotObjectBindings(
+      createEmptyWorkspaceShell(this.now(), this.createId)
+    );
+    const registryEntry = createRegistryEntry(emptySnapshot, null, this.now());
+    const emptyRegistry: GlobalProjectRegistry = {
+      activeProjectId: registryEntry.projectId,
+      projects: [registryEntry]
+    };
+
+    this.remoteSnapshot = null;
+    this.dependencies.local.saveSnapshot(emptySnapshot);
+    this.dependencies.local.saveRegistry(emptyRegistry);
+
+    this.replaceState({
+      cloudProjectCount: null,
+      lastError,
+      linkage: null,
+      registry: emptyRegistry,
+      session,
+      snapshot: emptySnapshot,
+      syncStatus: "guest-local"
+    });
+  }
+
+  // guest 캐시에서 알려진 샘플 워크스페이스를 식별해 제거합니다.
+  private sanitizeGuestSampleCache() {
+    if (this.dependencies.local.getCacheScope() !== "guest") {
+      return false;
+    }
+
+    const registry = this.dependencies.local.getRegistry();
+    let removedAny = false;
+    const nextProjects = registry.projects.filter((entry) => {
+      const snapshot = this.dependencies.local.getSnapshot(entry.projectId);
+
+      if (!snapshot) {
+        removedAny = true;
+        this.dependencies.local.removeLinkage(entry.projectId);
+        return false;
+      }
+
+      if (!isLegacySampleWorkspaceSnapshot(snapshot)) {
+        return true;
+      }
+
+      removedAny = true;
+      this.dependencies.local.removeSnapshot(entry.projectId);
+      this.dependencies.local.removeLinkage(entry.projectId);
+      return false;
+    });
+    const activeProjectId = nextProjects.some(
+      (entry) => entry.projectId === registry.activeProjectId
+    )
+      ? registry.activeProjectId
+      : (nextProjects[0]?.projectId ?? null);
+    const shouldSaveRegistry =
+      removedAny ||
+      nextProjects.length !== registry.projects.length ||
+      activeProjectId !== registry.activeProjectId;
+
+    if (shouldSaveRegistry) {
+      this.dependencies.local.saveRegistry({
+        activeProjectId,
+        projects: nextProjects
+      });
+    }
+
+    return removedAny;
+  }
+
+  // 인증 계정의 로컬/원격 워크스페이스를 선택해 초기 상태를 부트스트랩합니다.
+  private async bootstrapAuthenticatedSession(session: AuthSession) {
+    try {
+      const cloudProjects = await this.dependencies.cloud.listProjects();
+      const cloudProjectCount = cloudProjects.projects.length;
+      const preferredProjectId = [...cloudProjects.projects]
+        .sort(
+          (left, right) =>
+            right.updatedAt.localeCompare(left.updatedAt) ||
+            right.lastOpenedAt.localeCompare(left.lastOpenedAt)
+        )[0]?.projectId ?? null;
+
+      if (preferredProjectId) {
+        const response = await this.dependencies.cloud.getProject(preferredProjectId);
+
+        if (response.snapshot && response.linkage) {
+          const normalizedSnapshot = normalizeWorkspaceSnapshotObjectBindings(
+            response.snapshot
+          );
+          this.remoteSnapshot = cloneSnapshot(normalizedSnapshot);
+          const registry = this.persistWorkspace(normalizedSnapshot, response.linkage);
+          this.resetHistory();
+
+          this.replaceState({
+            cloudProjectCount,
+            lastError: null,
+            linkage: cloneLinkage(response.linkage),
+            registry,
+            session,
+            snapshot: cloneSnapshot(normalizedSnapshot),
+            syncStatus: "synced"
+          });
+
+          return;
+        }
+
+        this.resetHistory();
+        this.setAuthenticatedEmptyState(session, {
+          cloudProjectCount,
+          lastError: "cloud_project_unavailable",
+          syncStatus: "error"
+        });
+        return;
+      }
+
+      this.resetHistory();
+      this.setAuthenticatedEmptyState(session, {
+        cloudProjectCount,
+        lastError: null,
+        syncStatus: "authenticated-empty"
+      });
+    } catch (error) {
+      this.resetHistory();
+      this.setAuthenticatedEmptyState(session, {
+        cloudProjectCount: null,
+        lastError: this.toMessage(error),
+        syncStatus: "error"
+      });
+    }
   }
 
   private async connectAuthenticatedSession(
@@ -2056,8 +2374,10 @@ export class WorkspacePersistenceController {
         linkage?.cloudLinked &&
         linkage.linkedAccountId === session.accountId
       ) {
+        this.patchState({
+          syncStatus: "syncing"
+        });
         const response = await this.dependencies.cloud.getProject(
-          session.accountId,
           snapshot.project.id
         );
 
@@ -2066,7 +2386,6 @@ export class WorkspacePersistenceController {
           nextLinkage = response.linkage;
         } else {
           const imported = await this.dependencies.cloud.importProject(
-            session.accountId,
             {
               linkage,
               snapshot
@@ -2078,7 +2397,6 @@ export class WorkspacePersistenceController {
         }
       } else {
         const imported = await this.dependencies.cloud.importProject(
-          session.accountId,
           {
             linkage,
             snapshot
@@ -2092,7 +2410,7 @@ export class WorkspacePersistenceController {
       nextSnapshot = normalizeWorkspaceSnapshotObjectBindings(nextSnapshot);
       this.remoteSnapshot = cloneSnapshot(nextSnapshot);
       const registry = this.persistWorkspace(nextSnapshot, nextLinkage);
-      const cloudProjectCount = await this.getCloudProjectCount(session.accountId);
+      const cloudProjectCount = await this.getCloudProjectCount();
       this.resetHistory();
 
       this.replaceState({
@@ -2199,13 +2517,23 @@ export class WorkspacePersistenceController {
     return registry;
   }
 
-  private async getCloudProjectCount(accountId: string) {
+  private async getCloudProjectCount() {
     try {
-      const response = await this.dependencies.cloud.listProjects(accountId);
+      const response = await this.dependencies.cloud.listProjects();
       return response.projects.length;
     } catch {
       return null;
     }
+  }
+
+  // 현재 인증 세션에 맞는 로컬 캐시 스코프를 적용합니다.
+  private setLocalCacheScope(session: AuthSession) {
+    this.dependencies.local.setCacheScope(getCacheScopeForSession(session));
+  }
+
+  // 현재 로컬 캐시 스코프의 pending sync를 플러시 큐에 다시 적재합니다.
+  private reloadPendingSyncOperations() {
+    this.flushQueue.replacePending(this.dependencies.local.getPendingSyncOperations());
   }
 
   private requireState() {

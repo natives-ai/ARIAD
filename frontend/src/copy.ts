@@ -1,4 +1,4 @@
-// 이 파일은 워크스페이스 UI 문구 상수를 정의합니다.
+﻿// 이 파일은 워크스페이스 UI 문구 상수를 정의합니다.
 export const copy = {
   auth: {
     callbackDescription:
@@ -8,6 +8,8 @@ export const copy = {
   persistence: {
     addDrawerItem: "Add Drawer Item",
     addEpisodes: "Add Episodes",
+    authenticatedEmptyState:
+      "No cloud projects exist for this account yet. Create your first project to start editing.",
     addToFolder: "Add to Folder",
     addSampleNode: "Add Sample Node",
     attachHere: "Attach Here",
@@ -16,6 +18,7 @@ export const copy = {
     closeSidebar: "Close Sidebar",
     cloudStatusLabel: "Cloud Status",
     createNode: "Create Node",
+    createProject: "Create Project",
     delete: "Delete",
     deleteObject: "Delete Object",
     deleteConfirmation:
@@ -34,6 +37,8 @@ export const copy = {
     drawerOpen: "Drawer open",
     empty: "Empty",
     guestMode: "Guest mode keeps work in local cache only.",
+    guestEmptyState:
+      "No guest project is open yet. Create your first local episode or sign in to load account projects.",
     important: "Important",
     keywordCloudEmpty: "No keyword suggestions are available yet for this node.",
     keywordSelectionHint: "Select one or more keywords, then save them or unlock sentence suggestions.",
@@ -61,6 +66,12 @@ export const copy = {
     saveObject: "Save Object",
     searchStories: "Search",
     signIn: "Sign In",
+    signingIn: "Signing In",
+    signInUnavailable:
+      "Sign-in is unavailable. Set VITE_GOOGLE_CLIENT_ID (and backend GOOGLE_CLIENT_ID) to enable Google sign-in.",
+    signInWithGoogleNotConfigured:
+      "Google sign-in is not configured. Configure both frontend and backend Google client IDs.",
+    signInWithGoogle: "Sign in with Google",
     signOut: "Sign Out",
     dissolveEpisode: "Dissolve",
     folderEpisode: "Folder",

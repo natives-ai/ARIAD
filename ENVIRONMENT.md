@@ -15,8 +15,11 @@ Rules:
 
 Current baseline:
 - `frontend/.env.example` documents browser-facing values.
-- `backend/.env.example` documents server runtime values.
-- `recommendation/.env.example` documents recommendation-module expectations.
+- `backend/.env.example` is the runtime source-of-truth for server and recommendation provider values.
+- Google login configuration must be aligned:
+  - `frontend`: `VITE_GOOGLE_CLIENT_ID`
+  - `backend`: `GOOGLE_CLIENT_ID`
+  - Both must point to the same Google OAuth client ID for `/api/auth/google/login` session exchange to succeed.
 
 Deferred:
 - auth provider choice

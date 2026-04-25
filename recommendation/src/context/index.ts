@@ -1,13 +1,16 @@
+﻿// 이 파일은 요청 본문을 provider 입력용 추천 컨텍스트로 변환합니다.
 import type {
   KeywordRecommendationRequest,
   RecommendationContext,
   SentenceRecommendationRequest
 } from "../contracts/index.js";
 
+// 문자열 목록을 trim/중복 제거해 정규화합니다.
 function cleanList(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+// 추천 요청에서 provider 공통 컨텍스트를 조립합니다.
 export function buildRecommendationContext(
   request: KeywordRecommendationRequest | SentenceRecommendationRequest
 ): RecommendationContext {
@@ -42,9 +45,11 @@ export function buildRecommendationContext(
       "Keep the output concise and useful inside an episode-structure editor."
     ],
     focus,
+    lockedFacts: lockedFacts.slice(0, 4),
     nodeLevel: request.story.nodeLevel,
     nodeText: request.story.nodeText.trim(),
     objectAnchors,
+    parentSummary: request.story.parentSummary?.trim() || null,
     selectedKeywords
   };
 }

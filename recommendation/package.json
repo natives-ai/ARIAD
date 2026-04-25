@@ -19,5 +19,9 @@
     "typecheck": "yarn run -T tsc -p tsconfig.json --noEmit",
     "lint": "yarn run -T eslint src --max-warnings=0",
     "test": "yarn run -T vitest run --exclude dist/**"
+  },
+  "dependencies": {
+    "@google/genai": "*",
+    "openai": "^4.0.0"
   }
 }

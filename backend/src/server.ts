@@ -1,19 +1,58 @@
+// 이 파일은 백엔드 서버 프로세스를 시작하고 시작/실패 로그를 출력합니다.
+
 import { pathToFileURL } from "node:url";
 
 import { buildApp } from "./app.js";
-import { loadBackendEnv } from "./config/env.js";
+import { loadBackendEnv, loadBackendEnvFiles } from "./config/env.js";
+import { createBackendLogger } from "./logging/console.js";
 
+// 백엔드 서버를 시작하고 주요 실행 상태를 기록합니다.
 async function startServer() {
+  loadBackendEnvFiles();
   const env = loadBackendEnv();
+  const logger = createBackendLogger({
+    level: env.logLevel,
+    scope: "server"
+  });
   const app = buildApp();
+
+  logger.info("backend_starting", {
+    googleAuthConfigured: env.auth.googleClientId !== null,
+    host: "127.0.0.1",
+    logLevel: env.logLevel,
+    persistenceDriver: env.persistenceDriver,
+    port: env.port,
+    requestLogging: env.logRequests
+  });
+
+  if (env.auth.googleClientId === null) {
+    logger.warn("google_auth_not_configured", {
+      endpoint: "/api/auth/google/login",
+      hint: "Set GOOGLE_CLIENT_ID in backend/.env"
+    });
+  }
 
   try {
     await app.listen({
       host: "127.0.0.1",
       port: env.port
     });
+    logger.info("backend_listening", {
+      persistenceDriver: env.persistenceDriver,
+      url: `http://127.0.0.1:${env.port}`
+    });
   } catch (error) {
-    app.log.error(error);
+    if (error instanceof Error) {
+      logger.error("backend_start_failed", {
+        message: error.message,
+        port: env.port
+      });
+    } else {
+      logger.error("backend_start_failed", {
+        message: "unknown_error",
+        port: env.port
+      });
+    }
     process.exit(1);
   }
 }

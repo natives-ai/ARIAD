@@ -16,7 +16,9 @@
   ],
   "scripts": {
     "dev:frontend": "node scripts/dev-frontend.mjs",
-    "dev:backend": "node scripts/dev-backend.mjs",
+    "dev:backend": "node scripts/dev-backend-compat.mjs",
+    "dev:backend:watch": "node scripts/dev-backend.mjs",
+    "dev:backend:compat": "node scripts/dev-backend-compat.mjs",
     "host:local": "powershell -ExecutionPolicy Bypass -File scripts/launch-local.ps1",
     "db:mysql:up": "docker compose -f docker-compose.mysql.yml up -d",
     "db:mysql:down": "docker compose -f docker-compose.mysql.yml down",

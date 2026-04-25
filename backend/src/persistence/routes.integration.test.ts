@@ -119,8 +119,11 @@ describe("persistence routes integration", () => {
 
     expect(firstImport.statusCode).toBe(200);
     expect(firstImport.json().created).toBe(true);
+    expect(firstImport.headers.deprecation).toBe("true");
     expect(secondImport.statusCode).toBe(200);
     expect(secondImport.json().created).toBe(false);
+    expect(secondImport.headers.deprecation).toBe("true");
+    expect(listProjects.headers.deprecation).toBe("true");
     expect(listProjects.json().projects).toHaveLength(1);
 
     await app.close();
@@ -333,6 +336,96 @@ describe("persistence routes integration", () => {
     expect(syncedEpisodeBetaNodes.map((node) => node.orderIndex)).toEqual([1]);
     expect(persistedEpisodeAlphaNodes.map((node) => node.orderIndex)).toEqual([1, 2, 3]);
     expect(persistedEpisodeBetaNodes.map((node) => node.orderIndex)).toEqual([1]);
+
+    await app.close();
+  });
+
+  it("preserves node canvas and visual fields when canonical order is recomputed", async () => {
+    const app = buildApp({ cloudDataDir });
+    await app.ready();
+
+    const snapshot = createSnapshot("2026-04-15T00:00:00.000Z");
+    const anchoredSnapshot: StoryWorkspaceSnapshot = {
+      ...snapshot,
+      nodes: [
+        {
+          ...snapshot.nodes[0]!,
+          canvasX: 180,
+          canvasY: 96,
+          isCollapsed: false,
+          isFixed: true,
+          isImportant: true,
+          orderIndex: 50
+        }
+      ]
+    };
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        linkage: null,
+        snapshot: anchoredSnapshot
+      } satisfies ImportProjectRequest,
+      url: "/api/persistence/accounts/demo-account/import"
+    });
+
+    const syncResponse = await app.inject({
+      method: "POST",
+      payload: {
+        operations: [
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              canvasX: 420,
+              canvasY: 244,
+              contentMode: "text",
+              createdAt: "2026-04-15T04:00:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_beta",
+              isCollapsed: true,
+              isFixed: false,
+              isImportant: false,
+              keywords: [],
+              level: "minor",
+              objectIds: [],
+              orderIndex: 50,
+              parentId: "node_alpha",
+              projectId: "project_alpha",
+              text: "A second node that triggers canonical reindexing.",
+              updatedAt: "2026-04-15T04:00:00.000Z"
+            }
+          }
+        ] satisfies CloudSyncOperation[]
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+    const getResponse = await app.inject({
+      method: "GET",
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha"
+    });
+
+    expect(syncResponse.statusCode).toBe(200);
+    expect(getResponse.statusCode).toBe(200);
+
+    const persistedSnapshot = getResponse.json().snapshot as StoryWorkspaceSnapshot;
+    const nodeAlpha = persistedSnapshot.nodes.find((node) => node.id === "node_alpha");
+    const nodeBeta = persistedSnapshot.nodes.find((node) => node.id === "node_beta");
+
+    expect(nodeAlpha?.orderIndex).toBe(1);
+    expect(nodeBeta?.orderIndex).toBe(2);
+
+    expect(nodeAlpha?.canvasX).toBe(180);
+    expect(nodeAlpha?.canvasY).toBe(96);
+    expect(nodeAlpha?.isFixed).toBe(true);
+    expect(nodeAlpha?.isImportant).toBe(true);
+    expect(nodeAlpha?.isCollapsed).toBe(false);
+
+    expect(nodeBeta?.canvasX).toBe(420);
+    expect(nodeBeta?.canvasY).toBe(244);
+    expect(nodeBeta?.isFixed).toBe(false);
+    expect(nodeBeta?.isImportant).toBe(false);
+    expect(nodeBeta?.isCollapsed).toBe(true);
 
     await app.close();
   });

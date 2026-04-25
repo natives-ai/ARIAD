@@ -6,6 +6,8 @@ export interface FrontendEnv {
   apiBaseUrl: string;
   appEnv: FrontendEnvironment;
   authCallbackPath: string;
+  googleClientId: string | null;
+  isGoogleClientIdConfigured: boolean;
   runtimeMode: FrontendRuntimeMode;
   storagePrefix: string;
 }
@@ -28,6 +30,8 @@ export function loadFrontendEnv(): FrontendEnv {
         : import.meta.env.VITE_API_BASE_URL ?? "/api",
     appEnv: parseAppEnv(import.meta.env.VITE_APP_ENV),
     authCallbackPath: import.meta.env.VITE_AUTH_CALLBACK_PATH ?? "/auth/callback",
+    googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() || null,
+    isGoogleClientIdConfigured: Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()),
     runtimeMode,
     storagePrefix: import.meta.env.VITE_STORAGE_PREFIX ?? "scenaairo"
   };
