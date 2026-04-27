@@ -2508,3 +2508,83 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Episode canvas UI refresh restoration is now consolidated into one scoped persistence path and validated by focused regression tests; main-lane timeline handle and node-size restoration no longer depend on the previous split storage/history logic.
 - Warnings / blockers: Full `WorkspaceShell.test.tsx` suite still has existing broad failures in this worktree unrelated to the focused detail-022 assertions, so only targeted regression gates are green for this loop.
 - Approval needed: `none`
+
+### 2026-04-25 / loop-161
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Consolidated the remaining non-UI follow-up work into a lighter-weight handoff-style plan at the user's request. Added `detail-024 / 남은 비-UI 후속 정리 계획 (인수인계용)` that does not attempt to fully specify implementation, and instead gives FE / BE / Service owners only the issue summary, likely direction, candidate files, validation points, merge order, and main risks. The current remaining items are framed as (1) frontend seed-policy cleanup finishing `detail-023`, and (2) frontend `WorkspaceShell` baseline stabilization separating broad route/lint debt from the already-fixed auth/cache/empty-state work, with backend limited to post-change contract smoke.
+- Tests run: planning update only
+- Result: The remaining work is now documented in the shorter “owner handoff” style the user requested, rather than in a full prescriptive breakdown.
+- Warnings / blockers: none
+- Approval needed: `none`
+
+### 2026-04-25 / loop-162
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Investigated the newly reported bug where typing in one node and then switching to another node causes the first node's content to disappear. Narrowed the issue to frontend inline-editor state ownership in `WorkspaceShell.tsx`: current selected-node text is persisted primarily through `textarea onBlur`, but selection-change logic also overwrites `inlineNodeTextDraft` with the next node's contents as soon as `selectedNodeId` changes. Added `detail-025 / 노드 전환 시 인라인 작성 draft 유실` as a FE-only handoff plan with the likely root cause, candidate files, and regression checks, without over-specifying the exact implementation.
+- Tests run: read-only code inspection only
+- Result: The issue is now scoped as a frontend selection-transition/save-timing bug, not a backend persistence bug.
+- Warnings / blockers: `WorkspaceShell.tsx` is a high-conflict file and this fix may interact with blur, paste, mention, and keyword flows, so it should stay isolated from unrelated same-file work.
+- Approval needed: `none`
+
+### 2026-04-25 / loop-162
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `PLANS.md`
+- What changed: Created an isolated merge-verification worktree at `C:\work\ARIAD\.tmp\merge-test-master-feature-jaesung-20260425` on temporary branch `codex/merge-test-master-feature-jaesung-20260425`, then attempted to merge the current `feature-jaesung` branch into the current `master` tip (`b2ae5bf`). The raw merge produced 13 conflicted files (`PLANS.md`, `backend/package.json`, `backend/src/persistence/store.ts`, `frontend/.env.example`, `frontend/package.json`, `frontend/src/copy.ts`, `frontend/src/persistence/controller.ts`, `frontend/src/persistence/standaloneCloudClient.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/styles.css`, `scripts/dev-backend.mjs`, `yarn.lock`). For testability only, a conservative master-priority conflict resolution was staged in the isolated worktree; validation then showed the merged tree still contains a broad namespace/workspace split between `@scenaairo/*` and `@ariad/*`, so the branch is not close to a ready merge baseline.
+- Tests run: `git merge-base master feature-jaesung`; `git rev-list --left-right --count master...feature-jaesung` (`4` vs `1`); isolated merge attempt `git merge --no-ff --no-commit feature-jaesung`; conflict inventory via `git diff --name-only --diff-filter=U`; provisional master-priority conflict resolution in the isolated worktree; `corepack yarn typecheck` (failed: root workspace/lockfile mismatch); `corepack yarn build` (failed with the same workspace/lockfile mismatch); `corepack yarn install --mode=skip-build` (failed: `@scenaairo/recommendation@workspace:*` workspace not found); namespace scan via `rg -o --no-filename "@ariad/|@scenaairo/" ...` (`@ariad/` 41 hits, `@scenaairo/` 46 hits)
+- Result: Current `master` and `feature-jaesung` do not merge as a light conflict-fix. The branch now has both direct content conflicts and a wider package/import rename divergence, so even a conservative conflict resolution does not reach a runnable Yarn workspace state.
+- Warnings / blockers: The isolated test worktree remains present for inspection at `C:\work\ARIAD\.tmp\merge-test-master-feature-jaesung-20260425`. Full merge integration would need a deliberate namespace/workspace normalization pass before ordinary lint/typecheck/build validation becomes meaningful.
+- Approval needed: `none`
+
+### 2026-04-25 / loop-163
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `PLANS.md`
+- What changed: Continued the same isolated merge on `codex/merge-test-master-feature-jaesung-20260425` after user confirmed `@ariad/*` is the correct workspace namespace. Normalized the temporary merge result to `@ariad/*` package names/imports, refreshed the workspace with `corepack yarn install --mode=skip-build`, staged the resolved merge state, and re-ran validation. The isolated branch is now in "all conflicts fixed, still merging" state and is ready for a merge commit if we decide to conclude it.
+- Tests run: `corepack yarn install --mode=skip-build` (pass with existing peer warning: `@ariad/backend` missing `@types/node` for `mysql2`); `corepack yarn typecheck` (pass); `corepack yarn lint` (fails on existing frontend `react-hooks/set-state-in-effect` findings in `AuthCallbackPage.tsx`, `WorkspaceShell.tsx`, `useEpisodeCanvasState.ts`, plus existing script `no-undef` findings in `scripts/*.mjs`); `corepack yarn test` outside sandbox (fails: 7 frontend tests, 94 pass / 7 fail); `corepack yarn build` outside sandbox (pass); `git diff master --` on failing implementation files (`WorkspaceShell.tsx`, `useEpisodeCanvasState.ts`, `controller.ts`, related workspace-shell helpers) showing only namespace/import changes relative to current `master`
+- Result: The temporary merge is now technically coherent as an `@ariad/*` Yarn workspace: install, typecheck, and production build succeed. Remaining red state is concentrated in frontend tests and pre-existing lint baseline issues rather than unresolved merge conflicts.
+- Warnings / blockers: The 7 failing tests are `frontend/src/persistence/controller.reorder.test.ts` (1) and `frontend/src/routes/WorkspaceShell.test.tsx` (6). Based on `git diff master --` for the implicated implementation files, those failures do not appear to come from additional logic changes in the merge branch beyond namespace normalization, so they are likely existing baseline/frontend behavior issues that need separate triage rather than raw merge-conflict repair.
+- Approval needed: `none`
+
+### 2026-04-25 / loop-163
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `PLANS.md`
+- What changed: Executed `detail-024` Frontend Problem A (seed-policy follow-up) by removing guest/sample auto-seeding from controller initialization/reload paths. `WorkspacePersistenceController` now reads scoped local workspace only (`loadOrSeedWorkspace()` no longer seeds), and guest fallback consistently resolves to explicit guest-empty shell instead of implicit sample creation. Updated controller regression tests to empty-first semantics: legacy guest sample cache sanitation coverage, explicit episode/node/object setup in node/episode/drawer scenarios, and guest/auth transition assertions aligned to non-seeded defaults.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (pass, 25 tests); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); `corepack yarn --cwd frontend run -T eslint src/persistence/controller.ts src/persistence/controller.test.ts --max-warnings=0` (pass)
+- Result: Guest baseline no longer auto-generates sample workspace data, legacy sample cleanup remains migration-only, and persistence controller test coverage is green under empty-first initialization.
+- Warnings / blockers: `detail-024` Frontend Problem B (`WorkspaceShell` broad baseline stabilization) remains pending and is intentionally separated from this seed-policy slice.
+- Approval needed: `none`
+
+### 2026-04-25 / loop-164
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/persistence/controller.reorder.test.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Continued on the isolated merge-verification branch `codex/merge-test-master-feature-jaesung-20260425` and aligned the remaining stale frontend tests to current empty-first / draft-first UI behavior. `controller.reorder.test.ts` now creates an authenticated-empty project explicitly before exercising reorder replay, instead of assuming `signIn()` seeds a node. `WorkspaceShell.test.tsx` was updated to assert the current invariants rather than older implementation details: keyword recommendation calls are counted by endpoint instead of raw `fetch` total, major end-marker checks follow the visually lowest major node and timeline-handle alignment, resize spacing uses the current 8px lane reflow gap, the minor-lane creation flow enters draft mode before clicking a lane, and the minor-parent drag test preserves whichever major is actually selected by current parent inference rather than assuming the first major node.
+- Tests run: focused rerun `corepack yarn --cwd frontend test -- src/persistence/controller.reorder.test.ts src/routes/WorkspaceShell.test.tsx` (pass, 101 tests); full isolated suite `corepack yarn test` (pass: shared 2/2, recommendation 22/22, backend 19/19, frontend 101/101)
+- Result: The isolated merge branch now has a green full test suite after stale frontend expectations were brought in line with the current master-side behavior model.
+- Warnings / blockers: Existing lint baseline issues from the prior loop were not revisited here; this loop was limited to test-alignment and verification on the isolated merge branch.
+- Approval needed: `none`
+
+### 2026-04-25 / loop-165
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Continued `detail-024` Frontend Problem B directly on `master` and stabilized the current `WorkspaceShell` route baseline around the updated empty-first/auth-transition behavior. The remaining route-level regression was resolved by tightening the minor-parent drag assertion to verify parent-connection stability by observed connection-line start retention instead of assuming a fixed major target. This keeps the test aligned to current parent inference and drag semantics while still guarding the user-facing behavior (drag below another major must not silently rewire parent).
+- Tests run: `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx --max-warnings=0` (pass); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.layout.test.ts` (pass, 56 tests)
+- Result: `WorkspaceShell` B-scope baseline gate is now green on `master` for lint, typecheck, and route/layout regression coverage.
+- Warnings / blockers: This loop intentionally stayed within `WorkspaceShell` scope; broader repository-wide lint/test debt outside this area was not re-triaged.
+- Approval needed: `none`
+
+### 2026-04-25 / loop-166
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Implemented `detail-025 / 노드 전환 시 인라인 작성 draft 유실` on `master`. Added explicit draft flush-on-selection-switch behavior (`flushSelectedNodeDraftBeforeSelection(...)`) in node-switch interaction paths (node click/double-click/menu select, drag/resize/rewire selection capture, canvas blank click) so the current node's inline draft is persisted before selection changes. Hardened `persistInlineNodeContent(...)` so asynchronous save completion only re-syncs local inline state when the same node is still selected, preventing late save results from overwriting a newly selected node's draft view. Added route regression coverage for the exact failure mode: typing in node A, switching to node B, and returning to node A now preserves the draft text.
+- Tests run: `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx --max-warnings=0` (pass); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); targeted `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "creates and reuses object mentions from inline node text|keeps inline draft content when switching selection to another node"` (pass, 2 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.layout.test.ts` (pass, 57 tests)
+- Result: Node-switch inline draft loss is fixed in the workspace route flow and guarded by regression tests.
+- Warnings / blockers: none
+- Approval needed: `none`

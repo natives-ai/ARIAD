@@ -23,6 +23,15 @@ class UserStore {
 This guideline is for code readability and maintainability. Please follow it throughout the project.
 ---
 
+**Code Style and Comment Rules**
+
+- When modifying or creating code, strictly follow the existing project style (including Prettier and current formatting conventions).
+- For comments:
+  - Never use emojis.
+  - Keep comment text as concise as possible.
+  - Use conventions such as `TODO`, `!`, and `?` proactively when they improve readability.
+---
+
 ## Purpose
 This is the repo-level operating map for Codex. Keep it short. Use it to orient execution, not to replace the source design documents.
 

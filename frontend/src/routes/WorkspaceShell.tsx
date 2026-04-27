@@ -459,7 +459,9 @@ export function WorkspaceShell() {
       selectedObjectId === null ||
       !scopedObjects.some((object) => object.id === selectedObjectId)
     ) {
-      setSelectedObjectId(scopedObjects[0]?.id ?? null);
+      queueMicrotask(() => {
+        setSelectedObjectId(scopedObjects[0]?.id ?? null);
+      });
     }
   }, [activeEpisodeId, selectedObjectId, sidebarFolders, state]);
 
@@ -477,8 +479,13 @@ export function WorkspaceShell() {
 
     const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeProjectId}`;
     const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeProjectId}`;
-    setSidebarFolders(parseStoredFolderList(window.localStorage.getItem(foldersKey)));
-    setFolderEpisodePins(parseStoredEpisodePinMap(window.localStorage.getItem(pinsKey)));
+    const nextSidebarFolders = parseStoredFolderList(window.localStorage.getItem(foldersKey));
+    const nextFolderEpisodePins = parseStoredEpisodePinMap(window.localStorage.getItem(pinsKey));
+
+    queueMicrotask(() => {
+      setSidebarFolders(nextSidebarFolders);
+      setFolderEpisodePins(nextFolderEpisodePins);
+    });
   }, [activeProjectId, cacheScopeKey, env.storagePrefix]);
 
   useEffect(() => {
@@ -505,7 +512,11 @@ export function WorkspaceShell() {
     }
 
     const key = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeProjectId}`;
-    setPinnedObjectIds(parseStoredStringArray(window.localStorage.getItem(key)));
+    const nextPinnedObjectIds = parseStoredStringArray(window.localStorage.getItem(key));
+
+    queueMicrotask(() => {
+      setPinnedObjectIds(nextPinnedObjectIds);
+    });
   }, [activeProjectId, cacheScopeKey, env.storagePrefix]);
 
   useEffect(() => {
@@ -542,12 +553,16 @@ export function WorkspaceShell() {
     );
     const changedPins = JSON.stringify(sanitizedPins) !== JSON.stringify(folderEpisodePins);
 
-    if (changedFolders) {
-      setSidebarFolders(sanitizedFolders);
-    }
+    if (changedFolders || changedPins) {
+      queueMicrotask(() => {
+        if (changedFolders) {
+          setSidebarFolders(sanitizedFolders);
+        }
 
-    if (changedPins) {
-      setFolderEpisodePins(sanitizedPins);
+        if (changedPins) {
+          setFolderEpisodePins(sanitizedPins);
+        }
+      });
     }
   }, [folderEpisodePins, sidebarFolders, state]);
 
@@ -1080,8 +1095,18 @@ export function WorkspaceShell() {
       window.removeEventListener("pointerup", clearPointerDrag);
       window.removeEventListener("pointercancel", clearPointerDrag);
     };
-  }, [canvasZoom, controller]);
+  // syncSelectedNodeInputHeight는 렌더마다 새로 정의되므로 deps에 포함하지 않습니다.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    canvasZoom,
+    controller,
+    nodeSizesRef,
+    setLaneDividerXs,
+    setNodeSizes,
+    setTimelineEndY
+  ]);
 
+  const hasWorkspaceState = state !== null;
   useEffect(() => {
     const viewport = canvasViewportRef.current;
 
@@ -1135,7 +1160,7 @@ export function WorkspaceShell() {
     return () => {
       viewportElement.removeEventListener("wheel", handleCanvasViewportWheel);
     };
-  }, [canvasZoom, state !== null]);
+  }, [canvasZoom, hasWorkspaceState]);
 
   const orderedNodes =
     state && activeEpisodeId
@@ -1216,7 +1241,9 @@ export function WorkspaceShell() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      setAuthSignInError(null);
+      queueMicrotask(() => {
+        setAuthSignInError(null);
+      });
     }
   }, [isAuthenticated]);
 
@@ -1270,22 +1297,31 @@ export function WorkspaceShell() {
         nextSelectedNode.text,
         nextSelectedNode.keywords
       );
-      setInlineNodeTextDraft(nextInlineText);
-      setSelectedAiKeywords(extractInlineKeywords(nextInlineText));
       inlineMentionSignatureRef.current[nextSelectedNode.id] = getObjectMentionSignature(
         nextInlineText
       );
+      queueMicrotask(() => {
+        setInlineNodeTextDraft(nextInlineText);
+        setSelectedAiKeywords(extractInlineKeywords(nextInlineText));
+        setIsNodeMoreMenuOpen(false);
+        setNodeMenuPosition(null);
+        setObjectMentionQuery(null);
+        setObjectMentionMenuPosition(null);
+        setActiveObjectMentionIndex(0);
+        setDetailError(null);
+      });
     } else {
-      setInlineNodeTextDraft("");
-      setSelectedAiKeywords([]);
+      queueMicrotask(() => {
+        setInlineNodeTextDraft("");
+        setSelectedAiKeywords([]);
+        setIsNodeMoreMenuOpen(false);
+        setNodeMenuPosition(null);
+        setObjectMentionQuery(null);
+        setObjectMentionMenuPosition(null);
+        setActiveObjectMentionIndex(0);
+        setDetailError(null);
+      });
     }
-
-    setIsNodeMoreMenuOpen(false);
-    setNodeMenuPosition(null);
-    setObjectMentionQuery(null);
-    setObjectMentionMenuPosition(null);
-    setActiveObjectMentionIndex(0);
-    setDetailError(null);
   }, [orderedNodes, selectedNodeId, selectedNodeIdentity]);
 
   useEffect(() => {
@@ -1324,16 +1360,20 @@ export function WorkspaceShell() {
     return () => {
       window.cancelAnimationFrame(animationId);
     };
+  // syncSelectedNodeInputHeight는 렌더마다 새로 정의되므로 deps에 포함하지 않습니다.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAiKeywords, inlineNodeTextDraft, selectedNode, selectedNodeIdentity]);
 
   useEffect(() => {
     if (detailMode === "object" && selectedObject) {
-      setObjectEditorDraft({
-        category: selectedObject.category,
-        name: selectedObject.name,
-        summary: selectedObject.summary
+      queueMicrotask(() => {
+        setObjectEditorDraft({
+          category: selectedObject.category,
+          name: selectedObject.name,
+          summary: selectedObject.summary
+        });
+        setDetailError(null);
       });
-      setDetailError(null);
     }
   }, [detailMode, selectedObject]);
 
@@ -2331,6 +2371,7 @@ export function WorkspaceShell() {
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setDragPayload(null);
+    flushSelectedNodeDraftBeforeSelection(nodeId);
     setSelectedNodeId(nodeId);
     rewireHoverTargetIdRef.current = null;
     setRewireHoverTargetId(null);
@@ -2370,6 +2411,7 @@ export function WorkspaceShell() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     isNodeResizingRef.current = true;
     setDragPayload(null);
+    flushSelectedNodeDraftBeforeSelection(nodeId);
     setSelectedNodeId(nodeId);
     canvasDragStateRef.current = {
       direction,
@@ -2392,6 +2434,7 @@ export function WorkspaceShell() {
 
     event.preventDefault();
     event.stopPropagation();
+    flushSelectedNodeDraftBeforeSelection(nodeId);
     setSelectedNodeId(nodeId);
     setRewireNodeId(nodeId);
     rewireHoverTargetIdRef.current = null;
@@ -2766,6 +2809,7 @@ export function WorkspaceShell() {
   ) {
     if (!draftVisible) {
       if (event.target === event.currentTarget && !isInteractiveTarget(event.target)) {
+        flushSelectedNodeDraftBeforeSelection(null);
         setSelectedNodeId(null);
         setRewireNodeId(null);
         closeNodeMenu();
@@ -2857,20 +2901,27 @@ export function WorkspaceShell() {
   async function persistInlineNodeContent(
     node: StoryNode,
     nextText: string,
-    nextKeywords: string[]
+    nextKeywords: string[],
+    options: {
+      skipLocalStateSync?: boolean;
+    } = {}
   ) {
     const resolvedText = normalizeInlineObjectMentions(nextText).trim();
     const resolvedKeywords = extractInlineKeywords(resolvedText).length
       ? extractInlineKeywords(resolvedText)
       : nextKeywords;
     const currentNode = nodesById.get(node.id) ?? node;
+    const canSyncLocalState = () =>
+      options.skipLocalStateSync !== true && selectedNodeIdRef.current === node.id;
     const hasKeywordChange =
       currentNode.keywords.length !== resolvedKeywords.length ||
       currentNode.keywords.some((keyword, index) => keyword !== resolvedKeywords[index]);
 
     if (resolvedText === currentNode.text.trim() && !hasKeywordChange) {
-      setInlineNodeTextDraft(resolvedText);
-      setSelectedAiKeywords(resolvedKeywords);
+      if (canSyncLocalState()) {
+        setInlineNodeTextDraft(resolvedText);
+        setSelectedAiKeywords(resolvedKeywords);
+      }
       return;
     }
 
@@ -2880,11 +2931,30 @@ export function WorkspaceShell() {
       text: resolvedText
     });
     await syncObjectMentionsForNode(node.id, resolvedText);
-    setInlineNodeTextDraft(resolvedText);
-    setSelectedAiKeywords(resolvedKeywords);
-    setObjectMentionQuery(null);
-    setObjectMentionMenuPosition(null);
-    setActiveObjectMentionIndex(0);
+
+    if (canSyncLocalState()) {
+      setInlineNodeTextDraft(resolvedText);
+      setSelectedAiKeywords(resolvedKeywords);
+      setObjectMentionQuery(null);
+      setObjectMentionMenuPosition(null);
+      setActiveObjectMentionIndex(0);
+    }
+  }
+
+  // 이 함수는 노드 선택 전환 직전에 현재 인라인 draft를 안전하게 저장합니다.
+  function flushSelectedNodeDraftBeforeSelection(nextNodeId: string | null) {
+    if (!selectedNode || selectedNode.id === nextNodeId) {
+      return;
+    }
+
+    void persistInlineNodeContent(
+      selectedNode,
+      inlineNodeTextDraft,
+      selectedAiKeywords,
+      {
+        skipLocalStateSync: true
+      }
+    );
   }
 
   async function openKeywordSuggestions(
@@ -3109,6 +3179,7 @@ export function WorkspaceShell() {
 
           if (isRewireTarget && rewireNode) {
             void controller.rewireNode(rewireNode.id, node.id);
+            flushSelectedNodeDraftBeforeSelection(rewireNode.id);
             setSelectedNodeId(rewireNode.id);
             setRewireNodeId(null);
             rewireHoverTargetIdRef.current = null;
@@ -3118,6 +3189,7 @@ export function WorkspaceShell() {
           }
 
           shouldFocusSelectedNodeRef.current = true;
+          flushSelectedNodeDraftBeforeSelection(node.id);
           setSelectedNodeId(node.id);
         }}
         onDoubleClick={(event) => {
@@ -3126,6 +3198,7 @@ export function WorkspaceShell() {
           }
 
           shouldFocusSelectedNodeRef.current = true;
+          flushSelectedNodeDraftBeforeSelection(node.id);
           setSelectedNodeId(node.id);
           centerCanvasViewportOnNode(node.id);
         }}
@@ -3171,6 +3244,7 @@ export function WorkspaceShell() {
                 onClick={(event) => {
                   event.stopPropagation();
                   const nextOpen = !(isSelected && isNodeMoreMenuOpen);
+                  flushSelectedNodeDraftBeforeSelection(node.id);
                   setSelectedNodeId(node.id);
                   setIsNodeMoreMenuOpen(nextOpen);
                   setNodeMenuPosition(

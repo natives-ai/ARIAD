@@ -37,7 +37,6 @@ import {
 } from "./nodeTree";
 import {
   createEmptyWorkspaceShell,
-  createSampleWorkspace,
   createStarterWorkspace,
   isLegacySampleWorkspaceSnapshot
 } from "./sampleWorkspace";
@@ -710,9 +709,7 @@ export class WorkspacePersistenceController {
     this.reloadPendingSyncOperations();
 
     if (session.mode === "authenticated" && session.accountId !== null) {
-      const loaded = this.loadOrSeedWorkspace({
-        seedIfMissing: false
-      });
+      const loaded = this.loadOrSeedWorkspace();
 
       if (loaded) {
         this.resetHistory();
@@ -754,9 +751,7 @@ export class WorkspacePersistenceController {
     this.setLocalCacheScope(session);
     this.reloadPendingSyncOperations();
     this.sanitizeGuestSampleCache();
-    const loaded = this.loadOrSeedWorkspace({
-      seedIfMissing: false
-    });
+    const loaded = this.loadOrSeedWorkspace();
     this.resetHistory();
 
     if (loaded) {
@@ -809,9 +804,7 @@ export class WorkspacePersistenceController {
 
   async reloadLocal() {
     const current = this.requireState();
-    const loaded = this.loadOrSeedWorkspace({
-      seedIfMissing: current.session.mode !== "authenticated"
-    });
+    const loaded = this.loadOrSeedWorkspace();
 
     if (!loaded) {
       if (current.session.mode === "authenticated") {
@@ -824,7 +817,9 @@ export class WorkspacePersistenceController {
         return;
       }
 
-      throw new Error("workspace_seed_failed");
+      this.resetHistory();
+      this.setGuestEmptyState(current.session, null);
+      return;
     }
 
     this.resetHistory();
@@ -2078,9 +2073,7 @@ export class WorkspacePersistenceController {
     this.reloadPendingSyncOperations();
 
     if (session.mode === "authenticated" && session.accountId !== null) {
-      const loaded = this.loadOrSeedWorkspace({
-        seedIfMissing: false
-      });
+      const loaded = this.loadOrSeedWorkspace();
 
       if (loaded) {
         this.resetHistory();
@@ -2106,10 +2099,8 @@ export class WorkspacePersistenceController {
       return;
     }
 
-    const removedGuestSampleCache = this.sanitizeGuestSampleCache();
-    const loaded = this.loadOrSeedWorkspace({
-      seedIfMissing: !removedGuestSampleCache
-    });
+    this.sanitizeGuestSampleCache();
+    const loaded = this.loadOrSeedWorkspace();
 
     if (!loaded) {
       this.resetHistory();
@@ -2130,8 +2121,8 @@ export class WorkspacePersistenceController {
     });
   }
 
-  // 현재 스코프에서 저장된 워크스페이스를 읽고 필요하면 샘플을 시드합니다.
-  private loadOrSeedWorkspace(options: { seedIfMissing: boolean }) {
+  // 현재 스코프에서 저장된 워크스페이스를 읽습니다.
+  private loadOrSeedWorkspace() {
     const registry = this.dependencies.local.getRegistry();
     const activeProjectId =
       registry.activeProjectId ?? registry.projects[0]?.projectId ?? null;
@@ -2160,32 +2151,7 @@ export class WorkspacePersistenceController {
       }
     }
 
-    if (!options.seedIfMissing) {
-      return null;
-    }
-
-    return this.seedWorkspace();
-  }
-
-  // 현재 스코프에 새 샘플 워크스페이스를 생성해 저장합니다.
-  private seedWorkspace() {
-    const registry = this.dependencies.local.getRegistry();
-    const snapshot = normalizeWorkspaceSnapshotObjectBindings(
-      createSampleWorkspace(this.now(), this.createId)
-    );
-    const nextRegistry = upsertRegistryEntry(
-      registry,
-      createRegistryEntry(snapshot, null, this.now())
-    );
-
-    this.dependencies.local.saveSnapshot(snapshot);
-    this.dependencies.local.saveRegistry(nextRegistry);
-
-    return {
-      linkage: null,
-      registry: nextRegistry,
-      snapshot
-    };
+    return null;
   }
 
   // 인증 계정의 프로젝트가 없을 때 빈 상태를 명시적으로 설정합니다.

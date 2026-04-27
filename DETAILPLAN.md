@@ -4730,3 +4730,205 @@ sample source:
 - guest 기본 상태를 완전히 비우면 기존 데모/온보딩 기대와 달라질 수 있습니다
 - legacy sample cleanup 기준이 너무 넓으면 실제 guest 데이터를 지울 수 있습니다
 - `controller.ts`와 `WorkspaceShell.tsx`는 계속 충돌 위험이 큽니다
+
+## detail-024 / 남은 비-UI 후속 정리 계획 (인수인계용)
+
+이 섹션은 세부 설계를 고정하기보다
+각 분야 세션이 바로 이어받을 수 있도록
+문제와 방향만 짧게 남깁니다.
+
+### 24.1 Frontend
+
+문제 A:
+
+- guest/sample 초기화 정책이 아직 완전히 정리되지 않았습니다
+- `detail-023` 범위가 남아 있습니다
+
+방향:
+
+- `createSampleWorkspace(...)`를 기본 초기화 경로에서 제거
+- guest / authenticated / starter 초기화 경계를 단순하게 정리
+- legacy sample cache는 “실제 guest 작업물”과 구분 가능한 범위에서만 정리
+
+파일 후보:
+
+- `frontend/src/persistence/sampleWorkspace.ts`
+- `frontend/src/persistence/controller.ts`
+- `frontend/src/persistence/localStore.ts`
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/copy.ts`
+
+문제 B:
+
+- `WorkspaceShell` 전체 baseline이 아직 깨끗하지 않습니다
+- focused regression은 통과했지만, full route suite/lint baseline은 아직 worktree 기준 잔여 이슈가 있습니다
+
+방향:
+
+- `detail-022` 이후 상태를 기준으로
+  route suite broad failure와 `react-hooks/set-state-in-effect` baseline을 분리해서 보수
+- auth/cache/empty-state와 무관한 broad failure는 별도 정리
+
+파일 후보:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+- `frontend/src/routes/workspace-shell/*`
+
+검증 포인트:
+
+- guest 초기 진입 / 로그인 / 로그아웃 / 계정 전환
+- 새로고침 후 캔버스 복원
+- full `WorkspaceShell` route suite
+- `WorkspaceShell.tsx` lint baseline
+
+### 24.2 Backend
+
+문제:
+
+- backend 쪽은 현재 구조 이슈보다 contract verification 성격이 큽니다
+
+방향:
+
+- frontend 정책 정리 후에도
+  `/api/persistence/projects`와 auth/session contract가 그대로 유지되는지만 확인
+- 신규 authenticated account empty contract와
+  sample auto-import 부재만 regression으로 유지
+
+파일 후보:
+
+- 직접 구현은 거의 없음
+- 필요 시 `backend/src/auth/routes.integration.test.ts`
+- 필요 시 `backend/src/persistence/routes.integration.test.ts`
+
+검증 포인트:
+
+- fresh account -> `{ projects: [] }`
+- login-only path에서 sample project 자동 생성/유입 없음
+
+### 24.3 Service
+
+문제:
+
+- 현재 남은 이슈는 service 계층 신규 구현이 필요한 단계는 아닙니다
+
+방향:
+
+- 없음
+
+파일 후보:
+
+- 없음
+
+검증 포인트:
+
+- 없음
+
+### 24.4 병합 순서
+
+1. Frontend 정책/초기화 정리
+2. Frontend baseline 안정화
+3. Backend contract smoke 재확인
+
+### 24.5 리스크
+
+- `WorkspaceShell.tsx`는 여전히 same-file 충돌 위험이 큽니다
+- sample cleanup를 과하게 하면 guest 실제 작업물까지 건드릴 수 있습니다
+- broad route regression 정리는 auth/cache 수정과 섞지 않고 분리하는 편이 안전합니다
+
+## detail-025 / 노드 전환 시 인라인 작성 draft 유실
+
+이 섹션도 인수인계용으로,
+각 분야 세션이 바로 이어받을 수 있도록
+문제와 방향만 남깁니다.
+
+### 25.1 Frontend
+
+문제:
+
+- 한 노드에서 인라인 편집 중 다른 노드를 선택하면
+  이전 노드 작성 내용이 저장되기 전에 사라질 수 있습니다
+
+현재 확인된 원인:
+
+- `WorkspaceShell.tsx`는 이전 노드 draft 저장을 사실상 `textarea onBlur`에 의존합니다
+- 동시에 선택 전환 effect가 `selectedNodeId` 변경 직후
+  `inlineNodeTextDraft`를 새 노드 내용으로 덮어씁니다
+- 노드 카드를 클릭하면 `setSelectedNodeId(...)`가 먼저 일어나고,
+  그 결과 이전 textarea가 selected 상태에서 빠지며
+  draft가 저장되기 전에 교체될 수 있습니다
+
+관련 코드 위치:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+  - 선택 전환 effect
+  - `persistInlineNodeContent(...)`
+  - node card `onClick`
+  - textarea `onBlur`
+
+방향:
+
+- blur-only 저장에서 벗어나
+  “선택 전환 직전 현재 selected node draft flush” 경로를 하나 두는 쪽이 우선
+- 또는 node별 draft buffer를 두고
+  선택 변경 시 즉시 덮어쓰지 않게 해도 됨
+- FE 담당 세션이 현재 interaction 모델에 맞는 쪽을 선택하면 됩니다
+
+파일 후보:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+- 필요 시 `frontend/src/persistence/controller.ts`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+
+검증 포인트:
+
+- 노드 A 편집 -> 노드 B 클릭 -> 노드 A 내용 유지
+- 노드 A 편집 -> 노드 B 클릭 -> 다시 노드 A 선택 -> draft 또는 저장값 유지
+- 객체 멘션/키워드 포함 텍스트도 동일하게 유지
+
+### 25.2 Backend
+
+문제:
+
+- 직접 원인은 아님
+
+방향:
+
+- 없음
+
+파일 후보:
+
+- 없음
+
+검증 포인트:
+
+- 없음
+
+### 25.3 Service
+
+문제:
+
+- 없음
+
+방향:
+
+- 없음
+
+파일 후보:
+
+- 없음
+
+검증 포인트:
+
+- 없음
+
+### 25.4 병합 순서
+
+1. Frontend 저장/선택 전환 경계 수정
+2. Frontend route regression 추가
+
+### 25.5 리스크
+
+- `WorkspaceShell.tsx` same-file 충돌 위험이 큽니다
+- 저장 시점을 공격적으로 바꾸면
+  기존 blur/paste/mention 상호작용과 충돌할 수 있습니다

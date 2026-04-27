@@ -13,6 +13,7 @@ import { StubAuthBoundary, type StorageLike } from "../auth/stubAuthBoundary";
 import { WorkspacePersistenceController } from "./controller";
 import { LocalPersistenceStore } from "./localStore";
 import { collectSubtreeNodes } from "./nodeTree";
+import { createSampleWorkspace } from "./sampleWorkspace";
 
 function cloneSnapshot(snapshot: StoryWorkspaceSnapshot): StoryWorkspaceSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as StoryWorkspaceSnapshot;
@@ -558,8 +559,33 @@ function hasLegacySampleEpisodeTitles(snapshot: StoryWorkspaceSnapshot) {
   );
 }
 
+// guest 스코프에 레거시 샘플 캐시를 주입합니다.
+function seedLegacyGuestSampleCache(storage: MemoryStorage, now: () => string) {
+  const local = new LocalPersistenceStore(storage, "test");
+  local.setCacheScope("guest");
+
+  const sampleSnapshot = createSampleWorkspace(now());
+  local.saveSnapshot(sampleSnapshot);
+  local.saveRegistry({
+    activeProjectId: sampleSnapshot.project.id,
+    projects: [
+      {
+        cloudLinked: false,
+        lastOpenedAt: sampleSnapshot.project.updatedAt,
+        linkedAccountId: null,
+        projectId: sampleSnapshot.project.id,
+        summary: sampleSnapshot.project.summary,
+        title: sampleSnapshot.project.title,
+        updatedAt: sampleSnapshot.project.updatedAt
+      }
+    ]
+  });
+
+  return sampleSnapshot;
+}
+
 describe("workspace persistence controller", () => {
-  it("seeds a guest workspace with stable IDs and local registry metadata", async () => {
+  it("boots guest mode with an empty local workspace shell and stable registry metadata", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
     const auth = new StubAuthBoundary(storage, "test");
@@ -576,13 +602,40 @@ describe("workspace persistence controller", () => {
 
     expect(state?.session.mode).toBe("guest");
     expect(state?.snapshot.project.id).toMatch(/^project_/);
-    expect(state?.snapshot.episodes[0]?.id).toMatch(/^episode_/);
-    expect(state?.snapshot.objects[0]?.id).toMatch(/^object_/);
-    expect(state?.snapshot.nodes[0]?.id).toMatch(/^node_/);
-    expect(state?.snapshot.temporaryDrawer[0]?.id).toMatch(/^temporary_drawer_/);
+    expect(state?.snapshot.project.activeEpisodeId).toBe("");
+    expect(state?.snapshot.episodes).toHaveLength(0);
+    expect(state?.snapshot.objects).toHaveLength(0);
+    expect(state?.snapshot.nodes).toHaveLength(0);
+    expect(state?.snapshot.temporaryDrawer).toHaveLength(0);
     expect(state?.registry.activeProjectId).toBe(state?.snapshot.project.id);
     expect(state?.registry.projects).toHaveLength(1);
     expect(state?.linkage).toBeNull();
+
+    controller.dispose();
+  });
+
+  it("sanitizes legacy guest sample cache to the empty guest shell on initialize", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    seedLegacyGuestSampleCache(storage, now);
+
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const state = controller.getState()!;
+
+    expect(state.session.mode).toBe("guest");
+    expect(hasLegacySampleEpisodeTitles(state.snapshot)).toBe(false);
+    expect(state.snapshot.episodes).toHaveLength(0);
+    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(state.snapshot.temporaryDrawer).toHaveLength(0);
 
     controller.dispose();
   });
@@ -716,7 +769,7 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
-  it("does not import guest sample snapshot when signing in to a new authenticated account", async () => {
+  it("does not import guest local workspace when signing in to a new authenticated account", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
     const auth = new ControlledAuthBoundary({
@@ -733,8 +786,9 @@ describe("workspace persistence controller", () => {
     });
 
     await controller.initialize();
+    await controller.createEpisode();
 
-    expect(hasLegacySampleEpisodeTitles(controller.getState()!.snapshot)).toBe(true);
+    expect(controller.getState()!.snapshot.episodes).toHaveLength(1);
 
     auth.setNextSignInSession({
       accountId: "account-new",
@@ -774,7 +828,7 @@ describe("workspace persistence controller", () => {
     });
 
     await controller.initialize();
-    expect(hasLegacySampleEpisodeTitles(controller.getState()!.snapshot)).toBe(true);
+    expect(hasLegacySampleEpisodeTitles(controller.getState()!.snapshot)).toBe(false);
 
     auth.setNextSignInSession({
       accountId: "account-a",
@@ -782,6 +836,7 @@ describe("workspace persistence controller", () => {
       mode: "authenticated"
     });
     await controller.signIn();
+    seedLegacyGuestSampleCache(storage, now);
     await controller.signOut();
 
     const signedOutState = controller.getState()!;
@@ -1010,7 +1065,8 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const initialMajorId = controller.getState()!.snapshot.nodes[0]!.id;
+    await controller.createEpisode();
+    const initialMajorId = (await controller.createNode("major", 0))!;
     const secondMajorId = (await controller.createNode("major", 1))!;
     const minorId = (await controller.createNode("minor", 1))!;
     const detailId = (await controller.createNode("detail", 2))!;
@@ -1082,6 +1138,8 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
+    await controller.createEpisode();
+    await controller.createNode("major", 0);
     const secondMajorId = (await controller.createNode("major", 1))!;
     const minorId = (await controller.createNode("minor", 1))!;
 
@@ -1117,6 +1175,7 @@ describe("workspace persistence controller", () => {
     });
 
     await controller.initialize();
+    await controller.createEpisode();
 
     const nextNodeId = await controller.createNode("minor", 1, {
       canvasX: 452,
@@ -1150,6 +1209,7 @@ describe("workspace persistence controller", () => {
     });
 
     await controller.initialize();
+    await controller.createEpisode();
 
     const minorA = await controller.createNode("minor", 1, {
       canvasX: 452,
@@ -1183,7 +1243,8 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const nodeId = controller.getState()!.snapshot.nodes[0]!.id;
+    await controller.createEpisode();
+    const nodeId = (await controller.createNode("major", 0))!;
     const initialNode = controller.getState()!.snapshot.nodes.find((node) => node.id === nodeId)!;
 
     await controller.updateNodeVisualState(nodeId, {
@@ -1367,8 +1428,15 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const firstEpisodeId = controller.getState()!.snapshot.project.activeEpisodeId;
-    const ownerObject = controller.getState()!.snapshot.objects[0]!;
+    const firstEpisodeId = await controller.createEpisode();
+    const ownerObjectId = await controller.createObject({
+      category: "place",
+      name: "Shared alley",
+      summary: "A neutral location used across episodes."
+    });
+    const ownerObject = controller
+      .getState()!
+      .snapshot.objects.find((object) => object.id === ownerObjectId)!;
     const secondEpisodeId = (await controller.createEpisode())!;
 
     await controller.selectEpisode(secondEpisodeId);
@@ -1456,9 +1524,10 @@ describe("workspace persistence controller", () => {
     });
 
     await controller.initialize();
+    await controller.createEpisode();
+    const copiedRootId = (await controller.createNode("major", 0))!;
 
     const initialState = controller.getState()!;
-    const copiedRootId = initialState.snapshot.nodes[0]!.id;
     const pastedRootId = await controller.pasteNodeTree(
       collectSubtreeNodes(initialState.snapshot.nodes, copiedRootId),
       copiedRootId,
@@ -1548,9 +1617,8 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const initialState = controller.getState()!;
-    const initialEpisodeId = initialState.snapshot.project.activeEpisodeId;
-    const initialNodeId = initialState.snapshot.nodes[0]!.id;
+    const initialEpisodeId = await controller.createEpisode();
+    const initialNodeId = (await controller.createNode("major", 0))!;
     const nextEpisodeId = await controller.createEpisode();
 
     expect(nextEpisodeId).toBeTruthy();
@@ -1613,9 +1681,15 @@ describe("workspace persistence controller", () => {
 
     await controller.initialize();
 
-    const majorId = controller.getState()!.snapshot.nodes[0]!.id;
+    await controller.createEpisode();
+    const majorId = (await controller.createNode("major", 0))!;
     const minorId = (await controller.createNode("minor", 1))!;
 
+    await controller.updateNodeContent(majorId, {
+      contentMode: "keywords",
+      keywords: ["meeting", "pressure", "hesitation"],
+      text: ""
+    });
     await controller.updateNodeContent(minorId, {
       contentMode: "keywords",
       keywords: ["aftermath", "silence"],
@@ -1635,7 +1709,7 @@ describe("workspace persistence controller", () => {
 
     state = controller.getState()!;
 
-    expect(state.snapshot.temporaryDrawer).toHaveLength(1);
+    expect(state.snapshot.temporaryDrawer).toHaveLength(0);
     expect(state.snapshot.nodes.map((node) => node.id)).toEqual([majorId, minorId]);
     expect(state.snapshot.nodes.find((node) => node.id === majorId)?.keywords).toEqual([
       "meeting",
