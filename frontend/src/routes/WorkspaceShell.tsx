@@ -19,7 +19,16 @@ import type {
 } from "@ariad/shared";
 
 import { StubAuthBoundary } from "../auth/stubAuthBoundary";
-import { copy } from "../copy";
+import {
+  copy,
+  copyCatalog,
+  defaultLanguage,
+  isWorkspaceLanguage,
+  languageHtmlCodes,
+  languageOptions,
+  type WorkspaceCopy,
+  type WorkspaceLanguage
+} from "../copy";
 import { loadFrontendEnv } from "../config/env";
 import { CloudPersistenceClient } from "../persistence/cloudClient";
 import { getDrawerItemPreview, getNodeHeadline } from "../persistence/drawerPayload";
@@ -39,27 +48,29 @@ import { RecommendationClient } from "../recommendation/client";
 import { StandaloneRecommendationClient } from "../recommendation/standaloneClient";
 import { createKeywordRecommendationRequest } from "../recommendation/request";
 
-const laneDefinitions: Array<{
+function getLaneDefinitions(activeCopy: WorkspaceCopy): Array<{
   description: string;
   level: StoryNodeLevel;
   title: string;
-}> = [
-  {
-    description: "Start to end anchors live in this lane.",
-    level: "major",
-    title: copy.workspace.majorLane
-  },
-  {
-    description: "Secondary beats inherit from the nearest major beat by default.",
-    level: "minor",
-    title: copy.workspace.minorLane
-  },
-  {
-    description: "Detail notes stay attached to the nearest minor beat.",
-    level: "detail",
-    title: copy.workspace.detailLane
-  }
-];
+}> {
+  return [
+    {
+      description: "Start to end anchors live in this lane.",
+      level: "major",
+      title: activeCopy.workspace.majorLane
+    },
+    {
+      description: "Secondary beats inherit from the nearest major beat by default.",
+      level: "minor",
+      title: activeCopy.workspace.minorLane
+    },
+    {
+      description: "Detail notes stay attached to the nearest minor beat.",
+      level: "detail",
+      title: activeCopy.workspace.detailLane
+    }
+  ];
+}
 
 const initialStageWidth = 1050;
 const stageInnerLeft = 42;
@@ -93,6 +104,10 @@ const keywordTokenStart = "\u2063";
 const keywordTokenEnd = "\u2064";
 const objectTokenStart = "\u2065";
 const objectTokenEnd = "\u2066";
+const mentionPopoverGap = 10;
+const mentionPopoverViewportPadding = 12;
+const mentionPopoverWidth = 272;
+const mentionPopoverHeight = 220;
 const emptyNodes: StoryNode[] = [];
 
 type DragPayload =
@@ -149,6 +164,57 @@ interface ObjectMentionQuery {
 
 const objectCategoryOptions: StoryObjectCategory[] = ["person", "place", "thing"];
 const rootFolderScopeId = "__root__";
+
+function buildFolderIdByEpisodeId(folders: SidebarFolder[]) {
+  const folderIdByEpisodeId = new Map<string, string>();
+
+  for (const folder of folders) {
+    for (const episodeId of folder.episodeIds) {
+      folderIdByEpisodeId.set(episodeId, folder.id);
+    }
+  }
+
+  return folderIdByEpisodeId;
+}
+
+function getObjectLibraryScope(activeEpisodeId: string | null, folders: SidebarFolder[]) {
+  if (!activeEpisodeId) {
+    return {
+      episodeIds: new Set<string>(),
+      folder: null as SidebarFolder | null,
+      storageId: "no-episode"
+    };
+  }
+
+  const folder =
+    folders.find((entry) => entry.episodeIds.includes(activeEpisodeId)) ?? null;
+
+  if (!folder) {
+    return {
+      episodeIds: new Set([activeEpisodeId]),
+      folder,
+      storageId: `episode:${activeEpisodeId}`
+    };
+  }
+
+  return {
+    episodeIds: new Set(folder.episodeIds),
+    folder,
+    storageId: `folder:${folder.id}`
+  };
+}
+
+function areObjectMentionQueriesEqual(
+  left: ObjectMentionQuery | null,
+  right: ObjectMentionQuery | null
+) {
+  return (
+    left?.end === right?.end &&
+    left?.mode === right?.mode &&
+    left?.query === right?.query &&
+    left?.start === right?.start
+  );
+}
 
 function toMessage(error: unknown) {
   return error instanceof Error ? error.message : "recommendation_failed";
@@ -265,8 +331,18 @@ function getMajorLaneTimelineCenterX(majorLaneBounds: {
   return majorLaneBounds.left + (majorLaneBounds.right - majorLaneBounds.left) / 2;
 }
 
-function formatObjectCategory(category: StoryObjectCategory) {
-  return category.charAt(0).toUpperCase() + category.slice(1);
+function formatObjectCategory(
+  category: StoryObjectCategory,
+  activeCopy: WorkspaceCopy = copy
+) {
+  switch (category) {
+    case "person":
+      return activeCopy.workspace.objectCategoryPerson;
+    case "place":
+      return activeCopy.workspace.objectCategoryPlace;
+    case "thing":
+      return activeCopy.workspace.objectCategoryThing;
+  }
 }
 
 function clampCanvasZoom(value: number) {
@@ -593,7 +669,9 @@ function removeAdjacentInlineToken(
     const start = match.index ?? 0;
     const end = start + match[0].length;
     const touchesToken =
-      direction === "backward" ? caretIndex === end : caretIndex === start;
+      direction === "backward"
+        ? caretIndex > start && caretIndex <= end
+        : caretIndex >= start && caretIndex < end;
 
     if (!touchesToken) {
       continue;
@@ -690,14 +768,78 @@ function resolveNodeOverlapPlacement(
   return nextPlacement;
 }
 
-function getMentionPopoverPosition(rect: DOMRect) {
-  const maxLeft = Math.max(16, window.innerWidth - 280);
-  const maxTop = Math.max(16, window.innerHeight - 220);
+function clampMentionPopoverPosition(left: number, top: number) {
+  const maxLeft = Math.max(
+    mentionPopoverViewportPadding,
+    window.innerWidth - mentionPopoverWidth - mentionPopoverViewportPadding
+  );
+  const maxTop = Math.max(
+    mentionPopoverViewportPadding,
+    window.innerHeight - mentionPopoverHeight - mentionPopoverViewportPadding
+  );
 
   return {
-    left: Math.min(Math.max(12, rect.left), maxLeft),
-    top: Math.min(rect.bottom + 10, maxTop)
+    left: Math.min(Math.max(mentionPopoverViewportPadding, left), maxLeft),
+    top: Math.min(Math.max(mentionPopoverViewportPadding, top), maxTop)
   };
+}
+
+function getMentionPopoverOverlapArea(
+  position: { left: number; top: number },
+  rect: DOMRect
+) {
+  const overlapWidth = Math.max(
+    0,
+    Math.min(position.left + mentionPopoverWidth, rect.right) -
+      Math.max(position.left, rect.left)
+  );
+  const overlapHeight = Math.max(
+    0,
+    Math.min(position.top + mentionPopoverHeight, rect.bottom) -
+      Math.max(position.top, rect.top)
+  );
+
+  return overlapWidth * overlapHeight;
+}
+
+function getMentionPopoverPosition(rect: DOMRect, avoidRect: DOMRect | null = null) {
+  const fallbackPosition = clampMentionPopoverPosition(
+    rect.left,
+    rect.bottom + mentionPopoverGap
+  );
+
+  if (!avoidRect) {
+    return fallbackPosition;
+  }
+
+  const candidates = [
+    clampMentionPopoverPosition(avoidRect.right + mentionPopoverGap, rect.top),
+    clampMentionPopoverPosition(
+      avoidRect.left - mentionPopoverWidth - mentionPopoverGap,
+      rect.top
+    ),
+    clampMentionPopoverPosition(rect.left, avoidRect.bottom + mentionPopoverGap),
+    clampMentionPopoverPosition(
+      rect.left,
+      avoidRect.top - mentionPopoverHeight - mentionPopoverGap
+    )
+  ];
+  const nonOverlappingCandidate = candidates.find(
+    (candidate) => getMentionPopoverOverlapArea(candidate, avoidRect) === 0
+  );
+
+  if (nonOverlappingCandidate) {
+    return nonOverlappingCandidate;
+  }
+
+  return candidates.reduce(
+    (best, candidate) =>
+      getMentionPopoverOverlapArea(candidate, avoidRect) <
+      getMentionPopoverOverlapArea(best, avoidRect)
+        ? candidate
+        : best,
+    fallbackPosition
+  );
 }
 
 function canStartCanvasPan(target: EventTarget | null) {
@@ -1078,6 +1220,13 @@ function renderViewportOverlay(content: ReactNode) {
 export function WorkspaceShell() {
   const isDrawerUiEnabled = false;
   const [env] = useState(() => loadFrontendEnv());
+  const [language, setLanguage] = useState<WorkspaceLanguage>(() => {
+    const storedLanguage = window.localStorage.getItem(`${env.storagePrefix}:language`);
+
+    return isWorkspaceLanguage(storedLanguage) ? storedLanguage : defaultLanguage;
+  });
+  const copy = copyCatalog[language];
+  const laneDefinitions = getLaneDefinitions(copy);
   const [localStore] = useState(
     () => new LocalPersistenceStore(window.localStorage, env.storagePrefix)
   );
@@ -1271,6 +1420,11 @@ export function WorkspaceShell() {
   >(null);
 
   useEffect(() => {
+    window.localStorage.setItem(`${env.storagePrefix}:language`, language);
+    document.documentElement.lang = languageHtmlCodes[language];
+  }, [env.storagePrefix, language]);
+
+  useEffect(() => {
     const unsubscribe = controller.subscribe(setState);
 
     void controller.initialize();
@@ -1281,13 +1435,22 @@ export function WorkspaceShell() {
     };
   }, [controller]);
 
+  const activeProjectId = state?.snapshot.project.id ?? null;
+  const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
+  const folderIdByEpisodeId = buildFolderIdByEpisodeId(sidebarFolders);
+  const objectLibraryScope = getObjectLibraryScope(activeEpisodeId, sidebarFolders);
+
   useEffect(() => {
     if (!state) {
       return;
     }
 
-    const activeEpisodeObjects = state.snapshot.objects.filter(
-      (object) => object.episodeId === state.snapshot.project.activeEpisodeId
+    const selectedObjectLibraryScope = getObjectLibraryScope(
+      state.snapshot.project.activeEpisodeId,
+      sidebarFolders
+    );
+    const activeEpisodeObjects = state.snapshot.objects.filter((object) =>
+      selectedObjectLibraryScope.episodeIds.has(object.episodeId)
     );
 
     if (
@@ -1296,7 +1459,7 @@ export function WorkspaceShell() {
     ) {
       setSelectedObjectId(activeEpisodeObjects[0]?.id ?? null);
     }
-  }, [selectedObjectId, state]);
+  }, [selectedObjectId, sidebarFolders, state]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1304,9 +1467,6 @@ export function WorkspaceShell() {
       String(isSidebarCollapsed)
     );
   }, [env.storagePrefix, isSidebarCollapsed]);
-
-  const activeProjectId = state?.snapshot.project.id ?? null;
-  const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -1342,18 +1502,18 @@ export function WorkspaceShell() {
       return;
     }
 
-    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}:${activeEpisodeId ?? "no-episode"}`;
+    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}:${objectLibraryScope.storageId}`;
     setPinnedObjectIds(parseStoredStringArray(window.localStorage.getItem(key)));
-  }, [activeEpisodeId, activeProjectId, env.storagePrefix]);
+  }, [activeProjectId, env.storagePrefix, objectLibraryScope.storageId]);
 
   useEffect(() => {
     if (!activeProjectId) {
       return;
     }
 
-    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}:${activeEpisodeId ?? "no-episode"}`;
+    const key = `${env.storagePrefix}:pinned-objects:${activeProjectId}:${objectLibraryScope.storageId}`;
     window.localStorage.setItem(key, JSON.stringify(pinnedObjectIds));
-  }, [activeEpisodeId, activeProjectId, env.storagePrefix, pinnedObjectIds]);
+  }, [activeProjectId, env.storagePrefix, objectLibraryScope.storageId, pinnedObjectIds]);
 
   useEffect(() => {
     setNodePlacementOverrides({});
@@ -1852,7 +2012,13 @@ export function WorkspaceShell() {
   const selectedNodeIdentity = selectedNodeId ?? orderedNodes[0]?.id ?? null;
   const activeEpisodeObjects =
     state && activeEpisodeId
-      ? state.snapshot.objects.filter((object) => object.episodeId === activeEpisodeId)
+      ? state.snapshot.objects.filter((object) =>
+          objectLibraryScope.episodeIds.has(object.episodeId)
+        )
+      : [];
+  const objectLibraryNodes =
+    state && activeEpisodeId
+      ? state.snapshot.nodes.filter((node) => objectLibraryScope.episodeIds.has(node.episodeId))
       : [];
   const objectsById = new Map(activeEpisodeObjects.map((object) => [object.id, object]));
   const selectedObject =
@@ -2211,9 +2377,9 @@ export function WorkspaceShell() {
     return (
       <div className="workspace-shell workspace-shell-loading">
         <section className="panel panel-canvas">
-          <span className="eyebrow">Center</span>
+          <span className="eyebrow">{copy.workspace.center}</span>
           <h1>{copy.workspace.title}</h1>
-          <p>Loading the local persistence baseline for the active workspace.</p>
+          <p>{copy.workspace.loadingWorkspace}</p>
         </section>
       </div>
     );
@@ -2223,6 +2389,8 @@ export function WorkspaceShell() {
     state.snapshot.episodes.find((episode) => episode.id === activeEpisodeId) ??
     state.snapshot.episodes[0];
   const snapshot = state.snapshot;
+  const objectLibraryScopeLabel =
+    objectLibraryScope.folder?.name ?? activeEpisode?.title ?? copy.workspace.currentEpisode;
   const fullscreenStageWidth = Math.max(initialStageWidth, viewportWidth - 120);
   const minimumVisibleDetailEdge = Math.max(
     laneDividerXs.detailEdge,
@@ -2768,9 +2936,10 @@ export function WorkspaceShell() {
     const currentNode =
       liveSnapshot.nodes.find((node) => node.id === nodeId) ?? nodesById.get(nodeId) ?? null;
     const mentionEpisodeId = currentNode?.episodeId ?? activeEpisodeId;
+    const mentionObjectLibraryScope = getObjectLibraryScope(mentionEpisodeId, sidebarFolders);
     const existingObjectIdsByName = new Map(
       liveSnapshot.objects
-        .filter((object) => object.episodeId === mentionEpisodeId)
+        .filter((object) => mentionObjectLibraryScope.episodeIds.has(object.episodeId))
         .map((object) => [object.name.toLowerCase(), object.id])
     );
     const nextObjectIds: string[] = [];
@@ -2780,7 +2949,7 @@ export function WorkspaceShell() {
       let objectId = existingObjectIdsByName.get(normalizedName) ?? null;
 
       if (!objectId) {
-        const pendingKey = `${mentionEpisodeId ?? "no-episode"}:${normalizedName}`;
+        const pendingKey = `${mentionObjectLibraryScope.storageId}:${normalizedName}`;
         const pendingObjectPromise = pendingMentionObjectIdsRef.current.get(pendingKey);
 
         if (pendingObjectPromise) {
@@ -2844,6 +3013,7 @@ export function WorkspaceShell() {
     const nextQuery =
       getOpenObjectMentionQuery(value, caretIndex) ??
       getClosedObjectWordQuery(value, caretIndex, activeEpisodeObjects);
+    const isSameQuery = areObjectMentionQueriesEqual(objectMentionQuery, nextQuery);
 
     setObjectMentionQuery(nextQuery);
 
@@ -2853,8 +3023,22 @@ export function WorkspaceShell() {
       return;
     }
 
-    setObjectMentionMenuPosition(getMentionPopoverPosition(input.getBoundingClientRect()));
-    setActiveObjectMentionIndex(0);
+    const nodeCard = input.closest(".node-card") as HTMLElement | null;
+
+    setObjectMentionMenuPosition(
+      getMentionPopoverPosition(
+        input.getBoundingClientRect(),
+        nodeCard?.getBoundingClientRect() ?? null
+      )
+    );
+
+    if (!isSameQuery) {
+      setActiveObjectMentionIndex(0);
+    } else {
+      setActiveObjectMentionIndex((current) =>
+        Math.min(current, Math.max(0, objectMentionSuggestions.length - 1))
+      );
+    }
   }
 
   function syncTimelineEndAfterEndNodeResize(
@@ -3201,7 +3385,7 @@ export function WorkspaceShell() {
 
     try {
       const response = await recommendationClient.getKeywordSuggestions(
-        createKeywordRecommendationRequest(snapshot, node, parentNode)
+        createKeywordRecommendationRequest(snapshot, node, parentNode, language)
       );
 
       setKeywordSuggestions(response.suggestions);
@@ -3241,7 +3425,7 @@ export function WorkspaceShell() {
   const objectUsageCounts = new Map(
     activeEpisodeObjects.map((object) => [
       object.id,
-      orderedNodes.filter((node) => node.objectIds.includes(object.id)).length
+      objectLibraryNodes.filter((node) => node.objectIds.includes(object.id)).length
     ])
   );
   const filteredObjects = activeEpisodeObjects.filter((object) => {
@@ -3497,7 +3681,7 @@ export function WorkspaceShell() {
                   {displayText
                     ? renderTextWithObjectMentions(displayText)
                     : activeKeywords.length === 0
-                      ? "Type the beat"
+                      ? copy.workspace.typeTheBeat
                       : "\u200b"}
                 </div>
                 <textarea
@@ -3606,10 +3790,14 @@ export function WorkspaceShell() {
                     }
                   }}
                   onKeyUp={(event) => {
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      return;
+                    }
+
                     updateObjectMentionQueryFromInput(event.currentTarget);
                     syncSelectedNodeInputHeight(node.id, event.currentTarget);
                   }}
-                  placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
+                  placeholder={activeKeywords.length > 0 ? undefined : copy.workspace.typeTheBeat}
                   ref={selectedNodeInputRef}
                   rows={1}
                   value={inlineNodeTextDraft}
@@ -3631,14 +3819,14 @@ export function WorkspaceShell() {
           <>
             {(
               [
-                ["northwest", "Resize from top left"],
-                ["north", "Resize from top"],
-                ["northeast", "Resize from top right"],
-                ["east", "Resize from right"],
-                ["southeast", "Resize from bottom right"],
-                ["south", "Resize from bottom"],
-                ["southwest", "Resize from bottom left"],
-                ["west", "Resize from left"]
+                ["northwest", copy.workspace.resizeFromTopLeft],
+                ["north", copy.workspace.resizeFromTop],
+                ["northeast", copy.workspace.resizeFromTopRight],
+                ["east", copy.workspace.resizeFromRight],
+                ["southeast", copy.workspace.resizeFromBottomRight],
+                ["south", copy.workspace.resizeFromBottom],
+                ["southwest", copy.workspace.resizeFromBottomLeft],
+                ["west", copy.workspace.resizeFromLeft]
               ] satisfies Array<[NodeResizeDirection, string]>
             ).map(([direction, label]) => (
               <button
@@ -3769,13 +3957,6 @@ export function WorkspaceShell() {
     state.session.accountId ??
     `${copy.workspace.brand} User`;
   const episodeSearchNormalized = episodeSearchQuery.trim().toLowerCase();
-  const folderIdByEpisodeId = new Map<string, string>();
-
-  for (const folder of sidebarFolders) {
-    for (const episodeId of folder.episodeIds) {
-      folderIdByEpisodeId.set(episodeId, folder.id);
-    }
-  }
 
   function getScopedPinnedEpisodes(scopeId: string) {
     return folderEpisodePins[scopeId] ?? [];
@@ -3881,7 +4062,7 @@ export function WorkspaceShell() {
     const name = objectEditorDraft.name.trim();
 
     if (!name) {
-      setDetailError("Object name is required.");
+      setDetailError(copy.persistence.objectNameRequired);
       return;
     }
 
@@ -4135,7 +4316,7 @@ export function WorkspaceShell() {
                 type="button"
               >
                 {objectMentionQuery.mode === "word"
-                  ? `Use "${object.name}" as object`
+                  ? `${copy.workspace.useAsObjectPrefix} "${object.name}" ${copy.workspace.useAsObjectSuffix}`.trim()
                   : object.name}
               </button>
             ))}
@@ -4194,7 +4375,7 @@ export function WorkspaceShell() {
               >
                 {objectCategoryOptions.map((category) => (
                   <option key={category} value={category}>
-                    {formatObjectCategory(category)}
+                    {formatObjectCategory(category, copy)}
                   </option>
                 ))}
               </select>
@@ -4246,7 +4427,7 @@ export function WorkspaceShell() {
               >
                 {objectCategoryOptions.map((category) => (
                   <option key={category} value={category}>
-                    {formatObjectCategory(category)}
+                    {formatObjectCategory(category, copy)}
                   </option>
                 ))}
               </select>
@@ -5095,6 +5276,28 @@ export function WorkspaceShell() {
               </button>
             </div>
 
+            <label className="sidebar-language-field">
+              <span>{copy.workspace.language}</span>
+              <select
+                aria-label={copy.workspace.language}
+                data-testid="language-select"
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                  const nextLanguage = event.target.value;
+
+                  if (isWorkspaceLanguage(nextLanguage)) {
+                    setLanguage(nextLanguage);
+                  }
+                }}
+                value={language}
+              >
+                {languageOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.nativeLabel}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div className="sidebar-action-list">
               <button
                 className="sidebar-action-button"
@@ -5229,10 +5432,12 @@ export function WorkspaceShell() {
                 <span aria-hidden="true" className="sidebar-profile-avatar sidebar-profile-avatar-icon" />
                 <span className="sidebar-profile-copy">
                   <strong>{isAuthenticated ? profileName : copy.persistence.signIn}</strong>
-                  <span>{isAuthenticated ? "Linked account" : "Guest workspace"}</span>
+                  <span>
+                    {isAuthenticated ? copy.workspace.linkedAccount : copy.workspace.guestWorkspace}
+                  </span>
                 </span>
                 <span className="visually-hidden" data-testid="session-mode">
-                  {isAuthenticated ? "authenticated" : "guest"}
+                  {isAuthenticated ? copy.workspace.authenticated : copy.workspace.guest}
                 </span>
               </button>
               <button
@@ -5247,7 +5452,9 @@ export function WorkspaceShell() {
               {isMoreVisible ? (
                 <div className="sidebar-profile-menu">
                   <div className="chip-row">
-                    <span className="badge">{isAuthenticated ? "authenticated" : "guest"}</span>
+                    <span className="badge">
+                      {isAuthenticated ? copy.workspace.authenticated : copy.workspace.guest}
+                    </span>
                     <span className="badge" data-testid="cloud-status-sidebar">
                       {describeCloudStatus(state)}
                     </span>
@@ -5343,7 +5550,7 @@ export function WorkspaceShell() {
         <div className="object-toolbar object-toolbar-compact">
           <div className="object-toolbar-heading">
             <h2>{copy.workspace.objects}</h2>
-            <span>{activeEpisode?.title ?? "Current episode"}</span>
+            <span>{objectLibraryScopeLabel}</span>
           </div>
           <label className="object-search-field object-search-field-compact">
             <span className="visually-hidden">{copy.workspace.objectSearch}</span>
@@ -5502,12 +5709,12 @@ export function WorkspaceShell() {
           <div className="canvas-heading-copy">
             <h2>{copy.workspace.canvas}</h2>
             <span className="visually-hidden" data-testid="node-count">
-              Nodes: {orderedNodes.length}
+              {copy.workspace.nodeCountLabel}: {orderedNodes.length}
             </span>
           </div>
           <div className="canvas-heading-actions">
             <button
-              aria-label="Zoom Out"
+              aria-label={copy.workspace.zoomOut}
               className="button-secondary canvas-zoom-button"
               onClick={() => {
                 setCanvasZoom((current) => clampCanvasZoom(current - 0.1));
@@ -5517,7 +5724,7 @@ export function WorkspaceShell() {
               -
             </button>
             <button
-              aria-label="Reset Zoom"
+              aria-label={copy.workspace.resetZoom}
               className="button-secondary canvas-zoom-readout"
               onClick={() => {
                 setCanvasZoom(1);
@@ -5527,7 +5734,7 @@ export function WorkspaceShell() {
               {Math.round(canvasZoom * 100)}%
             </button>
             <button
-              aria-label="Zoom In"
+              aria-label={copy.workspace.zoomIn}
               className="button-secondary canvas-zoom-button"
               onClick={() => {
                 setCanvasZoom((current) => clampCanvasZoom(current + 0.1));

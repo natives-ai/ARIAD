@@ -35,7 +35,11 @@ import {
   normalizeNodeOrder,
   sortNodesByOrder
 } from "./nodeTree";
-import { createSampleWorkspace } from "./sampleWorkspace";
+import {
+  createSampleWorkspace,
+  ensureEpisode7KoreanComicStructure,
+  ensureEpisode9ComicStructure
+} from "./sampleWorkspace";
 import { createStableId } from "./stableId";
 
 export type WorkspaceSyncStatus =
@@ -358,10 +362,12 @@ function normalizeObjectEpisodeScope(snapshot: StoryWorkspaceSnapshot): StoryWor
       nodeEpisodeByObjectId.get(object.id) ??
       fallbackEpisodeId
   }));
-  const objectEpisodeById = new Map(objects.map((object) => [object.id, object.episodeId]));
+  const objectProjectById = new Map(objects.map((object) => [object.id, object.projectId]));
   const nodes = snapshot.nodes.map((node) => ({
     ...node,
-    objectIds: node.objectIds.filter((objectId) => objectEpisodeById.get(objectId) === node.episodeId)
+    objectIds: node.objectIds.filter(
+      (objectId) => objectProjectById.get(objectId) === node.projectId
+    )
   }));
 
   return {
@@ -656,8 +662,10 @@ export class WorkspacePersistenceController {
         return;
       }
 
-      this.remoteSnapshot = cloneSnapshot(response.snapshot);
-      const registry = this.persistWorkspace(response.snapshot, response.linkage);
+      const responseSnapshot = this.applyStoredSnapshotMigrations(response.snapshot);
+
+      this.remoteSnapshot = cloneSnapshot(responseSnapshot);
+      const registry = this.persistWorkspace(responseSnapshot, response.linkage);
       const cloudProjectCount = await this.getCloudProjectCount(
         current.session.accountId
       );
@@ -669,7 +677,7 @@ export class WorkspacePersistenceController {
         linkage: cloneLinkage(response.linkage),
         registry,
         session: current.session,
-        snapshot: cloneSnapshot(response.snapshot),
+        snapshot: cloneSnapshot(responseSnapshot),
         syncStatus: "synced"
       });
     } catch (error) {
@@ -1273,7 +1281,7 @@ export class WorkspacePersistenceController {
     const targetNode = current.snapshot.nodes.find((node) => node.id === nodeId);
     const targetObject = current.snapshot.objects.find((object) => object.id === objectId);
 
-    if (!targetNode || !targetObject || targetObject.episodeId !== targetNode.episodeId) {
+    if (!targetNode || !targetObject || targetObject.projectId !== targetNode.projectId) {
       return;
     }
 
@@ -1728,6 +1736,16 @@ export class WorkspacePersistenceController {
     }
   }
 
+  private applyStoredSnapshotMigrations(snapshot: StoryWorkspaceSnapshot) {
+    return normalizeObjectEpisodeScope(
+      ensureEpisode7KoreanComicStructure(
+        ensureEpisode9ComicStructure(snapshot, this.now(), this.createId),
+        this.now(),
+        this.createId
+      )
+    );
+  }
+
   private loadOrSeedWorkspace() {
     const registry = this.dependencies.local.getRegistry();
     const activeProjectId =
@@ -1737,7 +1755,7 @@ export class WorkspacePersistenceController {
       const storedSnapshot = this.dependencies.local.getSnapshot(activeProjectId);
 
       if (storedSnapshot) {
-        const snapshot = normalizeObjectEpisodeScope(storedSnapshot);
+        const snapshot = this.applyStoredSnapshotMigrations(storedSnapshot);
         const linkage = this.dependencies.local.getLinkage(activeProjectId);
         const nextRegistry = upsertRegistryEntry(
           registry,
@@ -1754,7 +1772,9 @@ export class WorkspacePersistenceController {
       }
     }
 
-    const snapshot = normalizeObjectEpisodeScope(createSampleWorkspace(this.now(), this.createId));
+    const snapshot = this.applyStoredSnapshotMigrations(
+      createSampleWorkspace(this.now(), this.createId)
+    );
     const nextRegistry = upsertRegistryEntry(
       registry,
       createRegistryEntry(snapshot, null, this.now())
@@ -1824,6 +1844,8 @@ export class WorkspacePersistenceController {
         nextSnapshot = imported.snapshot;
         nextLinkage = imported.linkage;
       }
+
+      nextSnapshot = this.applyStoredSnapshotMigrations(nextSnapshot);
 
       this.remoteSnapshot = cloneSnapshot(nextSnapshot);
       const registry = this.persistWorkspace(nextSnapshot, nextLinkage);

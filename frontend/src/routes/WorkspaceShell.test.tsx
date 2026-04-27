@@ -34,6 +34,18 @@ describe("workspace shell recommendation flow", () => {
     return selectedNodeCard;
   }
 
+  async function createReferenceObject(
+    user: ReturnType<typeof userEvent.setup>,
+    name: string
+  ) {
+    await user.click((await screen.findAllByRole("button", { name: "New Object" }))[0]!);
+
+    const detailEditor = await screen.findByTestId("detail-editor");
+
+    await user.type(within(detailEditor).getByLabelText("Object Name"), name);
+    await user.click(within(detailEditor).getByRole("button", { name: "New Object" }));
+  }
+
   async function getSelectedNodeCard() {
     return (await screen.findByTestId("selected-node-title")).closest(".node-card") as HTMLElement;
   }
@@ -47,6 +59,25 @@ describe("workspace shell recommendation flow", () => {
       key,
       ...options
     });
+  }
+
+  function makeDomRect(rect: {
+    height: number;
+    left: number;
+    top: number;
+    width: number;
+  }): DOMRect {
+    return {
+      bottom: rect.top + rect.height,
+      height: rect.height,
+      left: rect.left,
+      right: rect.left + rect.width,
+      toJSON: () => ({}),
+      top: rect.top,
+      width: rect.width,
+      x: rect.left,
+      y: rect.top
+    } as DOMRect;
   }
 
   it("applies selected keywords directly into the node and persists them", async () => {
@@ -234,6 +265,56 @@ describe("workspace shell recommendation flow", () => {
     expect(screen.queryByRole("button", { name: "Save Keywords" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Refresh Cloud" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("switches workspace language and sends it with recommendation requests", async () => {
+    const requestBodies: unknown[] = [];
+    globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body === "string") {
+        requestBodies.push(JSON.parse(init.body));
+      }
+
+      return new Response(
+        JSON.stringify({
+          suggestions: [
+            {
+              label: "압박 고조",
+              reason: "현재 에피소드 맥락에 맞춘 제안입니다."
+            }
+          ]
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json"
+          },
+          status: 200
+        }
+      );
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.selectOptions(await screen.findByTestId("language-select"), "ko");
+
+    expect(await screen.findByText("캔버스")).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "노드 만들기" }));
+    await user.click(await screen.findByTestId("lane-major"));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+
+    await user.click(within(selectedNodeCard).getByRole("button", { name: /더 보기/i }));
+    await user.click(await screen.findByRole("button", { name: "키워드 제안" }));
+
+    expect(await screen.findByRole("button", { name: "압박 고조" })).toBeInTheDocument();
+    expect(requestBodies).toHaveLength(1);
+    expect(requestBodies[0]).toMatchObject({
+      story: {
+        language: "ko"
+      }
+    });
   });
 
   it("closes the keyword cloud when clicking outside of it", async () => {
@@ -508,7 +589,78 @@ describe("workspace shell recommendation flow", () => {
         })
       ).toBeInTheDocument();
     });
+
+    const finalInlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+    const doorIndex = finalInlineInput.value.indexOf("door");
+
+    expect(doorIndex).toBeGreaterThan(-1);
+
+    finalInlineInput.setSelectionRange(doorIndex + 2, doorIndex + 2);
+    fireEvent.keyDown(finalInlineInput, { key: "Backspace" });
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).queryByText("door", {
+          selector: ".node-object-mention"
+        })
+      ).not.toBeInTheDocument();
+    });
   }, 10000);
+
+  it("positions inline object suggestions outside the selected node", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+    const selectedNodeRect = makeDomRect({
+      height: 220,
+      left: 100,
+      top: 120,
+      width: 300
+    });
+
+    vi.spyOn(selectedNodeCard, "getBoundingClientRect").mockReturnValue(selectedNodeRect);
+    vi.spyOn(inlineInput, "getBoundingClientRect").mockReturnValue(
+      makeDomRect({
+        height: 36,
+        left: 140,
+        top: 190,
+        width: 220
+      })
+    );
+
+    await user.type(inlineInput, "Meet @h");
+
+    const mentionMenu = await waitFor(() => {
+      const menu = document.querySelector(".object-mention-menu") as HTMLElement | null;
+
+      expect(menu).not.toBeNull();
+      return menu as HTMLElement;
+    });
+    const menuLeft = Number.parseFloat(mentionMenu.style.left);
+    const menuTop = Number.parseFloat(mentionMenu.style.top);
+    const overlapsSelectedNode =
+      menuLeft < selectedNodeRect.right &&
+      menuLeft + 272 > selectedNodeRect.left &&
+      menuTop < selectedNodeRect.bottom &&
+      menuTop + 220 > selectedNodeRect.top;
+
+    expect(overlapsSelectedNode).toBe(false);
+    expect(menuLeft).toBeGreaterThanOrEqual(selectedNodeRect.right + 10);
+  });
 
   it("offers existing object names as inline object conversions without @ typing", async () => {
     globalThis.fetch = vi.fn(async () =>
@@ -549,6 +701,56 @@ describe("workspace shell recommendation flow", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("keeps arrow-key selection active in inline object suggestions", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await createReferenceObject(user, "Harbor Gate");
+    await createReferenceObject(user, "Hotel Roof");
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.type(inlineInput, "Meet @h");
+
+    const mentionMenu = document.querySelector(".object-mention-menu") as HTMLElement;
+
+    expect(mentionMenu).not.toBeNull();
+    expect(
+      within(mentionMenu).getByRole("button", { name: "Harbor Gate" })
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(inlineInput, { key: "ArrowDown" });
+    fireEvent.keyUp(inlineInput, { key: "ArrowDown" });
+
+    await waitFor(() => {
+      expect(
+        within(mentionMenu).getByRole("button", { name: "Heroine's Mother" })
+      ).toHaveClass("is-active");
+    });
+
+    fireEvent.keyDown(inlineInput, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("Heroine's Mother", {
+          selector: ".node-object-mention"
+        })
+      ).toBeInTheDocument();
+    });
+  }, 10000);
 
   it("updates the canvas zoom readout from the heading controls", async () => {
     globalThis.fetch = vi.fn(async () =>
@@ -823,6 +1025,85 @@ describe("workspace shell recommendation flow", () => {
       within(objectList).getByRole("button", { name: "Heroine's Mother" })
     ).toBeInTheDocument();
   });
+
+  it("shares the object library between episodes in the same folder", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "New Object" }));
+
+    const detailEditor = await screen.findByTestId("detail-editor");
+
+    await user.type(within(detailEditor).getByLabelText("Object Name"), "Cafe Exit");
+    await user.click(within(detailEditor).getByRole("button", { name: "New Object" }));
+
+    await user.click(await screen.findByRole("button", { name: /New Folder/i }));
+    await user.type(screen.getByPlaceholderText("Name this folder"), "Shared Arc");
+    await user.click(screen.getByRole("button", { name: "Create Folder" }));
+
+    await user.click(await screen.findByRole("button", { name: "More Episode 12" }));
+    await user.click(await screen.findByRole("button", { name: "Add to Folder" }));
+    await user.click(
+      within(document.querySelector(".sidebar-folder-picker") as HTMLElement).getByRole("button", {
+        name: "Shared Arc"
+      })
+    );
+
+    const folderItem = (
+      await screen.findByRole("button", { name: "More Shared Arc" })
+    ).closest(".sidebar-folder-item") as HTMLElement;
+
+    await user.click(within(folderItem).getByRole("button", { name: "More Shared Arc" }));
+    await user.click(await screen.findByRole("button", { name: "Add Episodes" }));
+    await user.click(
+      within(document.querySelector(".sidebar-folder-picker") as HTMLElement).getByRole("button", {
+        name: /Episode 11/
+      })
+    );
+    await user.click(document.body);
+
+    await user.click(within(folderItem).getByRole("button", { name: "Episode 11" }));
+
+    const objectList = await screen.findByTestId("object-list");
+
+    expect(await within(objectList).findByRole("button", { name: "Cafe Exit" })).toBeInTheDocument();
+
+    await createEmptyMajorNode(user);
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.type(inlineInput, "Return through @c");
+
+    const mentionMenu = document.querySelector(".object-mention-menu") as HTMLElement;
+
+    expect(mentionMenu).not.toBeNull();
+    await user.click(within(mentionMenu).getByRole("button", { name: "Cafe Exit" }));
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("Cafe Exit", {
+          selector: ".node-object-mention"
+        })
+      ).toBeInTheDocument();
+    });
+
+    const cafeRow = (await within(objectList).findByRole("button", { name: "Cafe Exit" })).closest(
+      ".object-row"
+    ) as HTMLElement;
+
+    expect(within(cafeRow).getByText("(1)")).toBeInTheDocument();
+  }, 10000);
 
   it("moves episodes into folders, dissolves them, and enables folder-scoped sort mode", async () => {
     globalThis.fetch = vi.fn(async () =>

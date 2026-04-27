@@ -1199,3 +1199,63 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Drag-to-folder, ARIAD rename, and one-line object-library empty text are implemented. Typecheck, unit tests, integration tests, build, standalone generation, full e2e rerun, and diff whitespace checks passed.
 - Warnings / blockers: Full lint still fails on the known repository lint baseline: `WorkspaceShell.tsx` synchronous state updates in effects plus root/dev script global `no-undef` findings. The ARIAD rename intentionally touches package names/imports and workspace metadata, so downstream scripts should now use `@ariad/*` workspace names and `ARIAD_*` environment variables.
 - Approval needed: `none`
+
+### 2026-04-27 / loop-066
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/`, `backend/.data/`, `recommendation/`, root standalone `ARIAD.html`, `PLANS.md`
+- What changed: Converted the user-provided comic page into a non-substitutive ARIAD story-structure seed for local Episode 9: 5 major-event nodes, 10 minor-event nodes, 10 detail nodes, and 5 episode-scoped reference objects. Updated `frontend/src/persistence/sampleWorkspace.ts` so fresh local workspaces and regenerated standalone builds include the Episode 9 structure, updated the ignored demo data file `backend/.data/cloud-store.json` with the same Episode 9 structure, adjusted persistence controller tests so multi-episode seed data is validated by active episode instead of global snapshot count, and regenerated `ARIAD.html`. Also repaired the existing recommendation provider compile blocker by using the language-scoped dynamic suffix table at the keyword suggestion call site.
+- Tests run: `node -e` JSON parse/count checks for `backend/.data/cloud-store.json`; `corepack yarn workspace @ariad/frontend test` outside the sandbox; `corepack yarn typecheck`; `corepack yarn workspace @ariad/recommendation test` outside the sandbox; `corepack yarn build` outside the sandbox; `powershell -ExecutionPolicy Bypass -File scripts/generate-standalone-html.ps1`; `Select-String` marker check against `ARIAD.html`; `git diff --check`
+- Result: Episode 9 now has 25 connected text nodes and 5 reference objects in the local seed and demo data file. Frontend tests, root typecheck, recommendation tests, build, standalone generation, JSON integrity checks, and diff whitespace checks passed.
+- Warnings / blockers: Existing browser `localStorage` profiles are not directly rewritten by repo file edits; users with an already-seeded browser workspace may need to reset local ARIAD storage or import/use the regenerated standalone seed path to see the new Episode 9 data. Several unrelated files were already modified in the worktree and were left intact.
+- Approval needed: `none`
+
+### 2026-04-27 / loop-067
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: validation only, `PLANS.md`
+- What changed: Ran a final lint check after the Episode 9 data update and recorded the current lint state. No product/data code changed in this loop.
+- Tests run: `corepack yarn lint`
+- Result: Lint remains blocked by the known repository baseline: `frontend/src/routes/WorkspaceShell.tsx` React effect-state findings plus root script `no-undef` globals in `scripts/*.mjs`.
+- Warnings / blockers: The lint failures are not introduced by the Episode 9 data seed or the recommendation suffix compile fix, but full lint still cannot be claimed green until the existing baseline cleanup is handled.
+- Approval needed: `none`
+
+### 2026-04-27 / loop-068
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/`, root standalone `ARIAD.html`, `PLANS.md`
+- What changed: Added a local-storage migration so existing browser workspaces with an empty Episode 9 are filled with the previously generated comic structure on load instead of only new seed workspaces receiving it. The migration preserves user-authored Episode 9 nodes by doing nothing when Episode 9 already has nodes, and it also applies to cloud recovery/authenticated snapshot loads before local persistence. Added a regression test for an old stored Episode 9 snapshot with no nodes and regenerated `ARIAD.html`.
+- Tests run: `corepack yarn typecheck`; `corepack yarn workspace @ariad/frontend test` outside the sandbox; `corepack yarn workspace @ariad/recommendation test` outside the sandbox; `corepack yarn build` outside the sandbox; `powershell -ExecutionPolicy Bypass -File scripts/generate-standalone-html.ps1`; `git diff --check`
+- Result: Existing local browser snapshots now migrate Episode 9 on next app load when the episode is empty. Typecheck, frontend tests, recommendation tests, build, standalone generation, and diff whitespace checks passed.
+- Warnings / blockers: If a user's existing Episode 9 already contains any node, the migration intentionally does not overwrite it; in that case the user must clear/reset that episode or manually import the structure. Full lint was not rerun in this loop because loop-067 already confirmed the known unrelated lint baseline remains blocked.
+- Approval needed: `none`
+
+### 2026-04-27 / loop-069
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/`, root standalone `ARIAD.html`, `PLANS.md`
+- What changed: Added Episode 7 as the Korean version of the comic-derived ARIAD structure. Fresh local workspaces now include Episode 7 with 25 Korean text nodes and 5 episode-scoped Korean reference objects, and existing local/browser snapshots now auto-create and fill Episode 7 on load when it is missing or empty. The migration preserves any user-authored Episode 7 that already has nodes. Regenerated `ARIAD.html` so the direct-open standalone path contains the same data and migration.
+- Tests run: `corepack yarn typecheck`; `corepack yarn workspace @ariad/frontend test` outside the sandbox; `corepack yarn workspace @ariad/recommendation test` outside the sandbox; `corepack yarn build` outside the sandbox; `powershell -ExecutionPolicy Bypass -File scripts/generate-standalone-html.ps1`; `Select-String` marker check against `ARIAD.html`; `git diff --check`; `corepack yarn lint`
+- Result: Episode 7 Korean data and existing-local migration are implemented. Typecheck, frontend tests, recommendation tests, build, standalone generation, marker check, and diff whitespace checks passed.
+- Warnings / blockers: `corepack yarn lint` still fails on the known unrelated baseline: React effect-state findings in `WorkspaceShell.tsx` and Node globals not configured for root `scripts/*.mjs`. If a browser already has an Episode 7 with any node, the migration intentionally will not overwrite it.
+- Approval needed: `none`
+
+### 2026-04-27 / loop-070
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/`, root standalone `ARIAD.html`, `PLANS.md`
+- What changed: Fixed the inline object mention suggestion menu so it no longer opens over the node currently being edited. The menu positioning now uses the active textarea rect plus the containing `.node-card` rect, tries non-overlapping right/left/below/above placements, and falls back to the least-overlapping candidate only when viewport space is constrained. The menu CSS now has a bounded width/height with scrolling so the positioning math matches the rendered overlay. Added regression coverage proving the suggestion menu is outside the selected node.
+- Tests run: `corepack yarn typecheck`; `corepack yarn workspace @ariad/frontend test` outside the sandbox after sandbox `spawn EPERM`; `corepack yarn build` outside the sandbox after sandbox `spawn EPERM`; `powershell -ExecutionPolicy Bypass -File scripts/generate-standalone-html.ps1`; `git diff --check`; `corepack yarn lint`
+- Result: Object suggestions now open beside/around the active node instead of covering the node text editor. Typecheck, frontend tests, build, standalone generation, and diff whitespace checks passed.
+- Warnings / blockers: `corepack yarn lint` still fails on the known unrelated baseline: React effect-state findings in `WorkspaceShell.tsx` and Node globals not configured for root `scripts/*.mjs`.
+- Approval needed: `none`
+
+### 2026-04-27 / loop-071
+- Active milestone: Post-baseline support task
+- Agents engaged: Orchestrator
+- Touched zones: `frontend/`, root standalone `ARIAD.html`, `PLANS.md`
+- What changed: Changed the object library scope so episodes inside the same sidebar folder share one reference-object library. The object list, object search/sort, selected-object fallback, object pins, inline object mention suggestions, and inline mention synchronization now use the active episode's folder scope when the episode belongs to a folder; unfiled episodes keep their own episode-local library. Persistence now allows nodes to reference any object in the same project, so shared folder-library references survive attachment and reload normalization instead of being stripped back to same-episode references. The object-library header shows the folder name when the active episode is inside a shared folder. Added frontend coverage for same-folder sharing plus controller coverage for cross-episode project-object attachment. Regenerated `ARIAD.html` from the latest production bundle.
+- Tests run: `corepack yarn typecheck`; `corepack yarn workspace @ariad/frontend test --run WorkspaceShell.test.tsx` outside the sandbox after sandbox `spawn EPERM`; `corepack yarn workspace @ariad/frontend test` outside the sandbox after sandbox `spawn EPERM`; `corepack yarn build` outside the sandbox after sandbox `spawn EPERM`; `powershell -ExecutionPolicy Bypass -File scripts/generate-standalone-html.ps1`; `git diff --check`; `corepack yarn lint`
+- Result: Same-folder episodes now share object-library visibility and can reuse shared objects in inline node mentions without creating duplicate same-name episode-local objects. Typecheck, targeted WorkspaceShell tests, full frontend tests, production build, standalone generation, and diff whitespace checks passed.
+- Warnings / blockers: `corepack yarn lint` still fails on the known repository baseline: React effect-state findings in `WorkspaceShell.tsx` and Node globals not configured for root `scripts/*.mjs`.
+- Approval needed: `none`

@@ -32,6 +32,7 @@ export function buildRecommendationContext(
     request.story.nodeText.trim() ||
     request.story.parentSummary?.trim() ||
     request.story.episodeObjective;
+  const language = request.story.language ?? "en";
 
   return {
     anchors,
@@ -42,6 +43,7 @@ export function buildRecommendationContext(
       "Keep the output concise and useful inside an episode-structure editor."
     ],
     focus,
+    language,
     nodeLevel: request.story.nodeLevel,
     nodeText: request.story.nodeText.trim(),
     objectAnchors,

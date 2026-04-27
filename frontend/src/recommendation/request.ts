@@ -1,5 +1,6 @@
 import type {
   KeywordRecommendationRequest,
+  RecommendationLanguage,
   SentenceRecommendationRequest
 } from "@ariad/recommendation";
 import type { StoryNode, StoryWorkspaceSnapshot } from "@ariad/shared";
@@ -29,7 +30,8 @@ function getObjectAnchors(
 function createStorySnapshot(
   snapshot: StoryWorkspaceSnapshot,
   node: StoryNode,
-  parentNode: StoryNode | null
+  parentNode: StoryNode | null,
+  language: RecommendationLanguage
 ) {
   const activeEpisode =
     snapshot.episodes.find((episode) => episode.id === node.episodeId) ??
@@ -39,6 +41,7 @@ function createStorySnapshot(
     episodeEndpoint: activeEpisode?.endpoint ?? "",
     episodeObjective: activeEpisode?.objective ?? "",
     existingKeywords: node.keywords,
+    language,
     lockedFacts: cleanList([
       snapshot.project.summary,
       activeEpisode?.endpoint ?? "",
@@ -57,10 +60,11 @@ function createStorySnapshot(
 export function createKeywordRecommendationRequest(
   snapshot: StoryWorkspaceSnapshot,
   node: StoryNode,
-  parentNode: StoryNode | null
+  parentNode: StoryNode | null,
+  language: RecommendationLanguage = "en"
 ): KeywordRecommendationRequest {
   return {
-    story: createStorySnapshot(snapshot, node, parentNode)
+    story: createStorySnapshot(snapshot, node, parentNode, language)
   };
 }
 
@@ -68,10 +72,11 @@ export function createSentenceRecommendationRequest(
   snapshot: StoryWorkspaceSnapshot,
   node: StoryNode,
   parentNode: StoryNode | null,
-  selectedKeywords: string[]
+  selectedKeywords: string[],
+  language: RecommendationLanguage = "en"
 ): SentenceRecommendationRequest {
   return {
     selectedKeywords: cleanList(selectedKeywords),
-    story: createStorySnapshot(snapshot, node, parentNode)
+    story: createStorySnapshot(snapshot, node, parentNode, language)
   };
 }

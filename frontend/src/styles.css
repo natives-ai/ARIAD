@@ -247,6 +247,26 @@ textarea {
   text-align: left;
 }
 
+.sidebar-language-field {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(22, 35, 43, 0.08);
+  border-radius: 1rem;
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.sidebar-language-field span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sidebar-language-field select {
+  padding-block: 0.55rem;
+}
+
 .sidebar-action-icon {
   color: var(--accent);
   font-weight: 700;
@@ -1800,12 +1820,17 @@ textarea {
   box-shadow: 0 1rem 2rem rgba(22, 35, 43, 0.1);
   display: grid;
   gap: 0.35rem;
+  max-height: min(13.75rem, calc(100vh - 1.5rem));
   min-width: 13rem;
+  overflow-y: auto;
   padding: 0.5rem;
+  width: min(17rem, calc(100vw - 1.5rem));
 }
 
 .object-mention-option {
   justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
   width: 100%;
 }
 

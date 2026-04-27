@@ -24,6 +24,14 @@ function removeById<T extends { id: string }>(items: T[], id: string) {
   return items.filter((entry) => entry.id !== id);
 }
 
+function activeEpisodeNodes(snapshot: StoryWorkspaceSnapshot) {
+  return snapshot.nodes.filter((node) => node.episodeId === snapshot.project.activeEpisodeId);
+}
+
+function activeEpisodeObjects(snapshot: StoryWorkspaceSnapshot) {
+  return snapshot.objects.filter((object) => object.episodeId === snapshot.project.activeEpisodeId);
+}
+
 class MemoryStorage implements StorageLike {
   private readonly values = new Map<string, string>();
 
@@ -312,6 +320,127 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("migrates an existing empty Episode 9 local snapshot with comic structure data", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const local = new LocalPersistenceStore(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local,
+      now
+    });
+
+    await controller.initialize();
+
+    const seededSnapshot = controller.getState()!.snapshot;
+    const episode9 = seededSnapshot.episodes.find(
+      (episode) => episode.title === "Episode 9"
+    )!;
+    const oldStoredSnapshot: StoryWorkspaceSnapshot = {
+      ...seededSnapshot,
+      episodes: seededSnapshot.episodes.map((episode) =>
+        episode.id === episode9.id
+          ? {
+              ...episode,
+              endpoint: "The cafe owner notices the argument before the couple reacts.",
+              objective: "Keep a quieter fallback beat ready for pacing changes."
+            }
+          : episode
+      ),
+      nodes: seededSnapshot.nodes.filter((node) => node.episodeId !== episode9.id),
+      objects: seededSnapshot.objects.filter((object) => object.episodeId !== episode9.id)
+    };
+
+    local.saveSnapshot(oldStoredSnapshot);
+    controller.dispose();
+
+    const reloadedController = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local,
+      now
+    });
+
+    await reloadedController.initialize();
+
+    const state = reloadedController.getState()!;
+    const migratedEpisode9 = state.snapshot.episodes.find(
+      (episode) => episode.id === episode9.id
+    )!;
+
+    expect(state.snapshot.nodes.filter((node) => node.episodeId === episode9.id)).toHaveLength(
+      25
+    );
+    expect(
+      state.snapshot.objects.filter((object) => object.episodeId === episode9.id)
+    ).toHaveLength(5);
+    expect(migratedEpisode9.objective).toBe(
+      "Capture the funeral-to-afterlife handoff as an editable ARIAD node structure."
+    );
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(1);
+
+    reloadedController.dispose();
+  });
+
+  it("creates Episode 7 with Korean comic structure data for existing local snapshots", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const local = new LocalPersistenceStore(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local,
+      now
+    });
+
+    await controller.initialize();
+
+    const seededSnapshot = controller.getState()!.snapshot;
+    const oldStoredSnapshot: StoryWorkspaceSnapshot = {
+      ...seededSnapshot,
+      episodes: seededSnapshot.episodes.filter((episode) => episode.title !== "Episode 7"),
+      nodes: seededSnapshot.nodes.filter((node) => {
+        const episode = seededSnapshot.episodes.find((entry) => entry.id === node.episodeId);
+        return episode?.title !== "Episode 7";
+      }),
+      objects: seededSnapshot.objects.filter((object) => {
+        const episode = seededSnapshot.episodes.find((entry) => entry.id === object.episodeId);
+        return episode?.title !== "Episode 7";
+      })
+    };
+
+    local.saveSnapshot(oldStoredSnapshot);
+    controller.dispose();
+
+    const reloadedController = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local,
+      now
+    });
+
+    await reloadedController.initialize();
+
+    const state = reloadedController.getState()!;
+    const episode7 = state.snapshot.episodes.find((episode) => episode.title === "Episode 7")!;
+    const episode7Nodes = state.snapshot.nodes.filter((node) => node.episodeId === episode7.id);
+    const episode7Objects = state.snapshot.objects.filter(
+      (object) => object.episodeId === episode7.id
+    );
+
+    expect(episode7.objective).toBe("제공된 만화 장면을 한국어 ARIAD 구조 노드로 정리한다.");
+    expect(episode7Nodes).toHaveLength(25);
+    expect(episode7Objects).toHaveLength(5);
+    expect(episode7Nodes[0]?.text).toContain("장례식 장면");
+    expect(episode7Objects.map((object) => object.name)).toContain("김자홍");
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(1);
+
+    reloadedController.dispose();
+  });
+
   it("imports on sign-in, syncs new nodes, and recovers from cloud state", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
@@ -343,12 +472,12 @@ describe("workspace persistence controller", () => {
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(2);
     expect(state.syncStatus).toBe("synced");
 
     const remoteAfterSync = await cloud.getProject("demo-account", initialProjectId);
 
-    expect(remoteAfterSync.snapshot?.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(remoteAfterSync.snapshot!)).toHaveLength(2);
 
     const recoveredSnapshot = cloneSnapshot(remoteAfterSync.snapshot!);
 
@@ -427,7 +556,7 @@ describe("workspace persistence controller", () => {
 
     let state = controller.getState()!;
 
-    expect(state.snapshot.nodes.map((node) => node.id)).toEqual([
+    expect(activeEpisodeNodes(state.snapshot).map((node) => node.id)).toEqual([
       initialMajorId,
       minorId,
       detailId,
@@ -444,7 +573,7 @@ describe("workspace persistence controller", () => {
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes.map((node) => node.id)).toEqual([
+    expect(activeEpisodeNodes(state.snapshot).map((node) => node.id)).toEqual([
       secondMajorId,
       initialMajorId,
       minorId,
@@ -580,7 +709,7 @@ describe("workspace persistence controller", () => {
 
     const state = controller.getState()!;
 
-    expect(state.snapshot.objects).toHaveLength(2);
+    expect(activeEpisodeObjects(state.snapshot)).toHaveLength(2);
     expect(state.snapshot.nodes.find((node) => node.id === nodeId)?.objectIds).toContain(
       objectId
     );
@@ -604,13 +733,49 @@ describe("workspace persistence controller", () => {
       deletedState.snapshot.project.id
     );
 
-    expect(deletedState.snapshot.objects).toHaveLength(1);
+    expect(activeEpisodeObjects(deletedState.snapshot)).toHaveLength(1);
     expect(
       deletedState.snapshot.nodes.find((node) => node.id === nodeId)?.objectIds
     ).not.toContain(objectId);
     expect(
       remoteAfterDelete.snapshot?.objects.some((object) => object.id === objectId)
     ).toBe(false);
+
+    controller.dispose();
+  });
+
+  it("allows a project object to attach to a node from another episode", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const controller = new WorkspacePersistenceController({
+      auth: new StubAuthBoundary(storage, "test"),
+      cloud: new FakeCloudPersistenceGateway(now),
+      flushDebounceMs: 0,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const objectEpisodeId = controller.getState()!.snapshot.project.activeEpisodeId;
+    const objectId = await controller.createObject({
+      category: "place",
+      name: "Shared Cafe",
+      summary: "A reusable location anchor across an arc."
+    });
+    const targetNode = controller
+      .getState()!
+      .snapshot.nodes.find((node) => node.episodeId !== objectEpisodeId);
+
+    expect(objectId).toBeTruthy();
+    expect(targetNode).toBeTruthy();
+
+    await controller.selectEpisode(targetNode!.episodeId);
+    await controller.attachObjectToNode(targetNode!.id, objectId!);
+
+    expect(
+      controller.getState()!.snapshot.nodes.find((node) => node.id === targetNode!.id)?.objectIds
+    ).toContain(objectId);
 
     controller.dispose();
   });
@@ -635,7 +800,7 @@ describe("workspace persistence controller", () => {
 
     let state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(2);
     expect(state.syncStatus).toBe("error");
     expect(state.lastError).toBe("transient_sync_failure");
 
@@ -643,13 +808,13 @@ describe("workspace persistence controller", () => {
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(2);
     expect(state.syncStatus).toBe("synced");
     expect(state.lastError).toBeNull();
 
     const remoteSnapshot = await cloud.getProject("demo-account", state.snapshot.project.id);
 
-    expect(remoteSnapshot.snapshot?.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(remoteSnapshot.snapshot!)).toHaveLength(2);
 
     controller.dispose();
   });
@@ -672,13 +837,13 @@ describe("workspace persistence controller", () => {
     const pastedRootId = await controller.pasteNodeTree(
       collectSubtreeNodes(initialState.snapshot.nodes, copiedRootId),
       copiedRootId,
-      initialState.snapshot.nodes.length
+      activeEpisodeNodes(initialState.snapshot).length
     );
 
     let state = controller.getState()!;
 
     expect(pastedRootId).toBeTruthy();
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(2);
     expect(state.history.canUndo).toBe(true);
     expect(state.snapshot.nodes.some((node) => node.id === pastedRootId)).toBe(true);
 
@@ -686,14 +851,14 @@ describe("workspace persistence controller", () => {
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(1);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(1);
     expect(state.history.canRedo).toBe(true);
 
     await controller.redo();
 
     state = controller.getState()!;
 
-    expect(state.snapshot.nodes).toHaveLength(2);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(2);
     expect(state.snapshot.nodes.some((node) => node.id === pastedRootId)).toBe(true);
 
     controller.dispose();
@@ -837,7 +1002,7 @@ describe("workspace persistence controller", () => {
       (item) => item.sourceNodeId === majorId
     ).at(-1);
 
-    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(activeEpisodeNodes(state.snapshot)).toHaveLength(0);
     expect(parkedItem).toBeTruthy();
 
     await controller.restoreDrawerItem(parkedItem!.id, 0);
@@ -845,7 +1010,10 @@ describe("workspace persistence controller", () => {
     state = controller.getState()!;
 
     expect(state.snapshot.temporaryDrawer).toHaveLength(1);
-    expect(state.snapshot.nodes.map((node) => node.id)).toEqual([majorId, minorId]);
+    expect(activeEpisodeNodes(state.snapshot).map((node) => node.id)).toEqual([
+      majorId,
+      minorId
+    ]);
     expect(state.snapshot.nodes.find((node) => node.id === majorId)?.keywords).toEqual([
       "meeting",
       "pressure",
