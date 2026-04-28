@@ -14,7 +14,7 @@ import type {
 const defaultGeminiModel = "gemini-2.5-flash-lite";
 const defaultGeminiTimeoutMs = 4000;
 const defaultGeminiCacheTtlMs = 30000;
-const defaultGeminiMaxSuggestions = 10;
+const defaultGeminiMaxSuggestions = 9;
 const maxAllowedSuggestions = 25;
 const maxCacheEntries = 200;
 

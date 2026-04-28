@@ -547,6 +547,80 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
+  it("renders at most nine keyword slots even when recommendation returns more", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          suggestions: [
+            { label: "k1", reason: "r1" },
+            { label: "k2", reason: "r2" },
+            { label: "k3", reason: "r3" },
+            { label: "k4", reason: "r4" },
+            { label: "k5", reason: "r5" },
+            { label: "k6", reason: "r6" },
+            { label: "k7", reason: "r7" },
+            { label: "k8", reason: "r8" },
+            { label: "k9", reason: "r9" },
+            { label: "k10", reason: "r10" },
+            { label: "k11", reason: "r11" },
+            { label: "k12", reason: "r12" }
+          ]
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json"
+          },
+          status: 200
+        }
+      )
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId(/^keyword-suggestion-\d+$/)).toHaveLength(9);
+    });
+  });
+
+  it("shows nine loading skeleton slots while keyword recommendations are in flight", async () => {
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Promise<Response>(() => {
+          // 의도적으로 unresolved 상태를 유지해 로딩 스켈레톤을 검증합니다.
+        });
+      }
+
+      return Promise.resolve(
+        new Response(JSON.stringify({ message: "not_found" }), {
+          headers: {
+            "Content-Type": "application/json"
+          },
+          status: 404
+        })
+      );
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId(/^keyword-suggestion-skeleton-\d+$/)).toHaveLength(9);
+    });
+  });
+
   it("stops node typing when clicking outside the inline editor", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -1373,6 +1447,17 @@ describe("workspace shell recommendation flow", () => {
       expect(activeMinorNode).toHaveClass("is-selected");
     });
 
+    const inlineInput = within(activeMinorNode).getByPlaceholderText("Type the beat");
+    await user.clear(inlineInput);
+    await user.type(inlineInput, "Minor beat stays visually locked for later revision.");
+    fireEvent.blur(inlineInput);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("selected-node-title")).toHaveTextContent(
+        "Minor beat stays visually locked for later revision."
+      );
+    });
+
     await user.click(within(activeMinorNode).getByRole("button", { name: /More/i }));
     await user.click(await screen.findByRole("button", { name: "Important" }));
     await user.click(within(activeMinorNode).getByRole("button", { name: /More/i }));
@@ -1396,10 +1481,7 @@ describe("workspace shell recommendation flow", () => {
     expect(within(activeMinorNode).getByRole("button", { name: "Unfold" })).toBeInTheDocument();
 
     await user.click(within(activeMinorNode).getByRole("button", { name: "Unfold" }));
-    const inlineInput = within(activeMinorNode).getByPlaceholderText("Type the beat");
-    await user.clear(inlineInput);
-    await user.type(inlineInput, "Minor beat stays visually locked for later revision.");
-    fireEvent.blur(inlineInput);
+    expect(within(activeMinorNode).queryByRole("textbox")).not.toBeInTheDocument();
 
     unmount();
     render(<WorkspaceShell />);
@@ -1512,8 +1594,10 @@ describe("workspace shell recommendation flow", () => {
       );
       const restoredTargetNode = screen.getByTestId(targetTestId);
       const restoredTargetMetrics = getNodeCardMetrics(restoredTargetNode);
+      const restoredTargetBottom = restoredTargetMetrics.top + restoredTargetMetrics.height;
 
-      expect(restoredTimelineEndY).toBeCloseTo(customCanvasUiState.timelineEndY, 2);
+      expect(restoredTimelineEndY).toBeCloseTo(restoredTargetBottom, 2);
+      expect(restoredTimelineEndY).toBeLessThan(customCanvasUiState.timelineEndY);
       expect(
         Math.abs(restoredSecondDividerLeft - customCanvasUiState.laneDividerXs.second)
       ).toBeLessThanOrEqual(40);
@@ -1732,7 +1816,7 @@ describe("workspace shell recommendation flow", () => {
     });
 
     const shrunkTimeline = getTimelineSpan();
-    expect(shrunkTimeline.endTop).toBeLessThan(initialTimeline.endTop);
+    expect(shrunkTimeline.endTop).toBeLessThanOrEqual(initialTimeline.endTop);
 
     await user.click(screen.getByRole("button", { name: "Create Node" }));
     await user.click(screen.getByTestId("lane-major"));
@@ -1914,6 +1998,162 @@ describe("workspace shell recommendation flow", () => {
 
     expect(Math.abs(timelineEndTopAfter - endNodeBottomAfter)).toBeLessThan(0.6);
     expect(screen.getByTestId(nonEndMajorNodeId)).not.toHaveClass("is-end-node");
+  });
+
+  it("keeps major timeline end anchored when dragging a minor below the last major", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+
+    const getMinorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-minor")) as HTMLElement[];
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    await waitFor(() => {
+      expect(getMinorNodes()).toHaveLength(1);
+    });
+
+    const minorNode = getMinorNodes()[0];
+    const endMajorBefore = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(minorNode instanceof HTMLElement)) {
+      throw new Error("minor_node_not_found_for_timeline_anchor_drag");
+    }
+
+    if (!(endMajorBefore instanceof HTMLElement)) {
+      throw new Error("end_major_node_not_found_for_minor_drag");
+    }
+
+    const minorNodeId = minorNode.getAttribute("data-testid");
+
+    if (!minorNodeId) {
+      throw new Error("minor_node_testid_missing_for_timeline_anchor_drag");
+    }
+
+    const minorMetricsBefore = getNodeCardMetrics(minorNode);
+    const timelineEndHandleBefore = screen.getByRole("button", { name: "Move timeline end" });
+    const handleTopBefore = parseCssPixels((timelineEndHandleBefore as HTMLElement).style.top);
+
+    fireEvent.pointerDown(minorNode, {
+      button: 0,
+      clientX: minorMetricsBefore.left + 36,
+      clientY: minorMetricsBefore.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: minorMetricsBefore.left + 42,
+      clientY: handleTopBefore + 520
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const minorNodeAfter = screen.getByTestId(minorNodeId);
+      const endMajorAfter = document.querySelector(".node-card-level-major.is-end-node");
+      const timelineEndHandleAfter = screen.getByRole("button", { name: "Move timeline end" });
+
+      if (!(endMajorAfter instanceof HTMLElement)) {
+        throw new Error("end_major_node_not_found_after_minor_drag");
+      }
+
+      const minorMetricsAfter = getNodeCardMetrics(minorNodeAfter);
+      const minorBottomAfter = minorMetricsAfter.top + minorMetricsAfter.height;
+      const timelineEndTopAfter = parseCssPixels(
+        (timelineEndHandleAfter as HTMLElement).style.top
+      );
+      const endMajorBottomAfter =
+        parseCssPixels(endMajorAfter.style.top) + parseCssPixels(endMajorAfter.style.height);
+
+      expect(minorBottomAfter).toBeGreaterThan(timelineEndTopAfter + 80);
+      expect(Math.abs(timelineEndTopAfter - endMajorBottomAfter)).toBeLessThan(0.6);
+    });
+  });
+
+  it("keeps major timeline end anchored when resizing a minor below the last major", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+
+    const getMinorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-minor")) as HTMLElement[];
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    await waitFor(() => {
+      expect(getMinorNodes()).toHaveLength(1);
+    });
+
+    const minorNode = getMinorNodes()[0];
+
+    if (!(minorNode instanceof HTMLElement)) {
+      throw new Error("minor_node_not_found_for_timeline_anchor_resize");
+    }
+
+    const minorNodeId = minorNode.getAttribute("data-testid");
+
+    if (!minorNodeId) {
+      throw new Error("minor_node_testid_missing_for_timeline_anchor_resize");
+    }
+
+    const minorMetricsBefore = getNodeCardMetrics(minorNode);
+
+    await user.click(minorNode);
+    fireEvent.pointerDown(
+      within(minorNode).getByRole("button", { name: "Resize vertically" }),
+      {
+        button: 0,
+        clientX: minorMetricsBefore.left + 120,
+        clientY: minorMetricsBefore.top + 20
+      }
+    );
+    fireEvent.pointerMove(window, {
+      clientX: minorMetricsBefore.left + 120,
+      clientY: minorMetricsBefore.top + 640
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const minorNodeAfter = screen.getByTestId(minorNodeId);
+      const endMajorAfter = document.querySelector(".node-card-level-major.is-end-node");
+      const timelineEndHandleAfter = screen.getByRole("button", { name: "Move timeline end" });
+
+      if (!(endMajorAfter instanceof HTMLElement)) {
+        throw new Error("end_major_node_not_found_after_minor_resize");
+      }
+
+      const minorMetricsAfter = getNodeCardMetrics(minorNodeAfter);
+      const minorBottomAfter = minorMetricsAfter.top + minorMetricsAfter.height;
+      const timelineEndTopAfter = parseCssPixels(
+        (timelineEndHandleAfter as HTMLElement).style.top
+      );
+      const endMajorBottomAfter =
+        parseCssPixels(endMajorAfter.style.top) + parseCssPixels(endMajorAfter.style.height);
+
+      expect(minorMetricsAfter.height).toBeGreaterThan(500);
+      expect(minorBottomAfter).toBeGreaterThan(timelineEndTopAfter + 80);
+      expect(Math.abs(timelineEndTopAfter - endMajorBottomAfter)).toBeLessThan(0.6);
+    });
   });
 
   it("recomputes timeline end when dragging the previous end major node away", async () => {
@@ -2353,6 +2593,53 @@ describe("workspace shell recommendation flow", () => {
     expect(
       within(selectedNode).queryByRole("button", { name: "Resize diagonally" })
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps fixed nodes read-only and hides keyword recommendations", async () => {
+    let keywordRequestCount = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+
+      if (url.endsWith("/recommendation/keywords")) {
+        keywordRequestCount += 1;
+        return new Response(JSON.stringify({ suggestions: [] }), {
+          headers: {
+            "Content-Type": "application/json"
+          }
+        });
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    const selectedNode = await getSelectedNodeCard();
+    const inlineInput = within(selectedNode).getByRole("textbox");
+    await user.clear(inlineInput);
+    await user.type(inlineInput, "Fixed node text");
+    fireEvent.blur(inlineInput);
+
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Fixed" }));
+
+    await waitFor(() => {
+      expect(selectedNode).toHaveClass("is-fixed");
+    });
+
+    expect(within(selectedNode).queryByRole("textbox")).not.toBeInTheDocument();
+
+    await user.click(within(selectedNode).getByRole("button", { name: /More/i }));
+
+    expect(screen.queryByRole("button", { name: "Keyword Suggestions" })).not.toBeInTheDocument();
+    expect(keywordRequestCount).toBe(0);
   });
 
   it("keeps vertical resize shrink delta consistent with expansion delta", async () => {

@@ -6,6 +6,9 @@ import type {
 } from "../contracts/index.js";
 import type { RecommendationProvider } from "./types.js";
 
+const defaultKeywordSuggestionLimit = 9;
+const maxKeywordSuggestionLimit = 25;
+
 const fillerWords = new Set([
   "a",
   "an",
@@ -136,8 +139,21 @@ function extractAnchorPhrases(context: RecommendationContext) {
   return cleanList(phrases).slice(0, 6);
 }
 
-// 노드 레벨과 앵커 기반으로 25개 키워드 클라우드를 생성합니다.
-function buildKeywordSuggestions(context: RecommendationContext) {
+// 추천 개수 옵션을 안전한 범위로 정규화합니다.
+function resolveKeywordSuggestionLimit(value: number | undefined) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return defaultKeywordSuggestionLimit;
+  }
+
+  return Math.min(value, maxKeywordSuggestionLimit);
+}
+
+// 노드 레벨과 앵커 기반으로 키워드 클라우드를 생성합니다.
+function buildKeywordSuggestions(
+  context: RecommendationContext,
+  maxSuggestions = defaultKeywordSuggestionLimit
+) {
+  const limit = resolveKeywordSuggestionLimit(maxSuggestions);
   const suggestions: KeywordSuggestion[] = [];
   const seenLabels = new Set<string>();
 
@@ -181,7 +197,7 @@ function buildKeywordSuggestions(context: RecommendationContext) {
     });
   }
 
-  while (suggestions.length < 25) {
+  while (suggestions.length < limit) {
     const index = suggestions.length + 1;
     pushSuggestion({
       label: `${toTitleCase(context.nodeLevel)} cue ${index}`,
@@ -189,7 +205,7 @@ function buildKeywordSuggestions(context: RecommendationContext) {
     });
   }
 
-  return suggestions.slice(0, 25);
+  return suggestions.slice(0, limit);
 }
 
 // 문장 추천에 쓰일 focus를 짧게 축약합니다.
@@ -296,14 +312,18 @@ export function createStaticRecommendationProvider(
 }
 
 // 휴리스틱 규칙 기반 추천 provider를 생성합니다.
-export function createHeuristicRecommendationProvider(): RecommendationProvider {
+export function createHeuristicRecommendationProvider(
+  options: {
+    maxSuggestions?: number;
+  } = {}
+): RecommendationProvider {
   return {
     async requestKeywords(context) {
       if (!context.focus.trim()) {
         return [];
       }
 
-      return buildKeywordSuggestions(context);
+      return buildKeywordSuggestions(context, options.maxSuggestions);
     },
     async requestSentences(context) {
       if (context.selectedKeywords.length === 0) {

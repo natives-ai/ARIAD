@@ -10,6 +10,9 @@ import {
 } from "./workspaceShell.constants";
 import type { ObjectMentionQuery } from "./workspaceShell.types";
 
+// 키워드 클라우드 고정 슬롯 수를 정의합니다.
+export const keywordCloudSlotCount = 9;
+
 export function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -237,8 +240,21 @@ export function buildDisplayedKeywordSuggestions(
   suggestions: KeywordSuggestion[],
   refreshCycle: number
 ) {
-  const selectedLookup = new Set(selectedKeywords.map((keyword) => keyword.toLowerCase()));
-  const pinnedSuggestions = selectedKeywords.map((keyword) => {
+  const normalizedSelectedKeywords: string[] = [];
+  const selectedLookup = new Set<string>();
+
+  for (const keyword of selectedKeywords) {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+
+    if (!normalizedKeyword || selectedLookup.has(normalizedKeyword)) {
+      continue;
+    }
+
+    selectedLookup.add(normalizedKeyword);
+    normalizedSelectedKeywords.push(keyword.trim());
+  }
+
+  const pinnedSuggestions = normalizedSelectedKeywords.map((keyword) => {
     const existingSuggestion =
       suggestions.find(
         (suggestion) => suggestion.label.toLowerCase() === keyword.toLowerCase()
@@ -251,12 +267,26 @@ export function buildDisplayedKeywordSuggestions(
       }
     );
   });
-  const remainingSuggestions = suggestions.filter(
-    (suggestion) => !selectedLookup.has(suggestion.label.toLowerCase())
-  );
+  const remainingSuggestions: KeywordSuggestion[] = [];
+  const remainingLookup = new Set<string>();
+
+  for (const suggestion of suggestions) {
+    const normalizedLabel = suggestion.label.trim().toLowerCase();
+
+    if (
+      !normalizedLabel ||
+      selectedLookup.has(normalizedLabel) ||
+      remainingLookup.has(normalizedLabel)
+    ) {
+      continue;
+    }
+
+    remainingLookup.add(normalizedLabel);
+    remainingSuggestions.push(suggestion);
+  }
 
   if (remainingSuggestions.length === 0) {
-    return pinnedSuggestions.slice(0, 25);
+    return pinnedSuggestions.slice(0, keywordCloudSlotCount);
   }
 
   const rotation = refreshCycle > 0 ? refreshCycle % remainingSuggestions.length : 0;
@@ -268,7 +298,7 @@ export function buildDisplayedKeywordSuggestions(
           ...remainingSuggestions.slice(0, rotation)
         ];
 
-  return [...pinnedSuggestions, ...rotatedSuggestions].slice(0, 25);
+  return [...pinnedSuggestions, ...rotatedSuggestions].slice(0, keywordCloudSlotCount);
 }
 
 export function toggleInlineKeywordToken(

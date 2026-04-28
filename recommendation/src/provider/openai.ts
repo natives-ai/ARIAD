@@ -12,28 +12,33 @@ import type {
 } from "./types.js";
 
 const defaultOpenAiModel = "gpt-4.1-mini";
+const defaultOpenAiMaxSuggestions = 9;
+const maxAllowedSuggestions = 25;
 
-const keywordSuggestionJsonSchema = {
-  additionalProperties: false,
-  properties: {
-    suggestions: {
-      items: {
-        additionalProperties: false,
-        properties: {
-          label: { type: "string" },
-          reason: { type: "string" }
+// OpenAI 구조화 출력 스키마를 추천 개수에 맞게 생성합니다.
+function buildKeywordSuggestionJsonSchema(maxSuggestions: number) {
+  return {
+    additionalProperties: false,
+    properties: {
+      suggestions: {
+        items: {
+          additionalProperties: false,
+          properties: {
+            label: { type: "string" },
+            reason: { type: "string" }
+          },
+          required: ["label", "reason"],
+          type: "object"
         },
-        required: ["label", "reason"],
-        type: "object"
-      },
-      maxItems: 25,
-      minItems: 1,
-      type: "array"
-    }
-  },
-  required: ["suggestions"],
-  type: "object"
-} as const;
+        maxItems: maxSuggestions,
+        minItems: 1,
+        type: "array"
+      }
+    },
+    required: ["suggestions"],
+    type: "object"
+  } as const;
+}
 
 // 객체 레코드 여부를 판별합니다.
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -55,8 +60,17 @@ function normalizeModel(value: string | undefined) {
   return value?.trim() || defaultOpenAiModel;
 }
 
+// 최대 추천 개수를 안전한 범위로 정규화합니다.
+function resolveMaxSuggestions(value: number | undefined) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return defaultOpenAiMaxSuggestions;
+  }
+
+  return Math.min(value, maxAllowedSuggestions);
+}
+
 // 요청에 포함할 제약/앵커 정보를 OpenAI 입력 텍스트로 구성합니다.
-function buildPrompt(context: RecommendationContext) {
+function buildPrompt(context: RecommendationContext, maxSuggestions: number) {
   const anchors = context.anchors.filter(Boolean).slice(0, 20);
   const constraints = context.constraints.filter(Boolean);
   const selectedKeywords = context.selectedKeywords.filter(Boolean).slice(0, 12);
@@ -82,7 +96,7 @@ function buildPrompt(context: RecommendationContext) {
     anchors.length > 0 ? `Context anchors: ${anchors.join(" | ")}` : "Context anchors: (none)",
     "",
     "Output requirements:",
-    "- Provide 12 to 25 suggestions.",
+    `- Provide up to ${maxSuggestions} suggestions.`,
     "- label: short keyword phrase in English.",
     "- reason: one concise sentence in English.",
     "- Keep output strictly in the given JSON schema."
@@ -90,11 +104,15 @@ function buildPrompt(context: RecommendationContext) {
 }
 
 // Responses API 요청 페이로드를 구성합니다.
-function buildResponsesRequest(context: RecommendationContext, model: string) {
+function buildResponsesRequest(
+  context: RecommendationContext,
+  model: string,
+  maxSuggestions: number
+) {
   return {
     input: [
       {
-        content: buildPrompt(context),
+        content: buildPrompt(context, maxSuggestions),
         role: "user"
       }
     ],
@@ -102,7 +120,7 @@ function buildResponsesRequest(context: RecommendationContext, model: string) {
     text: {
       format: {
         name: "keyword_suggestions",
-        schema: keywordSuggestionJsonSchema,
+        schema: buildKeywordSuggestionJsonSchema(maxSuggestions),
         strict: true,
         type: "json_schema"
       }
@@ -181,7 +199,7 @@ function parseOutputJson(text: string) {
 }
 
 // 파싱된 구조화 결과를 KeywordSuggestion 배열로 검증/정규화합니다.
-function parseKeywordSuggestions(value: unknown): KeywordSuggestion[] {
+function parseKeywordSuggestions(value: unknown, maxSuggestions: number): KeywordSuggestion[] {
   if (!isRecord(value) || !Array.isArray(value.suggestions)) {
     throw new Error("structured_output_invalid");
   }
@@ -215,15 +233,18 @@ function parseKeywordSuggestions(value: unknown): KeywordSuggestion[] {
     throw new Error("structured_output_invalid");
   }
 
-  return normalized.slice(0, 25);
+  return normalized.slice(0, maxSuggestions);
 }
 
 // 다양한 응답 형태에서 키워드 구조를 추출합니다.
-function extractKeywordSuggestions(payload: unknown): KeywordSuggestion[] {
+function extractKeywordSuggestions(
+  payload: unknown,
+  maxSuggestions: number
+): KeywordSuggestion[] {
   const parsedOutput = readOutputParsed(payload);
 
   if (parsedOutput !== null) {
-    return parseKeywordSuggestions(parsedOutput);
+    return parseKeywordSuggestions(parsedOutput, maxSuggestions);
   }
 
   const outputText = readOutputText(payload);
@@ -232,7 +253,7 @@ function extractKeywordSuggestions(payload: unknown): KeywordSuggestion[] {
     throw new Error("structured_output_invalid");
   }
 
-  return parseKeywordSuggestions(parseOutputJson(outputText));
+  return parseKeywordSuggestions(parseOutputJson(outputText), maxSuggestions);
 }
 
 // provider 내부 에러를 표준 코드 메시지로 정규화합니다.
@@ -270,6 +291,7 @@ export function createOpenAiRecommendationProvider(
   options: OpenAiRecommendationProviderOptions
 ): RecommendationProvider {
   const model = normalizeModel(options.model);
+  const maxSuggestions = resolveMaxSuggestions(options.maxSuggestions);
   const fallbackProvider = options.fallbackProvider;
 
   return {
@@ -280,8 +302,10 @@ export function createOpenAiRecommendationProvider(
 
       try {
         const client = resolveClient(options);
-        const payload = await client.responses.create(buildResponsesRequest(context, model));
-        return extractKeywordSuggestions(payload);
+        const payload = await client.responses.create(
+          buildResponsesRequest(context, model, maxSuggestions)
+        );
+        return extractKeywordSuggestions(payload, maxSuggestions);
       } catch (error) {
         if (fallbackProvider) {
           return fallbackProvider.requestKeywords(context);

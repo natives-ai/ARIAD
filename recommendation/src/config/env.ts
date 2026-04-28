@@ -152,7 +152,7 @@ export function loadRecommendationEnv(): RecommendationEnv {
       false
     ),
     maxSuggestions: Math.min(
-      parsePositiveInteger(process.env.RECOMMENDATION_MAX_SUGGESTIONS, 10),
+      parsePositiveInteger(process.env.RECOMMENDATION_MAX_SUGGESTIONS, 9),
       25
     ),
     model: process.env.RECOMMENDATION_MODEL ?? resolveDefaultModel(provider),

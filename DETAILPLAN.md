@@ -4932,3 +4932,252 @@ sample source:
 - `WorkspaceShell.tsx` same-file 충돌 위험이 큽니다
 - 저장 시점을 공격적으로 바꾸면
   기존 blur/paste/mention 상호작용과 충돌할 수 있습니다
+
+## detail-026 / 키워드 클라우드 3x3 고정 배열 및 로딩 모션
+
+이 섹션은 인수인계용으로,
+FE / BE / Service 담당 세션이 각각 확인할 문제와 방향만 남깁니다.
+
+요구 요약:
+
+- 키워드 클라우드를 현재 5x2 느낌이 아니라 3x3 배열로 표시
+- 추천 생성 시간 동안 텍스트만 보이지 말고 로딩 모션 표시
+- 사용자가 이미 선택한 키워드가 있으면 반드시 포함
+- 화면에는 선택 키워드 포함 총 9개 슬롯이 고정되도록 정리
+
+### 26.1 Frontend
+
+문제:
+
+- `keyword-suggestion-grid`가 CSS에서 `repeat(5, ...)`로 잡혀 있어 5열 기준으로 보입니다
+- `buildDisplayedKeywordSuggestions(...)`가 선택 키워드를 앞에 고정하긴 하지만 최대 25개를 반환합니다
+- 로딩 중에는 같은 3x3 영역이 아니라 `Loading keyword suggestions...` 텍스트만 보여 패널 높이와 시각 흐름이 바뀝니다
+- `WorkspaceShell.tsx`와 미사용 후보인 `CanvasNodeCard.tsx`에 키워드 패널 마크업이 중복되어 있어 한쪽만 고치면 추후 추출/복귀 때 다시 어긋날 수 있습니다
+
+방향:
+
+- FE 표시 계층에서 최종 슬롯 수를 `9`로 고정하는 상수를 둡니다
+- `buildDisplayedKeywordSuggestions(...)`는 선택 키워드를 먼저 배치하고, 추천 결과를 case-insensitive 중복 제거로 채운 뒤 총 9개까지만 반환하도록 정리합니다
+- 선택 키워드가 9개를 넘는 경우의 정책은 FE에서 명시해야 합니다
+  예: 선택 순서 기준 9개만 표시하되 실제 노드 키워드 저장은 그대로 유지
+- 로딩 중에도 같은 `.keyword-suggestion-grid` 안에 9개의 skeleton/pulse 슬롯을 렌더링해 레이아웃 점프를 막습니다
+- 3열 CSS는 데스크톱 기준 `repeat(3, minmax(0, 1fr))`로 두고, 좁은 화면에서는 3열 유지 또는 2열 전환 여부를 FE가 실제 폭 기준으로 판단합니다
+- 선택된 키워드는 기존처럼 `aria-pressed="true"`와 selected 스타일을 유지합니다
+
+파일 후보:
+
+- `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`
+- `frontend/src/styles.css`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+- `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`
+
+검증 포인트:
+
+- 추천 응답이 10개 이상이어도 화면에는 9개만 표시
+- 선택 키워드 2개 + 추천 결과 n개일 때 선택 키워드가 0, 1번처럼 앞쪽에 유지되고 총 9개 표시
+- 선택 키워드와 추천 결과가 같은 label이면 중복 없이 1개만 표시
+- refresh 이후에도 선택 키워드는 유지되고 나머지 추천만 회전 또는 갱신
+- 로딩 중 9개 placeholder가 같은 3x3 footprint로 표시
+- keyword cloud route test와 inline helper unit test 추가
+
+### 26.2 Backend
+
+문제:
+
+- backend recommendation config 기본값과 `.env.example`은 `RECOMMENDATION_MAX_SUGGESTIONS=10`을 전제로 합니다
+- route trim도 1~25 범위 정규화라서 FE 요구인 9개 고정과 직접 맞지는 않습니다
+
+방향:
+
+- 제품 기본 UI가 9개 고정이라면 backend 기본 `maxSuggestions`도 9로 맞춰 불필요한 응답을 줄입니다
+- 단, FE가 최종 표시 수를 반드시 보장해야 합니다
+  BE는 “최대 9개 응답” 최적화 계층으로 보는 편이 안전합니다
+- route cache key는 이미 `maxSuggestions`를 포함하므로 기본값만 바꿔도 캐시 충돌 위험은 낮습니다
+- 명시적 테스트에서 `maxSuggestions: 8` 같은 override는 그대로 유지해 config override 동작을 검증합니다
+
+파일 후보:
+
+- `backend/src/recommendation/routes.ts`
+- `backend/src/recommendation/routes.integration.test.ts`
+- `backend/.env.example`
+- 필요 시 `backend/src/app.test.ts`
+
+검증 포인트:
+
+- 기본 keyword endpoint 응답 길이가 9인지 확인
+- explicit `maxSuggestions` override가 여전히 적용되는지 확인
+- fallback heuristic 경로도 route trim 이후 9개 이하인지 확인
+
+### 26.3 Service
+
+문제:
+
+- recommendation env 기본값이 10입니다
+- heuristic provider는 25개 full cloud를 만들도록 작성되어 있고 관련 테스트도 25개를 기대합니다
+- OpenAI provider prompt/schema는 12~25개를 요구하고, Gemini provider 기본값은 10입니다
+- keyword request는 `story.existingKeywords`를 통해 현재 키워드를 context에 넣지만, provider 응답이 선택 키워드를 반드시 포함한다고 보장하지는 않습니다
+
+방향:
+
+- Service 기본 추천 개수를 9로 통일합니다
+- provider prompt/schema는 “UI가 9-slot keyword cloud를 구성할 수 있게 최대 9개 또는 필요한 추가 후보를 반환”하는 방향으로 맞춥니다
+- 선택 키워드 포함 여부의 최종 책임은 FE 표시 헬퍼에 둡니다
+  Service는 context를 참고해 중복이 적고 보완적인 후보를 주는 역할에 머무르는 편이 안전합니다
+- heuristic provider는 내부 seed pool은 유지해도 최종 반환 기본값과 테스트 기대값을 9개 기준으로 정리합니다
+- 만약 선택 키워드가 request context에 최신 draft 기준으로 들어가지 않는 문제가 보이면 FE request 조립 쪽에서 `existingKeywords` 업데이트 여부도 같이 확인합니다
+
+파일 후보:
+
+- `recommendation/src/config/env.ts`
+- `recommendation/src/config/env.test.ts`
+- `recommendation/src/provider/heuristic.ts`
+- `recommendation/src/provider/gemini.ts`
+- `recommendation/src/provider/openai.ts`
+- `recommendation/src/provider/factory.test.ts`
+- `recommendation/src/orchestration/index.test.ts`
+
+검증 포인트:
+
+- env 기본 `maxSuggestions`가 9
+- heuristic keyword response 기본 길이 9
+- Gemini/OpenAI provider가 9개 기준 prompt/schema/trim과 충돌하지 않음
+- 선택 키워드가 context에 들어가도 중복 추천이 과하게 나오지 않음
+
+### 26.4 병합 순서
+
+1. Frontend 표시 헬퍼와 CSS를 먼저 수정해 UI가 항상 9개 3x3을 보장하게 합니다
+2. Frontend route/helper 테스트로 선택 키워드 포함, 중복 제거, 로딩 skeleton을 고정합니다
+3. Service 기본값과 provider prompt/schema/test를 9개 기준으로 맞춥니다
+4. Backend env/example/route integration 기대값을 9개 기준으로 맞춥니다
+5. 전체 recommendation + frontend focused smoke를 실행합니다
+
+### 26.5 리스크
+
+- 선택 키워드가 9개를 넘는 경우 표시 정책을 정하지 않으면 사용자가 선택한 항목이 숨겨진 것처럼 보일 수 있습니다
+- 로딩 skeleton이 실제 버튼으로 인식되면 접근성 테스트가 흔들릴 수 있으니 `aria-hidden` 또는 명확한 loading role을 정해야 합니다
+- provider가 9개보다 적게 반환하는 경우 FE가 빈 슬롯을 보여줄지, heuristic fallback으로 채울지 결정이 필요합니다
+- `WorkspaceShell.tsx`는 충돌 위험이 높은 파일이라 다른 FE 세션과 같은 시점에 수정하면 안 됩니다
+
+## detail-027 / FIX 노드 편집 잠금 및 Major 타임라인 끝점 분리
+
+이 섹션은 인수인계용으로,
+고정 노드 텍스트 수정 차단과 Major Event Lane 메인 화살표 끝점 문제를 함께 정리합니다.
+
+요구 요약:
+
+- 노드가 `FIX` 상태이면 위치/크기뿐 아니라 텍스트도 수정되지 않아야 합니다
+- Major Event Lane의 메인 화살표 끝은 항상 마지막 major 노드의 하단에 위치해야 합니다
+- minor/detail 노드가 더 아래에 있어도 major lane 화살표 끝이 그 노드까지 늘어나면 안 됩니다
+
+### 27.1 Frontend
+
+문제 A: FIX 노드 텍스트 수정
+
+- 현재 drag/resize는 `node.isFixed`일 때 차단되어 있습니다
+- 하지만 선택된 노드는 `node.isFixed` 여부와 무관하게 inline textarea가 렌더링됩니다
+- 따라서 FIX 노드도 클릭 후 텍스트 입력, keyword toggle, inline token 삭제 같은 내용 변경 경로가 열릴 수 있습니다
+
+방향 A:
+
+- `node.isFixed`인 선택 노드는 inline editor 대신 read-only text view를 렌더링합니다
+- fixed 상태에서는 textarea focus, `onChange`, `onBlur` 저장, keyword toggle처럼 본문/키워드를 바꾸는 경로를 막습니다
+- More menu의 `Unfix` 동작은 유지하되, 텍스트 편집 관련 액션은 숨기거나 disabled 처리합니다
+- 키워드 클라우드 버튼도 fixed 노드에서는 숨기거나 disabled 처리하는 쪽이 안전합니다
+  키워드 선택은 결국 inline text/keywords를 수정하기 때문입니다
+- 빈 fixed 노드는 placeholder를 보여주되 실제 입력창은 만들지 않습니다
+
+문제 B: Major 타임라인 끝점
+
+- 현재 `effectiveTimelineEndY`가 `Math.max(timelineEndY, lowestNodeBottom)`로 계산되어 모든 레인의 최하단 노드가 major timeline 표시 길이에 영향을 줍니다
+- `moveNodeFreely(...)`, resize 종료, drag preview, drop 보조 로직도 전체 visible node bottom 기준으로 `setTimelineEndY(...)`를 호출합니다
+- 그래서 minor/detail 노드가 major 마지막 노드보다 아래로 내려가면 major lane 화살표 끝이 해당 non-major 위치까지 늘어납니다
+
+방향 B:
+
+- `timelineEndY`는 major lane 전용 상태로 취급합니다
+- major timeline 표시값과 canvas stage 높이 계산을 분리합니다
+  예: `majorTimelineEndY`는 마지막 major 노드 하단 기준, `stageHeight`는 전체 노드 최하단 기준
+- non-major drag/drop/resize/delete 경로에서는 `setTimelineEndY(...)`를 호출하지 않게 정리합니다
+- stage 높이는 계속 전체 노드 기준으로 늘려서 minor/detail 노드가 잘리지 않게 유지합니다
+- end major 노드 이동, end major resize, timeline end handle drag, major reorder 이후에만 timeline end를 마지막 major 노드 하단으로 갱신합니다
+- 기존 localStorage에 non-major 기준으로 커진 `timelineEndY`가 남아 있을 수 있으므로, 표시 단계에서 마지막 major 하단을 우선하거나 한 번 정상화하는 경로를 검토합니다
+
+파일 후보:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`
+- `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`
+- `frontend/src/routes/workspace-shell/useEpisodeCanvasState.ts`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+- 필요 시 `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`
+
+검증 포인트:
+
+- FIX 노드를 선택해도 textbox가 렌더링되지 않음
+- FIX 노드에서 키보드 입력, Backspace/Delete, keyword 선택으로 text/keywords가 바뀌지 않음
+- FIX 해제 후에는 기존처럼 텍스트 편집 가능
+- minor/detail 노드를 마지막 major보다 아래로 드래그해도 timeline end handle top은 마지막 major 하단과 일치
+- minor/detail 노드를 크게 resize해도 major timeline arrow는 늘어나지 않고 canvas stage만 충분히 늘어남
+- timeline end handle을 직접 늘리면 end major 노드가 따라 내려오고 handle이 end major 하단과 일치
+- major reorder 후 새 마지막 major 노드 하단으로 timeline end가 맞춰짐
+- stale canvas UI cache가 있어도 새로고침 후 non-major 최하단 기준으로 화살표가 늘어나지 않음
+
+### 27.2 Backend
+
+문제:
+
+- 직접 구현 대상은 아닙니다
+- `isFixed`, node placement, node size, order가 이미 저장된다면 BE는 기존 값을 그대로 보존하면 됩니다
+
+방향:
+
+- FE가 보내는 text/keyword update 요청이 fixed 노드에서 발생하지 않는지 frontend test로 우선 막습니다
+- 장기적으로는 서버 canonical persistence가 강해질 때 fixed 노드 mutation 차단을 backend validation으로 보강할 수 있습니다
+- 이번 단계에서는 schema/API 변경 없이 관찰 대상으로 둡니다
+
+파일 후보:
+
+- 직접 수정 없음
+- 필요 시 향후 `backend/src/persistence/*` validation 검토
+
+검증 포인트:
+
+- 없음
+
+### 27.3 Service
+
+문제:
+
+- 추천 서비스는 직접 원인이 아닙니다
+- 다만 fixed 노드에서 keyword cloud를 열 수 있으면 추천 선택이 본문 수정으로 이어질 수 있습니다
+
+방향:
+
+- fixed 노드에서는 FE가 recommendation invocation 자체를 막는 방향이 우선입니다
+- Service 변경은 필요 없습니다
+
+파일 후보:
+
+- 없음
+
+검증 포인트:
+
+- fixed 노드에서 recommendation keyword request가 발생하지 않는지 FE route test로 확인
+
+### 27.4 병합 순서
+
+1. Frontend에서 fixed 노드 read-only 렌더링과 텍스트/키워드 변경 경로 차단
+2. Frontend에서 major timeline end와 전체 canvas height 계산 분리
+3. 기존 `setTimelineEndY(...)` 호출부를 major-only 규칙에 맞게 정리
+4. route regression test 추가
+5. lint / typecheck / focused route test 실행
+
+### 27.5 리스크
+
+- `WorkspaceShell.tsx`가 현재 다른 UI 작업과 충돌 가능성이 매우 높습니다
+- timeline end 상태를 단순히 줄이면 기존 저장된 캔버스 UI 복원과 충돌할 수 있으므로 stage height 계산과 분리해야 합니다
+- fixed 노드에서 어떤 액션까지 막을지 범위를 분명히 해야 합니다
+  최소 범위는 text/keywords 수정 차단이고, delete/collapse/important 여부는 별도 정책입니다
+- major end 기준을 “시각적으로 가장 아래 major”로 둘지 “정렬 순서상 마지막 major”로 둘지 FE가 현재 reorder 정책과 맞춰 확정해야 합니다

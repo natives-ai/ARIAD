@@ -33,6 +33,7 @@ export interface OpenAiRecommendationProviderOptions {
   apiKey?: string | null;
   client?: OpenAiResponsesClient;
   fallbackProvider?: RecommendationProvider;
+  maxSuggestions?: number;
   model?: string;
 }
 

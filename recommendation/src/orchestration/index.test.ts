@@ -77,7 +77,7 @@ describe("recommendation service baseline", () => {
     });
   });
 
-  it("generates a full keyword cloud and gated sentence fallbacks with the heuristic provider", async () => {
+  it("generates a nine-slot keyword cloud and gated sentence fallbacks with the heuristic provider", async () => {
     const service = createRecommendationService(createHeuristicRecommendationProvider());
 
     const keywordResponse = await service.getKeywordSuggestions({
@@ -95,7 +95,7 @@ describe("recommendation service baseline", () => {
       }
     });
 
-    expect(keywordResponse.suggestions).toHaveLength(25);
+    expect(keywordResponse.suggestions).toHaveLength(9);
 
     const sentenceResponse = await service.getSentenceSuggestions({
       selectedKeywords: keywordResponse.suggestions.slice(0, 2).map((suggestion) => suggestion.label),

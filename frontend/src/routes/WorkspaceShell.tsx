@@ -93,6 +93,7 @@ import {
   getClosedObjectWordQuery,
   renderTextWithObjectMentions,
   buildDisplayedKeywordSuggestions,
+  keywordCloudSlotCount,
   toggleInlineKeywordToken,
   removeInlineSelectionWithTokenBoundaries,
   removeAdjacentInlineToken,
@@ -925,7 +926,7 @@ export function WorkspaceShell() {
             currentLaneCanvasBounds,
             activeDragState.nodeSize
           ),
-          activeDragState.level === "major" && activeDragState.nodeId === endMajorNodeIdRef.current
+          activeDragState.level === "major"
             ? getTimelineAnchorPositions(
                 Math.max(
                   timelineStartY + 120,
@@ -942,26 +943,31 @@ export function WorkspaceShell() {
           nodeId: activeDragState.nodeId,
           placement: previewPlacement
         });
-        setTimelineEndY(
-          Math.max(
-            timelineStartY + 120,
-            Math.max(
-              0,
-              ...visibleNodesRef.current.map((node) => {
-                const placement =
-                  node.id === activeDragState.nodeId
-                    ? previewPlacement
-                    : nodePlacementsRef.current.get(node.id);
-                const size =
-                  node.id === activeDragState.nodeId
-                    ? activeDragState.nodeSize
-                    : getNodeSize(nodeSizesRef.current, node.id);
 
-                return (placement?.y ?? 0) + size.height;
-              })
+        if (activeDragState.level === "major") {
+          setTimelineEndY(
+            Math.max(
+              timelineStartY + 120,
+              Math.max(
+                0,
+                ...visibleNodesRef.current
+                  .filter((node) => node.level === "major")
+                  .map((node) => {
+                    const placement =
+                      node.id === activeDragState.nodeId
+                        ? previewPlacement
+                        : nodePlacementsRef.current.get(node.id);
+                    const size =
+                      node.id === activeDragState.nodeId
+                        ? activeDragState.nodeSize
+                        : getNodeSize(nodeSizesRef.current, node.id);
+
+                    return (placement?.y ?? 0) + size.height;
+                  })
+              )
             )
-          )
-        );
+          );
+        }
         return;
       }
 
@@ -1073,15 +1079,21 @@ export function WorkspaceShell() {
           syncSelectedNodeInputHeight(dragState.nodeId, selectedNodeInputRef.current, {
             preserveManualHeight: dragState.direction !== "horizontal"
           });
-          const nextLowestBottom = Math.max(
-            0,
-            ...visibleNodesRef.current.map((node) => {
-              const placement = nodePlacementsRef.current.get(node.id);
-              const size = getNodeSize(nodeSizesRef.current, node.id);
-              return (placement?.y ?? 0) + size.height;
-            })
-          );
-          setTimelineEndY(Math.max(timelineStartY + 120, nextLowestBottom));
+
+          if (dragState.level === "major") {
+            const nextLowestMajorBottom = Math.max(
+              0,
+              ...visibleNodesRef.current
+                .filter((node) => node.level === "major")
+                .map((node) => {
+                  const placement = nodePlacementsRef.current.get(node.id);
+                  const size = getNodeSize(nodeSizesRef.current, node.id);
+                  return (placement?.y ?? 0) + size.height;
+                })
+            );
+
+            setTimelineEndY(Math.max(timelineStartY + 120, nextLowestMajorBottom));
+          }
         });
       }
     }
@@ -1933,9 +1945,64 @@ export function WorkspaceShell() {
       return (placement?.y ?? 0) + nodeSize.height;
     })
   );
+  const visualMajorPlacements = orderedMajorNodes
+    .map((node) => {
+      const placement =
+        activeNodeDragPreview?.nodeId === node.id
+          ? activeNodeDragPreview.placement
+          : nodePlacements.get(node.id);
+
+      if (!placement) {
+        return null;
+      }
+
+      const nodeSize = getNodeSize(nodeSizes, node.id);
+
+      return {
+        id: node.id,
+        bottomY: placement.y + nodeSize.height,
+        topY: placement.y
+      };
+    })
+    .filter(
+      (
+        entry
+      ): entry is {
+        id: string;
+        bottomY: number;
+        topY: number;
+      } => {
+        return entry !== null;
+      }
+    );
+  const visualStartMajorNodeId =
+    [...visualMajorPlacements].sort((left, right) => left.topY - right.topY)[0]?.id ?? null;
+  const visualEndMajorNodeId =
+    [...visualMajorPlacements].sort((left, right) => right.bottomY - left.bottomY)[0]?.id ?? null;
+  const timelineEndFollowerNodeId =
+    canvasDragStateRef.current?.kind === "timeline-end"
+      ? canvasDragStateRef.current.followerNodeId
+      : null;
+  const startMajorNodeId = visualStartMajorNodeId ?? lockedStartMajorNodeId;
+  const endMajorNodeId =
+    timelineEndFollowerNodeId ?? visualEndMajorNodeId ?? lockedEndMajorNodeId;
+  const endMajorPlacement =
+    endMajorNodeId === null
+      ? null
+      : activeNodeDragPreview?.nodeId === endMajorNodeId
+        ? activeNodeDragPreview.placement
+        : (nodePlacements.get(endMajorNodeId) ?? null);
+  const endMajorNodeSize =
+    endMajorNodeId === null
+      ? null
+      : getNodeSize(nodeSizes, endMajorNodeId);
+  const endMajorBottomY =
+    endMajorPlacement && endMajorNodeSize
+      ? endMajorPlacement.y + endMajorNodeSize.height
+      : timelineEndY;
   const effectiveTimelineEndY = Math.max(
-    timelineEndY,
-    lowestNodeBottom
+    timelineStartY + 120,
+    endMajorBottomY
   );
   const stageHeight = Math.max(
     minimumCanvasHeight,
@@ -2017,25 +2084,28 @@ export function WorkspaceShell() {
     return orderedIndex === -1 ? orderedNodes.length : orderedIndex;
   }
 
-  function getProjectedLowestNodeBottom(
+  // 이 함수는 major 노드 기준의 타임라인 끝 후보를 계산합니다.
+  function getProjectedLowestMajorNodeBottom(
     overrideNodeId?: string,
     overridePlacement?: { x: number; y: number },
     overrideSize?: NodeSize
   ) {
     return Math.max(
       0,
-      ...visibleNodes.map((node) => {
-        const placement =
-          node.id === overrideNodeId && overridePlacement
-            ? overridePlacement
-            : nodePlacements.get(node.id);
-        const nodeSize =
-          node.id === overrideNodeId && overrideSize
-            ? overrideSize
-            : getNodeSize(nodeSizes, node.id);
+      ...visibleNodes
+        .filter((node) => node.level === "major")
+        .map((node) => {
+          const placement =
+            node.id === overrideNodeId && overridePlacement
+              ? overridePlacement
+              : nodePlacements.get(node.id);
+          const nodeSize =
+            node.id === overrideNodeId && overrideSize
+              ? overrideSize
+              : getNodeSize(nodeSizes, node.id);
 
-        return (placement?.y ?? 0) + nodeSize.height;
-      })
+          return (placement?.y ?? 0) + nodeSize.height;
+        })
     );
   }
 
@@ -2272,8 +2342,13 @@ export function WorkspaceShell() {
 
   function maybeExtendTimelineForDraggedNode(
     clientY: number,
+    level: StoryNodeLevel,
     nodeSize: NodeSize
   ) {
+    if (level !== "major") {
+      return;
+    }
+
     const stagePoint = getStagePointFromClient(0, clientY);
 
     if (!stagePoint) {
@@ -2282,7 +2357,7 @@ export function WorkspaceShell() {
 
     const nextBottom = stagePoint.y + nodeSize.height / 2;
 
-    if (nextBottom > timelineEndY) {
+    if (nextBottom > effectiveTimelineEndY) {
       setTimelineEndY(Math.max(timelineStartY + 120, nextBottom));
     }
   }
@@ -2623,7 +2698,7 @@ export function WorkspaceShell() {
     objectName: string,
     withTrailingSpace = false
   ) {
-    if (!objectMentionQuery || !selectedNode) {
+    if (!objectMentionQuery || !selectedNode || selectedNode.isFixed) {
       return;
     }
 
@@ -2734,10 +2809,11 @@ export function WorkspaceShell() {
         timelineAnchors,
         nodeSize
       );
-      const requiredTimelineEndY =
-        nodeId === endMajorNodeId
-          ? Math.max(timelineStartY + 120, intendedSnappedPlacement.y + nodeSize.height)
-          : timelineEndY;
+      const requiredTimelineEndY = Math.max(
+        timelineStartY + 120,
+        effectiveTimelineEndY,
+        placement.y + nodeSize.height
+      );
       const dynamicTimelineAnchors = getTimelineAnchorPositions(
         requiredTimelineEndY,
         laneCanvasBounds.major,
@@ -2750,20 +2826,12 @@ export function WorkspaceShell() {
         nodeSize
       );
 
-      if (nodeId === endMajorNodeId) {
-        const nextLowestBottom = getProjectedLowestNodeBottom(
-          nodeId,
-          snappedPlacement,
-          nodeSize
-        );
-
-        setTimelineEndY(
-          Math.max(
-            timelineStartY + 120,
-            Math.max(nextLowestBottom, snappedPlacement.y + nodeSize.height)
-          )
-        );
-      }
+      setTimelineEndY(
+        Math.max(
+          timelineStartY + 120,
+          getProjectedLowestMajorNodeBottom(nodeId, snappedPlacement, nodeSize)
+        )
+      );
 
       await controller.updateNodePlacement(nodeId, {
         canvasX: snappedPlacement.x,
@@ -2782,9 +2850,6 @@ export function WorkspaceShell() {
       setRewireNodeId(null);
       return;
     }
-
-    const nextLowestBottom = getProjectedLowestNodeBottom(nodeId, resolvedPlacement, nodeSize);
-    setTimelineEndY(Math.max(timelineStartY + 120, nextLowestBottom));
 
     await controller.updateNodePlacement(nodeId, {
       canvasX: resolvedPlacement.x,
@@ -2864,7 +2929,7 @@ export function WorkspaceShell() {
     setDragPayload(null);
   }
 
-  // 이 함수는 노드 삭제 후 남은 배치 기준으로 타임라인/캔버스 높이를 자연스럽게 줄입니다.
+  // 이 함수는 노드 삭제 후 남은 major 기준으로 타임라인을 자연스럽게 줄입니다.
   async function deleteNodeTreeAndAdjustCanvas(nodeId: string) {
     const subtreeIds = new Set(collectSubtreeNodes(orderedNodes, nodeId).map((node) => node.id));
 
@@ -2875,23 +2940,25 @@ export function WorkspaceShell() {
     const remainingVisibleNodes = remainingNodes.filter(
       (node) => !hasCollapsedAncestor(node, remainingNodesById)
     );
-    const remainingLowestBottom = Math.max(
+    const remainingLowestMajorBottom = Math.max(
       0,
-      ...remainingVisibleNodes.map((node) => {
-        const nodeSize = getNodeSize(nodeSizes, node.id);
-        const placement =
-          nodePlacements.get(node.id) ??
-          getFallbackNodePlacementWithinBounds(
-            node,
-            remainingNodes,
-            laneCanvasBounds,
-            nodeSize
-          );
+      ...remainingVisibleNodes
+        .filter((node) => node.level === "major")
+        .map((node) => {
+          const nodeSize = getNodeSize(nodeSizes, node.id);
+          const placement =
+            nodePlacements.get(node.id) ??
+            getFallbackNodePlacementWithinBounds(
+              node,
+              remainingNodes,
+              laneCanvasBounds,
+              nodeSize
+            );
 
-        return placement.y + nodeSize.height;
-      })
+          return placement.y + nodeSize.height;
+        })
     );
-    const nextTimelineEndY = Math.max(timelineStartY + 120, remainingLowestBottom);
+    const nextTimelineEndY = Math.max(timelineStartY + 120, remainingLowestMajorBottom);
 
     if (nextTimelineEndY < timelineEndY) {
       setTimelineEndY(nextTimelineEndY);
@@ -2913,6 +2980,17 @@ export function WorkspaceShell() {
     const currentNode = nodesById.get(node.id) ?? node;
     const canSyncLocalState = () =>
       options.skipLocalStateSync !== true && selectedNodeIdRef.current === node.id;
+
+    if (currentNode.isFixed) {
+      if (canSyncLocalState()) {
+        const currentInlineText = buildInlineEditorText(currentNode.text, currentNode.keywords);
+
+        setInlineNodeTextDraft(currentInlineText);
+        setSelectedAiKeywords(currentNode.keywords);
+      }
+      return;
+    }
+
     const hasKeywordChange =
       currentNode.keywords.length !== resolvedKeywords.length ||
       currentNode.keywords.some((keyword, index) => keyword !== resolvedKeywords[index]);
@@ -2943,7 +3021,7 @@ export function WorkspaceShell() {
 
   // 이 함수는 노드 선택 전환 직전에 현재 인라인 draft를 안전하게 저장합니다.
   function flushSelectedNodeDraftBeforeSelection(nextNodeId: string | null) {
-    if (!selectedNode || selectedNode.id === nextNodeId) {
+    if (!selectedNode || selectedNode.isFixed || selectedNode.id === nextNodeId) {
       return;
     }
 
@@ -2961,6 +3039,12 @@ export function WorkspaceShell() {
     node: StoryNode,
     options?: { refresh?: boolean }
   ) {
+    if (node.isFixed) {
+      setAiPanelNodeId(null);
+      setRecommendationError(null);
+      return;
+    }
+
     const parentNode = node.parentId ? nodesById.get(node.parentId) ?? null : null;
     const inlineDraft = buildInlineEditorText(node.text, node.keywords);
     const nextSelectedKeywords = extractInlineKeywords(inlineDraft);
@@ -2989,6 +3073,10 @@ export function WorkspaceShell() {
   }
 
   async function toggleAiKeyword(node: StoryNode, keyword: string) {
+    if (node.isFixed) {
+      return;
+    }
+
     const baseText =
       selectedNode?.id === node.id
         ? inlineNodeTextDraft
@@ -3086,44 +3174,10 @@ export function WorkspaceShell() {
     keywordSuggestions,
     keywordRefreshCycle
   );
-  const visualMajorPlacements = orderedMajorNodes
-    .map((node) => {
-      const placement = nodePlacements.get(node.id);
-
-      if (!placement) {
-        return null;
-      }
-
-      const nodeSize = getNodeSize(nodeSizes, node.id);
-
-      return {
-        id: node.id,
-        bottomY: placement.y + nodeSize.height,
-        topY: placement.y
-      };
-    })
-    .filter(
-      (
-        entry
-      ): entry is {
-        id: string;
-        bottomY: number;
-        topY: number;
-      } => {
-        return entry !== null;
-      }
-    );
-  const visualStartMajorNodeId =
-    [...visualMajorPlacements].sort((left, right) => left.topY - right.topY)[0]?.id ?? null;
-  const visualEndMajorNodeId =
-    [...visualMajorPlacements].sort((left, right) => right.bottomY - left.bottomY)[0]?.id ?? null;
-  const timelineEndFollowerNodeId =
-    canvasDragStateRef.current?.kind === "timeline-end"
-      ? canvasDragStateRef.current.followerNodeId
-      : null;
-  const startMajorNodeId = visualStartMajorNodeId ?? lockedStartMajorNodeId;
-  const endMajorNodeId =
-    timelineEndFollowerNodeId ?? visualEndMajorNodeId ?? lockedEndMajorNodeId;
+  const keywordCloudEmptySlotCount = Math.max(
+    0,
+    keywordCloudSlotCount - displayedKeywordSuggestions.length
+  );
 
   if (activeEpisodeId) {
     majorAnchorNodeIdsByEpisodeRef.current[activeEpisodeId] = {
@@ -3161,7 +3215,9 @@ export function WorkspaceShell() {
     const displayText = isSelected ? inlineNodeTextDraft : node.text;
     const hasVisibleKeywords = activeKeywords.length > 0;
     const displayBodyText = extractDisplayText(displayText);
-    const shouldShowPlaceholder = !isSelected && !displayBodyText && !hasVisibleKeywords;
+    const isReadOnlySelectedNode = isSelected && node.isFixed;
+    const shouldShowPlaceholder =
+      (!isSelected || isReadOnlySelectedNode) && !displayBodyText && !hasVisibleKeywords;
     const selectedNodeTitle =
       extractDisplayText(displayText) || activeKeywords.join(" ") || getNodeHeadline(node);
 
@@ -3280,7 +3336,7 @@ export function WorkspaceShell() {
           >
             {selectedNodeTitle}
           </span>
-          {isSelected ? (
+          {isSelected && !node.isFixed ? (
             <div
               className="node-inline-editor"
               onClick={(event) => {
@@ -3440,7 +3496,9 @@ export function WorkspaceShell() {
             </div>
           ) : null}
           {shouldShowPlaceholder ? (
-            <p className="node-simple-text is-placeholder">{displayText}</p>
+            <p className="node-simple-text is-placeholder">
+              {isReadOnlySelectedNode ? "Type the beat" : displayText}
+            </p>
           ) : null}
         </div>
         {isSelected && !node.isFixed ? (
@@ -3472,7 +3530,7 @@ export function WorkspaceShell() {
           </>
         ) : null}
 
-        {aiPanelNode?.id === node.id ? (
+        {aiPanelNode?.id === node.id && !node.isFixed ? (
           <section
             className="recommendation-panel"
             data-testid="keyword-cloud"
@@ -3512,32 +3570,55 @@ export function WorkspaceShell() {
               </p>
             ) : null}
 
-            {isLoadingKeywords ? (
-              <p className="support-copy">Loading keyword suggestions...</p>
-            ) : displayedKeywordSuggestions.length > 0 ? (
-              <div className="keyword-suggestion-grid">
-                {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
-                  const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
-
-                  return (
-                    <button
-                      aria-pressed={isSelectedKeyword}
-                      className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
-                      data-testid={`keyword-suggestion-${suggestionIndex}`}
-                      key={suggestion.label}
-                      onClick={() => {
-                        void toggleAiKeyword(node, suggestion.label);
-                      }}
-                      type="button"
+            <div
+              className={`keyword-suggestion-grid${isLoadingKeywords ? " is-loading" : ""}`}
+              data-testid="keyword-suggestion-grid"
+            >
+              {isLoadingKeywords
+                ? Array.from({ length: keywordCloudSlotCount }).map((_, slotIndex) => (
+                    <div
+                      aria-hidden="true"
+                      className="keyword-suggestion keyword-suggestion-skeleton"
+                      data-testid={`keyword-suggestion-skeleton-${slotIndex}`}
+                      key={`keyword-skeleton-${slotIndex}`}
                     >
-                      <span>{suggestion.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
+                      <span />
+                    </div>
+                  ))
+                : (
+                    <>
+                      {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
+                        const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
+
+                        return (
+                          <button
+                            aria-pressed={isSelectedKeyword}
+                            className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
+                            data-testid={`keyword-suggestion-${suggestionIndex}`}
+                            key={suggestion.label}
+                            onClick={() => {
+                              void toggleAiKeyword(node, suggestion.label);
+                            }}
+                            type="button"
+                          >
+                            <span>{suggestion.label}</span>
+                          </button>
+                        );
+                      })}
+                      {Array.from({ length: keywordCloudEmptySlotCount }).map((_, slotIndex) => (
+                        <div
+                          aria-hidden="true"
+                          className="keyword-suggestion keyword-suggestion-empty-slot"
+                          key={`keyword-empty-${slotIndex}`}
+                        />
+                      ))}
+                    </>
+                  )}
+            </div>
+
+            {!isLoadingKeywords && displayedKeywordSuggestions.length === 0 ? (
               <p className="support-copy">{copy.persistence.keywordCloudEmpty}</p>
-            )}
+            ) : null}
           </section>
         ) : null}
 
@@ -3790,17 +3871,19 @@ export function WorkspaceShell() {
                 {copy.persistence.rewire}
               </button>
             ) : null}
-            <button
-              className="button-secondary"
-              disabled={isBusy}
-              onClick={() => {
-                void openKeywordSuggestions(selectedNode);
-                closeNodeMenu();
-              }}
-              type="button"
-            >
-              {copy.persistence.keywordSuggestions}
-            </button>
+            {!selectedNode.isFixed ? (
+              <button
+                className="button-secondary"
+                disabled={isBusy}
+                onClick={() => {
+                  void openKeywordSuggestions(selectedNode);
+                  closeNodeMenu();
+                }}
+                type="button"
+              >
+                {copy.persistence.keywordSuggestions}
+              </button>
+            ) : null}
             <button
               aria-pressed={selectedNode.isImportant ?? false}
               className="button-secondary"
@@ -3818,8 +3901,15 @@ export function WorkspaceShell() {
               aria-pressed={selectedNode.isFixed ?? false}
               className="button-secondary"
               onClick={() => {
+                const nextIsFixed = !(selectedNode.isFixed ?? false);
+
+                if (nextIsFixed) {
+                  setAiPanelNodeId(null);
+                  setRecommendationError(null);
+                }
+
                 void controller.updateNodeVisualState(selectedNode.id, {
-                  isFixed: !(selectedNode.isFixed ?? false)
+                  isFixed: nextIsFixed
                 });
                 closeNodeMenu();
               }}
@@ -4858,6 +4948,7 @@ export function WorkspaceShell() {
               if (dragPayload.kind === "node") {
                 maybeExtendTimelineForDraggedNode(
                   event.clientY,
+                  dragPayload.level,
                   getNodeSize(nodeSizes, dragPayload.nodeId)
                 );
               }
@@ -4996,6 +5087,7 @@ export function WorkspaceShell() {
                       if (dragPayload.kind === "node") {
                         maybeExtendTimelineForDraggedNode(
                           event.clientY,
+                          dragPayload.level,
                           getNodeSize(nodeSizes, dragPayload.nodeId)
                         );
                       }

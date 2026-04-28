@@ -52,7 +52,7 @@ describe("recommendation routes integration", () => {
     restoreRecommendationEnv(initialEnv);
   });
 
-  it("returns a full keyword cloud for an explicit keyword request", async () => {
+  it("returns a nine-slot keyword cloud for an explicit keyword request", async () => {
     const app = buildApp();
     appsToClose.push(app);
     await app.ready();
@@ -77,7 +77,7 @@ describe("recommendation routes integration", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().suggestions).toHaveLength(10);
+    expect(response.json().suggestions).toHaveLength(9);
   });
 
   it("gates sentence suggestions until the user has selected at least one keyword", async () => {
@@ -319,7 +319,7 @@ describe("recommendation routes integration", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().suggestions).toHaveLength(10);
+    expect(response.json().suggestions).toHaveLength(9);
   });
 
   it("falls back to heuristic suggestions when gemini env is selected and key is missing", async () => {
@@ -353,7 +353,7 @@ describe("recommendation routes integration", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().suggestions).toHaveLength(10);
+    expect(response.json().suggestions).toHaveLength(9);
   });
 
   it("applies maxSuggestions limit to keyword responses", async () => {

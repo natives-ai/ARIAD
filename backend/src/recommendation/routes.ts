@@ -84,7 +84,7 @@ function toRecommendationErrorMessage(error: unknown) {
 // 키워드 추천 개수를 유효 범위(1~25)로 정규화합니다.
 function resolveMaxSuggestions(value: number) {
   if (!Number.isInteger(value) || value <= 0) {
-    return 10;
+    return 9;
   }
 
   return Math.min(value, 25);
@@ -208,7 +208,7 @@ function createRecommendationServiceAccessor(options: RegisterRecommendationRout
 }
 
 // timeout fallback에 사용할 휴리스틱 서비스 접근자를 제공합니다.
-function createHeuristicRecommendationServiceAccessor() {
+function createHeuristicRecommendationServiceAccessor(maxSuggestions: number) {
   let service: ReturnType<typeof createRecommendationService> | null = null;
 
   return () => {
@@ -216,7 +216,11 @@ function createHeuristicRecommendationServiceAccessor() {
       return service;
     }
 
-    service = createRecommendationService(createHeuristicRecommendationProvider());
+    service = createRecommendationService(
+      createHeuristicRecommendationProvider({
+        maxSuggestions
+      })
+    );
     return service;
   };
 }
@@ -231,7 +235,9 @@ export async function registerRecommendationRoutes(
     scope: "recommendation"
   });
   const getRecommendationService = createRecommendationServiceAccessor(options);
-  const getHeuristicRecommendationService = createHeuristicRecommendationServiceAccessor();
+  const getHeuristicRecommendationService = createHeuristicRecommendationServiceAccessor(
+    resolveMaxSuggestions(options.recommendationConfig.maxSuggestions)
+  );
 
   app.post("/api/recommendation/keywords", async (request, reply) => {
     const body = request.body as KeywordRecommendationRequest;

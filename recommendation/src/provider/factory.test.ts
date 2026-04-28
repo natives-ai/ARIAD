@@ -28,14 +28,14 @@ describe("recommendation provider factory", () => {
     const provider = createRecommendationProvider({ provider: "heuristic" });
     const suggestions = await provider.requestKeywords(createContext());
 
-    expect(suggestions).toHaveLength(25);
+    expect(suggestions).toHaveLength(9);
   });
 
   it("returns heuristic provider by default", async () => {
     const provider = createRecommendationProvider();
     const suggestions = await provider.requestKeywords(createContext());
 
-    expect(suggestions).toHaveLength(25);
+    expect(suggestions).toHaveLength(9);
   });
 
   it("creates gemini provider when configured", async () => {

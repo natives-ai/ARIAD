@@ -45,7 +45,11 @@ function resolveFallbackProvider(options: CreateRecommendationProviderOptions): 
     return undefined;
   }
 
-  return createHeuristicRecommendationProvider();
+  return options.maxSuggestions === undefined
+    ? createHeuristicRecommendationProvider()
+    : createHeuristicRecommendationProvider({
+        maxSuggestions: options.maxSuggestions
+      });
 }
 
 // OpenAI provider 옵션 객체를 구성합니다.
@@ -59,6 +63,10 @@ function buildOpenAiOptions(options: CreateRecommendationProviderOptions) {
 
   if (options.model !== undefined) {
     providerOptions.model = options.model;
+  }
+
+  if (options.maxSuggestions !== undefined) {
+    providerOptions.maxSuggestions = options.maxSuggestions;
   }
 
   if (options.openAiClient !== undefined) {
@@ -115,7 +123,11 @@ export function createRecommendationProvider(
   const providerName = normalizeProviderName(options.provider);
 
   if (providerName === "heuristic") {
-    return createHeuristicRecommendationProvider();
+    return options.maxSuggestions === undefined
+      ? createHeuristicRecommendationProvider()
+      : createHeuristicRecommendationProvider({
+          maxSuggestions: options.maxSuggestions
+        });
   }
 
   if (providerName === "stub") {

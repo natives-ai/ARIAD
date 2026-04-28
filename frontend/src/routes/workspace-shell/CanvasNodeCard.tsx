@@ -14,6 +14,7 @@ import { getNodeHeadline } from "../../persistence/drawerPayload";
 import { isInteractiveTarget } from "./workspaceShell.canvas";
 import {
   extractInlineKeywords,
+  keywordCloudSlotCount,
   normalizeInlineObjectMentions,
   removeAdjacentInlineToken,
   removeInlineSelectionWithTokenBoundaries,
@@ -186,9 +187,17 @@ export function CanvasNodeCard({
   toggleNodeCollapsed,
   updateObjectMentionQueryFromInput
 }: CanvasNodeCardProps) {
+  const keywordCloudEmptySlotCount = Math.max(
+    0,
+    keywordCloudSlotCount - displayedKeywordSuggestions.length
+  );
+  const isReadOnlySelectedNode = isSelected && node.isFixed;
+  const resolvedShouldShowPlaceholder =
+    shouldShowPlaceholder || (isReadOnlySelectedNode && !displayBodyText && !hasVisibleKeywords);
+
   return (
     <article
-      className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNodeId === node.id ? " has-keyword-cloud" : ""}`}
+      className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNodeId === node.id && !node.isFixed ? " has-keyword-cloud" : ""}`}
       data-testid={`node-${node.id}`}
       draggable={false}
       onClick={() => {
@@ -295,7 +304,7 @@ export function CanvasNodeCard({
         >
           {selectedNodeTitle}
         </span>
-        {isSelected ? (
+        {isSelected && !node.isFixed ? (
           <div
             className="node-inline-editor"
             onClick={(event) => {
@@ -462,8 +471,10 @@ export function CanvasNodeCard({
             ) : null}
           </div>
         ) : null}
-        {shouldShowPlaceholder ? (
-          <p className="node-simple-text is-placeholder">{displayText}</p>
+        {resolvedShouldShowPlaceholder ? (
+          <p className="node-simple-text is-placeholder">
+            {isReadOnlySelectedNode ? "Type the beat" : displayText}
+          </p>
         ) : null}
       </div>
       {isSelected && !node.isFixed ? (
@@ -495,7 +506,7 @@ export function CanvasNodeCard({
         </>
       ) : null}
 
-      {aiPanelNodeId === node.id ? (
+      {aiPanelNodeId === node.id && !node.isFixed ? (
         <section
           className="recommendation-panel"
           data-testid="keyword-cloud"
@@ -535,32 +546,55 @@ export function CanvasNodeCard({
             </p>
           ) : null}
 
-          {isLoadingKeywords ? (
-            <p className="support-copy">Loading keyword suggestions...</p>
-          ) : displayedKeywordSuggestions.length > 0 ? (
-            <div className="keyword-suggestion-grid">
-              {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
-                const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
-
-                return (
-                  <button
-                    aria-pressed={isSelectedKeyword}
-                    className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
-                    data-testid={`keyword-suggestion-${suggestionIndex}`}
-                    key={suggestion.label}
-                    onClick={() => {
-                      void toggleAiKeyword(node, suggestion.label);
-                    }}
-                    type="button"
+          <div
+            className={`keyword-suggestion-grid${isLoadingKeywords ? " is-loading" : ""}`}
+            data-testid="keyword-suggestion-grid"
+          >
+            {isLoadingKeywords
+              ? Array.from({ length: keywordCloudSlotCount }).map((_, slotIndex) => (
+                  <div
+                    aria-hidden="true"
+                    className="keyword-suggestion keyword-suggestion-skeleton"
+                    data-testid={`keyword-suggestion-skeleton-${slotIndex}`}
+                    key={`keyword-skeleton-${slotIndex}`}
                   >
-                    <span>{suggestion.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
+                    <span />
+                  </div>
+                ))
+              : (
+                  <>
+                    {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
+                      const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
+
+                      return (
+                        <button
+                          aria-pressed={isSelectedKeyword}
+                          className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
+                          data-testid={`keyword-suggestion-${suggestionIndex}`}
+                          key={suggestion.label}
+                          onClick={() => {
+                            void toggleAiKeyword(node, suggestion.label);
+                          }}
+                          type="button"
+                        >
+                          <span>{suggestion.label}</span>
+                        </button>
+                      );
+                    })}
+                    {Array.from({ length: keywordCloudEmptySlotCount }).map((_, slotIndex) => (
+                      <div
+                        aria-hidden="true"
+                        className="keyword-suggestion keyword-suggestion-empty-slot"
+                        key={`keyword-empty-${slotIndex}`}
+                      />
+                    ))}
+                  </>
+                )}
+          </div>
+
+          {!isLoadingKeywords && displayedKeywordSuggestions.length === 0 ? (
             <p className="support-copy">{copy.persistence.keywordCloudEmpty}</p>
-          )}
+          ) : null}
         </section>
       ) : null}
     </article>

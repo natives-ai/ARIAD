@@ -95,7 +95,7 @@ describe("loadRecommendationEnv", () => {
     expect(env.fallbackToHeuristicOnError).toBe(false);
     expect(env.timeoutMs).toBe(4000);
     expect(env.cacheTtlMs).toBe(30000);
-    expect(env.maxSuggestions).toBe(10);
+    expect(env.maxSuggestions).toBe(9);
   });
 
   it("uses gemini default model when provider is gemini", () => {

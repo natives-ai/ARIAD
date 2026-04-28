@@ -2588,3 +2588,53 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Node-switch inline draft loss is fixed in the workspace route flow and guarded by regression tests.
 - Warnings / blockers: none
 - Approval needed: `none`
+
+### 2026-04-28 / loop-167
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Investigated the keyword cloud path for the requested 3x3 fixed layout. Current frontend display code already pins selected keywords first, but still returns up to 25 items and CSS uses a 5-column grid; loading currently renders a one-line text fallback instead of a same-footprint motion state. Backend and recommendation defaults still assume 10 suggestions, while heuristic/OpenAI paths retain 25-item cloud assumptions. Added `detail-026 / 키워드 클라우드 3x3 고정 배열 및 로딩 모션` as a FE / BE / Service handoff plan covering fixed 9-slot display, selected-keyword inclusion, loading skeleton/motion, and 9-suggestion service/backend alignment.
+- Tests run: read-only code inspection and planning update only
+- Result: Implementation is not started yet; the next work can proceed from `detail-026` with Frontend as the first owner and Backend/Recommendation alignment after the UI invariant is fixed.
+- Warnings / blockers: `WorkspaceShell.tsx` remains a high-conflict file, and selected-keyword overflow behavior (>9 selected keywords) needs an explicit FE policy during implementation.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-168
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/styles.css`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Implemented `detail-026` frontend scope. Added a fixed keyword-cloud slot constant (`9`) and updated `buildDisplayedKeywordSuggestions(...)` to keep selected keywords first, remove case-insensitive duplicates, and cap the returned cloud to nine items. Switched keyword-cloud UI rendering in both `WorkspaceShell` and `CanvasNodeCard` to a fixed 3x3 grid footprint with filler slots, and added loading-time pulse skeleton tiles that keep the same nine-slot layout instead of collapsing to a single text line. Updated styles to `repeat(3, minmax(0, 1fr))` and introduced skeleton/empty-slot visual states. Added regression coverage for helper-level nine-slot behavior and route-level nine-slot rendering plus loading skeleton visibility.
+- Tests run: `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.inlineEditor.tsx src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts src/routes/workspace-shell/CanvasNodeCard.tsx --max-warnings=0` (pass); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); targeted `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "renders at most nine keyword slots even when recommendation returns more|shows nine loading skeleton slots while keyword recommendations are in flight"` (pass, 2 tests); full focused `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/workspaceShell.layout.test.ts` (pass, 66 tests)
+- Result: Keyword cloud is now fixed to a 3x3 nine-slot layout with stable loading motion and selected-keyword-first display invariants at the frontend layer.
+- Warnings / blockers: Backend/Recommendation default suggestion-count alignment to `9` (detail-026 BE/Service scope) remains pending and was intentionally not included in this frontend-only execution loop.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-168
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Investigated the requested fixed-node edit lock and Major Event Lane timeline-end behavior. Current frontend blocks drag/resize for `node.isFixed`, but selected fixed nodes can still render the inline textarea and related text/keyword mutation paths. The major timeline end is currently coupled to `lowestNodeBottom` across all visible lanes, and several drag/resize/drop paths update `timelineEndY` from non-major nodes. Added `detail-027 / FIX 노드 편집 잠금 및 Major 타임라인 끝점 분리` as a FE-first handoff plan with Backend/Service marked as no direct implementation for this slice.
+- Tests run: read-only code inspection and planning update only
+- Result: Implementation is not started yet; the next work should first block fixed-node text/keyword mutation, then split major timeline end rendering from whole-canvas stage height.
+- Warnings / blockers: Many keyword-cloud files are already modified in the worktree by concurrent work, so `WorkspaceShell.tsx` and related route tests should be treated as single-writer files before implementing `detail-027`.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-169
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend, Recommendation
+- Touched zones: `recommendation/src/config/env.ts`, `recommendation/src/config/env.test.ts`, `recommendation/src/provider/heuristic.ts`, `recommendation/src/provider/factory.ts`, `recommendation/src/provider/factory.test.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/openai.ts`, `recommendation/src/provider/types.ts`, `recommendation/src/orchestration/index.test.ts`, `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.integration.test.ts`, `backend/src/app.test.ts`, `backend/.env.example`, `PLANS.md`
+- What changed: Completed the remaining `detail-026` Backend/Recommendation alignment. Default keyword suggestion count is now `9` across recommendation env, Gemini/OpenAI/heuristic provider defaults, backend route fallback, and `.env.example`. The heuristic fallback service now receives the resolved backend max suggestion count, and OpenAI schema/prompt/parsing trims to the configured limit while keeping explicit override behavior intact.
+- Tests run: `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); `corepack yarn workspace @scenaairo/backend typecheck` (pass); `corepack yarn workspace @scenaairo/recommendation lint` (pass); `corepack yarn workspace @scenaairo/backend lint` (pass); `corepack yarn workspace @scenaairo/recommendation build` (pass); `corepack yarn workspace @scenaairo/backend build` (pass); `corepack yarn exec vitest run --pool threads recommendation/src/config/env.test.ts recommendation/src/provider/factory.test.ts recommendation/src/orchestration/index.test.ts --exclude recommendation/dist/**` (pass, 56 tests); `corepack yarn workspace @scenaairo/backend integration` (pass, 25 tests); `corepack yarn workspace @scenaairo/backend test` (pass, 19 tests); `corepack yarn workspace @scenaairo/recommendation test` (pass, 22 tests)
+- Result: Backend and recommendation service now default to the same 9-slot keyword cloud contract as the frontend while preserving max-suggestion overrides.
+- Warnings / blockers: Vitest/Vite commands needed sandbox escalation on Windows due `spawn EPERM`. Backend integration depends on a fresh recommendation build because backend imports the recommendation package through `dist`.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-170
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `PLANS.md`
+- What changed: Implemented `detail-027` frontend scope. Fixed nodes now render selected content as read-only text instead of a textarea, block inline persistence and object mention insertion, hide/guard keyword recommendation entry points, and close any keyword panel when a node is fixed. Major timeline rendering now uses the visual end major node bottom instead of all visible node bottoms; non-major drag/resize/delete paths no longer mutate `timelineEndY`, while stage height still grows from the whole-canvas lowest node. Major drag/resize/reorder and timeline-end handle behavior continue to update the major timeline end.
+- Tests run: `corepack yarn --cwd frontend run -T eslint src/routes/WorkspaceShell.tsx src/routes/WorkspaceShell.test.tsx src/routes/workspace-shell/CanvasNodeCard.tsx --max-warnings=0` (pass); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); focused `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "fixed nodes read-only|dragging a minor below|resizing a minor below|persists inline node edits across reload|hides resize handles for fixed nodes|reorders major nodes|timeline end"` (pass, 9 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 58 tests); `corepack yarn workspace @scenaairo/frontend build` (pass)
+- Result: Fixed-node content mutation is blocked at UI and handler layers, and the major timeline arrow no longer stretches to minor/detail nodes while canvas height still accommodates them.
+- Warnings / blockers: Vitest/Vite build needed sandbox escalation on Windows due `spawn EPERM`.
+- Approval needed: `none`

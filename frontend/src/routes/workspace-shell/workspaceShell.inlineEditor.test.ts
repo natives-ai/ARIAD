@@ -2,8 +2,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildDisplayedKeywordSuggestions,
   getInlineKeywordToken,
   getObjectToken,
+  keywordCloudSlotCount,
   removeAdjacentInlineToken,
   removeInlineSelectionWithTokenBoundaries
 } from "./workspaceShell.inlineEditor";
@@ -67,5 +69,55 @@ describe("workspaceShell.inlineEditor removeAdjacentInlineToken", () => {
     const next = removeInlineSelectionWithTokenBoundaries(value, 0, 5);
 
     expect(next).toBeNull();
+  });
+});
+
+describe("workspaceShell.inlineEditor buildDisplayedKeywordSuggestions", () => {
+  it("keeps selected keywords first and caps the cloud to nine slots", () => {
+    const selectedKeywords = ["BETA", "alpha"];
+    const suggestions = [
+      { label: "alpha", reason: "existing" },
+      { label: "gamma", reason: "r1" },
+      { label: "delta", reason: "r2" },
+      { label: "epsilon", reason: "r3" },
+      { label: "zeta", reason: "r4" },
+      { label: "eta", reason: "r5" },
+      { label: "theta", reason: "r6" },
+      { label: "iota", reason: "r7" },
+      { label: "kappa", reason: "r8" },
+      { label: "lambda", reason: "r9" },
+      { label: "mu", reason: "r10" }
+    ];
+
+    const displayed = buildDisplayedKeywordSuggestions(selectedKeywords, suggestions, 0);
+
+    expect(displayed).toHaveLength(keywordCloudSlotCount);
+    expect(displayed[0]?.label).toBe("BETA");
+    expect(displayed[1]?.label).toBe("alpha");
+    expect(new Set(displayed.map((entry) => entry.label.toLowerCase())).size).toBe(
+      displayed.length
+    );
+  });
+
+  it("limits overflowed selected keywords to the first nine in selection order", () => {
+    const selectedKeywords = [
+      "k1",
+      "k2",
+      "k3",
+      "k4",
+      "k5",
+      "k6",
+      "k7",
+      "k8",
+      "k9",
+      "k10"
+    ];
+
+    const displayed = buildDisplayedKeywordSuggestions(selectedKeywords, [], 0);
+
+    expect(displayed).toHaveLength(keywordCloudSlotCount);
+    expect(displayed.map((entry) => entry.label)).toEqual(
+      selectedKeywords.slice(0, keywordCloudSlotCount)
+    );
   });
 });
