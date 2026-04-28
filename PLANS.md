@@ -2741,10 +2741,150 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 
 ### 2026-04-28 / loop-181
 - Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: local MySQL `scenaairo_local`, `PLANS.md`
+- What changed: Recreated the local MySQL database again on user request. Dropped and recreated `scenaairo_local`, then reapplied `backend/mysql/init/001_create_cloud_projects.sql`.
+- Tests run: `cloud_nodes.canvas_width` and `cloud_nodes.canvas_height` column check (pass, nullable `double`); immediate row count smoke across all 9 tables (all 0); delayed row count smoke after 5 seconds (all 0).
+- Result: Local MySQL `scenaairo_local` is recreated and empty.
+- Warnings / blockers: Visible app data can still come from file persistence or browser localStorage if the app is not configured to use MySQL.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-182
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: local MySQL `scenaairo_local`, `PLANS.md`
+- What changed: Reinitialized the local MySQL database on user request. Dropped and recreated `scenaairo_local`, then reapplied `backend/mysql/init/001_create_cloud_projects.sql`.
+- Tests run: `cloud_nodes.canvas_width` and `cloud_nodes.canvas_height` column check (pass, nullable `double`); immediate row count smoke across all 9 tables (all 0); delayed row count smoke after 5 seconds (all 0).
+- Result: Local MySQL `scenaairo_local` is recreated and empty.
+- Warnings / blockers: Visible app data can still come from file persistence or browser localStorage if the app is not configured to use MySQL.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-181
+- Active milestone: Post-baseline support task
 - Agents engaged: Frontend
 - Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
 - What changed: Implemented `detail-031`. Added an inline object mention create-candidate helper that sanitizes open `@` mention queries, rejects blank/too-long/exact existing object names, and preserves the display casing for valid unmatched names. `WorkspaceShell` now shows `Create "Name" as object` at the bottom of the object mention menu when a typed query has no exact existing match, including partial-match states. `CanvasNodeCard` keyboard handling now treats existing suggestions and the create option as one option list, with `Enter`/`Tab` selecting the active option and `Space` remaining available for multi-word mention typing. The selection path reuses `applyObjectMentionSelection(...)` and the existing `syncInlineObjectMentions(...)` object create/attach flow.
 - Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for the detail-031 files (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 9 tests); focused `WorkspaceShell.test.tsx` mention tests (pass, 3 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 60 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
 - Result: Inline editing can now recover unmatched `@` mention queries by offering a create action, while fixed nodes remain blocked from create candidates and exact existing object names continue to show only the existing object option.
 - Warnings / blockers: Windows sandbox still blocks some Vitest/Vite worker/config spawning with `spawn EPERM`; approved escalation was required for those commands. No backend, schema, or shared contract change was introduced for `detail-031`.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-182
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Investigated the user's report that a new Google account shows `Episode 9` and `1` folders. Confirmed folders are frontend sidebar UI state stored in localStorage, not backend folder entities. Added `detail-032 / 신규 Google 계정 로그인 후 과거 폴더 노출 방지 계획`, focused on clearing sidebar state for authenticated-empty/account transitions, removing restore-time folders whose episode ids no longer exist, and backend smoke-checking that new account project responses are empty.
+- Tests run: planning update and read-only code inspection only
+- Result: The issue is now scoped as a frontend stale sidebar folder cache fix with backend verification, not a folder schema/API change.
+- Warnings / blockers: If backend `/api/persistence/projects` actually returns an `Episode 9` project for the reported account, the issue becomes account persistence data cleanup rather than frontend localStorage cleanup. Active persistence driver must be checked because file persistence and MySQL reset can diverge.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-183
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Planned the requested connection behavior update as `detail-033 / Y축 근접 부모 연결 및 자연스러운 연결 화살표 계획`. The plan changes automatic cross-lane parent selection from order-neighbor inference to nearest Y-axis parent selection, keeps same-lane arrows as visual-only flow lines rather than `parentId`, makes connection paths use drag preview placement so arrows stretch with moving nodes, and adds the user's follow-up requirement to replace the oversized SVG arrowhead with a compact timeline-style marker.
+- Tests run: planning update and read-only code inspection only
+- Result: The connection task is scoped as a frontend interaction/rendering update with backend schema unchanged and existing parent-level integrity preserved.
+- Warnings / blockers: Same-lane flow arrows must not be persisted as `parentId` because backend validation rejects same-level parent relationships. Existing manual rewire intent also needs a clear preservation policy when moving nodes.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-184
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Revised `detail-033` after the user clarified that the previous connection behavior request itself needed a fuller plan, not only arrowhead styling. The revised plan now explicitly separates five decisions: cross-lane structure remains `parentId`, automatic parent selection uses nearest visual Y center, same-lane arrows are visual-only flow lines, drag preview placement drives live connection path updates, and connection arrowheads are restyled to a compact timeline-like marker.
+- Tests run: planning update only
+- Result: `detail-033` is now a complete implementation plan for automatic connection behavior, same-lane visual flow, live drag-linked arrows, and arrowhead styling.
+- Warnings / blockers: Moving an existing minor/detail node can now imply parent recalculation, so the implementation must protect explicit rewire intent from being overwritten by tiny position changes.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-185
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.sidebar.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.sidebar.test.tsx`, `PLANS.md`
+- What changed: Implemented `detail-032`. Sidebar folder restore now sanitizes stored folders against the current snapshot and drops restore-time folders that no longer contain any valid episode. Folder pin maps and pinned object ids are also sanitized at restore. Sidebar local UI storage now uses the registry active project id rather than the authenticated-empty placeholder snapshot id, clears folder/pin/pinned-object state when no real active project exists, and gates save effects until the current project/account scope has been restored so stale state cannot be written into a new account project during transitions.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.sidebar.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 3 tests); focused `WorkspaceShell.test.tsx` stale sidebar restore test (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 61 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); backend focused auth persistence smoke `corepack yarn --cwd backend run -T vitest run src/auth/routes.integration.test.ts -t "returns an empty canonical project list for a new authenticated account"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); `git diff --check` (pass, line-ending warnings only).
+- Result: New authenticated-empty/account transition states no longer retain or persist stale sidebar folder UI, and restored project sidebar state removes legacy folders/pins whose episodes are absent from the current snapshot. Backend behavior remains unchanged and the new-account project-list smoke stays empty.
+- Warnings / blockers: Windows sandbox still blocks Vitest/Vite worker/config spawning with `spawn EPERM`; approved escalation was required for affected test/build commands. Empty folders intentionally created during a live session are preserved by normal sanitization, but restore-time empty folders are treated as stale cache and removed.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-186
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/persistence/controller.ts`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Implemented `detail-033`. Added Y-center nearest-parent resolution for cross-lane automatic structure links, passed explicit parent intent into node create/move persistence calls, and updated minor/detail drop behavior so moved nodes rewire to the nearest valid parent level after drop. Connection rendering now uses drag-preview placements for live endpoint updates, keeps rewire handles on structural parent-child lines only, and replaces the oversized SVG marker with a compact timeline-style arrowhead plus a blue preview marker.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for detail-033 files (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 6 tests); focused controller tests for move/preserve/placement behavior (sandbox `spawn EPERM`, rerun outside sandbox pass, 3 tests); focused `WorkspaceShell.test.tsx` nearest-parent drag regression (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (outside sandbox pass, 25 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 61 tests); backend `corepack yarn --cwd backend run -T vitest run src/persistence/routes.reorder.integration.test.ts` (outside sandbox pass, 2 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Cross-lane structural links now follow visual Y proximity on create/drop, same-lane flow is rendered without writing same-level `parentId`, and arrows track moving nodes through preview placement.
+- Warnings / blockers: Windows sandbox still blocks Vitest/Vite worker/config spawning with `spawn EPERM`; approved escalation was required for affected commands. Explicit `moveNode(..., { preserveParent: true })` remains available for callers that must keep manual parent intent, while the canvas drag/drop path now intentionally recalculates nearest parent.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-187
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/styles.css`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Corrected the user's same-line arrow clarification for `detail-033`. Removed the automatic same-lane adjacent-node flow arrows. Same-level connection rendering now applies only when an explicit connection line exists, using top/bottom vertical anchors instead of left/right anchors. Rewire preview also switches to the vertical path while hovering a same-level target, and the compact arrowhead styling remains.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for the correction files (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (pass, 6 tests); focused `WorkspaceShell.test.tsx` nearest-parent drag regression (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 61 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Same-line arrows are no longer displayed as automatic flow guides; they are vertical only for actual connection/preview paths.
+- Warnings / blockers: Windows sandbox still blocks some Vitest/Vite config spawning with `spawn EPERM`. Persistent same-level relationship semantics remain separate from this visual correction because backend parent-level validation still rejects same-level `parentId` in cloud sync.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-188
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Investigated why folders and episodes still appeared after the `detail-032` sidebar patch. Found that episodes were not a sidebar issue: authenticated `initialize()`/`signIn()` loaded browser `account:<id>` local workspace cache before checking cloud projects, so stale local snapshots could display and re-import. Changed authenticated bootstrapping to use cloud project list first and added a regression proving stale authenticated local cache is ignored when cloud has no projects.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 26 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.sidebar.test.tsx src/routes/WorkspaceShell.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 64 tests); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for controller/sidebar/WorkspaceShell files (pass)
+- Result: New authenticated accounts now stay `authenticated-empty` when cloud has no projects, even if stale browser account-scope local snapshots still exist.
+- Warnings / blockers: Existing browser localStorage keys may remain physically present, but they are no longer selected for authenticated empty accounts. Windows sandbox still blocks Vitest config loading with `spawn EPERM`.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-189
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/persistence/controller.test.ts`, `PLANS.md`
+- What changed: Finished the requested revised `detail-032` patch by adding the missing sign-in-path regression. The new test seeds stale `account:<id>` local workspace cache before a guest user signs in to that same empty cloud account, then proves the controller still shows `authenticated-empty`, clears the active registry, shows zero episodes/nodes, and does not import the stale local snapshot into cloud.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for controller/sidebar/WorkspaceShell files (pass); focused `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts -t "ignores stale authenticated local cache|does not import guest local workspace"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 3 tests); full `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (outside sandbox pass, 27 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.sidebar.test.tsx src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 64 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass).
+- Result: Revised `detail-032` now covers both authenticated initialize and guest-to-authenticated sign-in paths against stale account-scoped local cache.
+- Warnings / blockers: Windows sandbox still blocks Vitest/Vite config spawning with `spawn EPERM`; affected commands were rerun outside sandbox. This does not physically delete stale localStorage entries, but prevents them from being selected or re-imported for empty cloud accounts.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-190
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/persistence/controller.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Corrected the second `detail-033` clarification. Y-axis nearest-parent selection now remains only in the new-node creation path. Existing minor/detail node moves preserve the current `parentId` and update only placement/order, and the temporary `moveNode(..., { parentIdOverride })` option was removed. The route regression was changed back to prove a dragged minor remains connected to its original major even when moved below another major.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for route/controller files (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (pass, 6 tests); focused `WorkspaceShell.test.tsx` movement parent-preservation test (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); focused controller parent-preservation tests (sandbox `spawn EPERM`, rerun outside sandbox pass, 2 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 61 tests); full `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (outside sandbox pass, 27 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: New nodes still choose the nearest valid parent by Y on creation, while moving existing nodes no longer changes their connection.
+- Warnings / blockers: Windows sandbox still blocks some Vitest/Vite config spawning with `spawn EPERM`; affected commands were rerun outside sandbox.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-191
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Planned `detail-034 / 노드 및 연결선 드래그 중 캔버스 자동 스크롤 계획` for the user's request that node moves and connection-line rewire drags should keep moving when the pointer reaches the visible canvas top/bottom. The plan introduces a frontend-only vertical auto-scroll loop for `node-drag` and `rewire-drag`, refactors drag preview updates so scrolling without new pointer movement still updates node/line positions, and keeps backend persistence unchanged.
+- Tests run: planning update and read-only code inspection only
+- Result: Auto-scroll is now scoped as a frontend canvas interaction follow-up with shared helper tests and route-level smoke coverage.
+- Warnings / blockers: The implementation must avoid jitter between pointermove and requestAnimationFrame updates and must stop the animation loop on pointerup/pointercancel/unmount.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-192
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `frontend/src/copy.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-035`. Guest workspaces with zero episodes now render the normal shell and empty canvas instead of an episode-create empty-state screen, and the obsolete empty/locked episode copy was removed. Sidebar episode delete actions are no longer disabled for the last remaining episode. `WorkspacePersistenceController.deleteEpisode(...)` now allows deleting the last episode and clears `project.activeEpisodeId` to `""` when no episodes remain.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint (pass); focused `controller.test.ts` episode delete regression (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); focused `WorkspaceShell.test.tsx` last-episode UI regression (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 90 tests).
+- Result: A project can now be left with zero episodes without being forced into an episode creation prompt.
+- Warnings / blockers: Node/object/drawer data still requires an episode scope; when the last episode is deleted, those episode-scoped records are removed with it.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-193
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented the `detail-034` auto-scroll patch. Added a shared vertical edge-speed helper, added a requestAnimationFrame auto-scroll loop for active `node-drag` and `rewire-drag`, and refactored drag preview updates so the same stored pointer coordinate is reapplied after viewport scrolling. Node drag preview now expands stage height while dragging, and rewire preview uses the current scrolled stage rect for endpoint and hover recalculation.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (pass, 7 tests); focused `WorkspaceShell.test.tsx` node drag auto-scroll smoke (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 63 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Dragging a node or rewire line near the visible canvas top/bottom now scrolls the canvas vertically and keeps the live preview in sync.
+- Warnings / blockers: Windows sandbox still blocks some Vite config loads with `spawn EPERM`; affected build/focused Vitest commands were rerun outside sandbox. Horizontal auto-scroll remains out of scope per `detail-034`.
 - Approval needed: `none`

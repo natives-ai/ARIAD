@@ -118,6 +118,7 @@ export interface NodePlacementDraft {
   canvasY?: number;
   canvasWidth?: number;
   canvasHeight?: number;
+  parentId?: string | null;
 }
 
 export interface StoryObjectDraft {
@@ -711,28 +712,7 @@ export class WorkspacePersistenceController {
     this.reloadPendingSyncOperations();
 
     if (session.mode === "authenticated" && session.accountId !== null) {
-      const loaded = this.loadOrSeedWorkspace();
-
-      if (loaded) {
-        this.resetHistory();
-        this.replaceState({
-          cloudProjectCount: null,
-          lastError: null,
-          linkage: loaded.linkage,
-          registry: loaded.registry,
-          session,
-          snapshot: loaded.snapshot,
-          syncStatus: "importing"
-        });
-
-        await this.connectAuthenticatedSession(
-          session,
-          loaded.snapshot,
-          loaded.linkage
-        );
-        return;
-      }
-
+      // 인증 계정은 클라우드 목록을 기준으로 stale local import를 막습니다.
       await this.bootstrapAuthenticatedSession(session);
       return;
     }
@@ -1129,10 +1109,6 @@ export class WorkspacePersistenceController {
   async deleteEpisode(episodeId: string) {
     const current = this.requireState();
 
-    if (current.snapshot.episodes.length <= 1) {
-      return false;
-    }
-
     const remainingEpisodes = current.snapshot.episodes.filter(
       (episode) => episode.id !== episodeId
     );
@@ -1146,7 +1122,7 @@ export class WorkspacePersistenceController {
       ...current.snapshot.project,
       activeEpisodeId:
         current.snapshot.project.activeEpisodeId === episodeId
-          ? remainingEpisodes[0]!.id
+          ? remainingEpisodes[0]?.id ?? ""
           : current.snapshot.project.activeEpisodeId,
       updatedAt: timestamp
     };
@@ -1236,7 +1212,10 @@ export class WorkspacePersistenceController {
       level,
       objectIds: [],
       orderIndex: clampedIndex + 1,
-      parentId: inferParentId(orderedNodes, level, clampedIndex),
+      parentId:
+        placement?.parentId !== undefined
+          ? placement.parentId
+          : inferParentId(orderedNodes, level, clampedIndex),
       projectId: current.snapshot.project.id,
       text: "",
       updatedAt: timestamp
@@ -2083,28 +2062,7 @@ export class WorkspacePersistenceController {
     this.reloadPendingSyncOperations();
 
     if (session.mode === "authenticated" && session.accountId !== null) {
-      const loaded = this.loadOrSeedWorkspace();
-
-      if (loaded) {
-        this.resetHistory();
-        this.replaceState({
-          cloudProjectCount: null,
-          lastError: null,
-          linkage: loaded.linkage,
-          registry: loaded.registry,
-          session,
-          snapshot: loaded.snapshot,
-          syncStatus: "importing"
-        });
-
-        await this.connectAuthenticatedSession(
-          session,
-          loaded.snapshot,
-          loaded.linkage
-        );
-        return;
-      }
-
+      // 인증 계정은 클라우드 목록을 기준으로 stale local import를 막습니다.
       await this.bootstrapAuthenticatedSession(session);
       return;
     }

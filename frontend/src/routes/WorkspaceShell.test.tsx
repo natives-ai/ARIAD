@@ -1,5 +1,5 @@
 ﻿// 이 파일은 WorkspaceShell 주요 상호작용 시나리오를 검증하는 테스트를 포함합니다.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1278,6 +1278,51 @@ describe("workspace shell recommendation flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the workspace shell visible after the last episode is deleted", async () => {
+    window.localStorage.clear();
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    expect(await screen.findByRole("heading", { name: "ARIAD" })).toBeInTheDocument();
+    expect(screen.queryByText(/No guest project is open yet/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /New Episode/i }));
+
+    const episodeRow = (await screen.findByRole("button", { name: "Episode 1" })).closest(
+      ".sidebar-episode-item"
+    ) as HTMLElement;
+
+    await user.click(within(episodeRow).getByRole("button", { name: "More Episode 1" }));
+
+    const deleteEpisodeButton = await screen.findByRole("button", { name: "Delete" });
+
+    expect(deleteEpisodeButton).toBeEnabled();
+
+    await user.click(deleteEpisodeButton);
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "Episode 1" })).getByRole("button", {
+        name: "Delete"
+      })
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Episode 1" })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: "ARIAD" })).toBeInTheDocument();
+    expect(screen.queryByText(/No guest project is open yet/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
+  });
+
   it("dismisses episode and object popovers on repeated toggle and outside click", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -1450,6 +1495,85 @@ describe("workspace shell recommendation flow", () => {
 
     expect(within(folderItem).queryByRole("button", { name: "Episode 11" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Episode 11" })).toBeInTheDocument();
+  });
+
+  it("removes stale restored sidebar folders that no longer contain current episodes", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const env = loadFrontendEnv();
+    const local = new LocalPersistenceStore(window.localStorage, env.storagePrefix);
+    local.setCacheScope("guest");
+    const projectId = local.getRegistry().activeProjectId;
+
+    if (!projectId) {
+      throw new Error("sidebar_restore_project_id_missing");
+    }
+
+    const snapshot = local.getSnapshot(projectId);
+    const episodeId = snapshot?.episodes[0]?.id;
+
+    if (!episodeId) {
+      throw new Error("sidebar_restore_episode_id_missing");
+    }
+
+    const foldersKey = `${env.storagePrefix}:guest:sidebar-folders:${projectId}`;
+    const pinsKey = `${env.storagePrefix}:guest:folder-episode-pins:${projectId}`;
+    window.localStorage.setItem(
+      foldersKey,
+      JSON.stringify([
+        {
+          createdAt: "2026-04-28T00:00:00.000Z",
+          episodeIds: ["missing-episode"],
+          id: "folder-stale",
+          isCollapsed: false,
+          isPinned: false,
+          name: "Legacy Folder",
+          updatedAt: "2026-04-28T00:00:00.000Z"
+        },
+        {
+          createdAt: "2026-04-28T00:00:00.000Z",
+          episodeIds: [episodeId],
+          id: "folder-valid",
+          isCollapsed: false,
+          isPinned: false,
+          name: "Act One",
+          updatedAt: "2026-04-28T00:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      pinsKey,
+      JSON.stringify({
+        "folder-stale": ["missing-episode"],
+        "folder-valid": [episodeId, "missing-episode"]
+      })
+    );
+
+    render(<WorkspaceShell />);
+
+    expect(await screen.findByText("Act One")).toBeInTheDocument();
+    expect(screen.queryByText("Legacy Folder")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      const storedFolders = JSON.parse(
+        window.localStorage.getItem(foldersKey) ?? "[]"
+      ) as Array<{ name: string }>;
+      const storedPins = JSON.parse(
+        window.localStorage.getItem(pinsKey) ?? "{}"
+      ) as Record<string, string[]>;
+
+      expect(storedFolders.map((folder) => folder.name)).toEqual(["Act One"]);
+      expect(storedPins).toEqual({
+        "folder-valid": [episodeId]
+      });
+    });
   });
 
   it("highlights the selected episode and its containing folder in the sidebar", async () => {
@@ -3395,6 +3519,79 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
+  it("auto-scrolls the canvas viewport while dragging a node near the bottom edge", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    const selectedMinorNode = await getSelectedNodeCard();
+    const before = getNodeCardMetrics(selectedMinorNode);
+    const viewport = getCanvasViewport();
+    const frameCallbacks: FrameRequestCallback[] = [];
+    let frameId = 1;
+
+    Object.defineProperty(viewport, "clientHeight", {
+      configurable: true,
+      value: 400
+    });
+    Object.defineProperty(viewport, "scrollHeight", {
+      configurable: true,
+      value: 2200
+    });
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 400));
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frameCallbacks.push(callback);
+      frameId += 1;
+
+      return frameId;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    viewport.scrollTop = 120;
+
+    fireEvent.pointerDown(selectedMinorNode, {
+      button: 0,
+      clientX: before.left + 32,
+      clientY: before.top + 24
+    });
+    fireEvent.pointerMove(window, {
+      clientX: before.left + 42,
+      clientY: 392
+    });
+
+    if (frameCallbacks.length === 0) {
+      throw new Error("canvas_auto_scroll_frame_missing");
+    }
+
+    act(() => {
+      for (let index = 0; index < 3; index += 1) {
+        const runNextFrame = frameCallbacks.shift();
+
+        if (!runNextFrame) {
+          return;
+        }
+
+        runNextFrame(index);
+      }
+    });
+
+    expect(viewport.scrollTop).toBeGreaterThan(120);
+
+    fireEvent.pointerUp(window);
+  });
+
   it("does not render a dedicated drag handle and still moves the node by dragging the card", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -3444,7 +3641,7 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
-  it("keeps a dragged minor node connected to its current major parent when moved below another major", async () => {
+  it("keeps a dragged minor node connected to its current major parent after drop", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {

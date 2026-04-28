@@ -72,11 +72,20 @@ export function parseStoredEpisodePinMap(value: string | null) {
   }
 }
 
-export function sanitizeSidebarFolders(folders: SidebarFolder[], episodes: StoryEpisode[]) {
+export type SidebarFolderSanitizeOptions = {
+  dropEmptyFolders?: boolean;
+};
+
+// 이 함수는 현재 에피소드 목록에 맞게 사이드바 폴더를 정리합니다.
+export function sanitizeSidebarFolders(
+  folders: SidebarFolder[],
+  episodes: StoryEpisode[],
+  options: SidebarFolderSanitizeOptions = {}
+) {
   const validEpisodeIds = new Set(episodes.map((episode) => episode.id));
   const seenEpisodeIds = new Set<string>();
 
-  return folders.map((folder) => {
+  return folders.flatMap((folder) => {
     const episodeIds = folder.episodeIds.filter((episodeId) => {
       if (!validEpisodeIds.has(episodeId) || seenEpisodeIds.has(episodeId)) {
         return false;
@@ -86,11 +95,35 @@ export function sanitizeSidebarFolders(folders: SidebarFolder[], episodes: Story
       return true;
     });
 
-    return {
-      ...folder,
-      episodeIds
-    };
+    if (options.dropEmptyFolders && episodeIds.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        ...folder,
+        episodeIds
+      }
+    ];
   });
+}
+
+// 이 함수는 현재 에피소드 목록에 맞게 사이드바 고정 상태를 정리합니다.
+export function sanitizeEpisodePinMap(pinMap: EpisodePinMap, episodes: StoryEpisode[]) {
+  const validEpisodeIds = new Set(episodes.map((episode) => episode.id));
+  const sanitizedEntries: Array<[string, string[]]> = [];
+
+  for (const [scopeId, episodeIds] of Object.entries(pinMap)) {
+    const validPinnedEpisodeIds = episodeIds.filter((episodeId) =>
+      validEpisodeIds.has(episodeId)
+    );
+
+    if (validPinnedEpisodeIds.length > 0) {
+      sanitizedEntries.push([scopeId, validPinnedEpisodeIds]);
+    }
+  }
+
+  return Object.fromEntries(sanitizedEntries) satisfies EpisodePinMap;
 }
 
 export function matchesEpisodeSearch(episode: StoryEpisode, query: string) {

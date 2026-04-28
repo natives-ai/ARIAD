@@ -5824,3 +5824,499 @@ UX 규칙:
 
 1차는 frontend UX 복구가 핵심입니다.
 Backend는 기존 object persistence 경로를 유지하고, schema/API 변경은 하지 않습니다.
+
+## detail-032 / 신규 Google 계정 로그인 후 과거 폴더 노출 방지 계획
+
+이 섹션은 신규 Google 계정 로그인 또는 계정 전환 후 사이드바에 `Episode 9`, `1` 같은 과거 폴더가 노출되는 문제를 정리하고 수정하는 계획입니다.
+
+요구 요약:
+
+- 새 Google 계정으로 로그인했을 때 과거 샘플/테스트 폴더가 보이면 안 됩니다
+- 폴더가 백엔드에서 자동 생성된 것인지, 프론트 캐시가 섞인 것인지 구분해야 합니다
+- 신규 계정의 빈 상태와 첫 프로젝트 생성 후 상태가 명확히 분리되어야 합니다
+
+현재 판단:
+
+- 현재 backend/shared 모델에는 folder 엔티티나 folder 테이블이 없습니다
+- 사이드바 폴더는 `WorkspaceShell`의 frontend UI state이며 `localStorage`에 저장됩니다
+- 저장 키는 `${storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeProjectId}` 형태입니다
+- `cacheScopeKey`는 인증 계정이면 `account:${accountId}`, 아니면 `guest`입니다
+- 기존 정리 함수는 존재하지 않는 episode id를 폴더에서 제거하지만, 비어버린 folder 자체는 유지합니다
+- 따라서 과거 샘플 episode/folder state가 남아 있으면 episode만 제거되고 빈 폴더명은 계속 표시될 수 있습니다
+- `Episode 9`는 과거 샘플 워크스페이스 이름과 직접 겹치므로 stale frontend cache 가능성이 가장 높습니다
+
+### 32.1 Frontend
+
+목표:
+
+- 계정/프로젝트 전환 시 이전 사이드바 폴더 UI 상태가 새 계정 화면에 섞이지 않게 합니다
+- 저장된 폴더를 복원할 때 현재 snapshot의 episode와 연결되지 않는 빈 legacy folder를 제거합니다
+- 신규 authenticated-empty 상태에서는 sidebar folder/pin/pinned object state가 화면에 남지 않게 합니다
+
+수정 방향:
+
+1. `sanitizeSidebarFolders(...)`가 현재 episode 기준으로 비어버린 legacy folder를 제거하도록 옵션을 추가합니다
+2. 일반 사용자가 의도적으로 만든 빈 폴더를 유지할지 여부를 분리하기 위해 restore/sanitize 시점의 정책을 명확히 합니다
+3. `activeProjectId`가 없거나 `authenticated-empty` 상태일 때 `sidebarFolders`, `folderEpisodePins`, `pinnedObjectIds`를 즉시 빈 값으로 초기화합니다
+4. 계정 전환 직후 localStorage load effect가 이전 state를 다시 저장하는 race가 없는지 확인합니다
+5. `buildSidebarEpisodeCollections(...)`가 episode가 없는 폴더를 검색/표시할 필요가 있는지 정책을 고정합니다
+
+권장 정책:
+
+- 프로젝트가 실제로 존재하는 상태에서는 사용자가 만든 빈 폴더를 유지할 수 있습니다
+- 다만 restore 시점에 모든 episode id가 현재 snapshot에 없어진 폴더는 legacy/stale로 보고 제거합니다
+- authenticated-empty 상태에서는 project id가 없으므로 모든 sidebar local UI state를 화면 state에서 제거합니다
+- folder localStorage key에는 이미 account id가 들어가므로 신규 schema보다 초기화/정리 로직을 우선합니다
+
+파일 후보:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/workspace-shell/workspaceShell.sidebar.tsx`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+- 필요 시 `frontend/src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`
+
+테스트 후보:
+
+- 새 authenticated account가 cloud project 0개이면 사이드바 폴더가 보이지 않음
+- guest/sample 폴더 localStorage가 있어도 신규 Google 계정 로그인 후 노출되지 않음
+- 기존 project에서 현재 episode와 연결된 folder는 유지됨
+- 현재 snapshot에 없는 episode만 담긴 folder는 restore 후 제거됨
+- 사용자가 새 project 안에서 직접 만든 빈 folder는 정책에 따라 유지 또는 제거 동작을 명확히 고정함
+
+### 32.2 Backend
+
+목표:
+
+- backend가 신규 Google 계정에 folder를 생성하지 않는다는 것을 확인합니다
+- 실제 계정에 남아 있는 project/episode가 있는지 persistence driver별로 확인합니다
+- 새 계정에서 project list가 비어 있으면 frontend empty state와 일치해야 합니다
+
+확인 방향:
+
+1. `/api/auth/session` 응답의 `accountId`가 실제 새 Google 계정인지 확인합니다
+2. `/api/persistence/projects` 응답이 빈 배열인지 확인합니다
+3. MySQL 사용 환경이면 `cloud_projects`, `cloud_episodes`를 해당 `account_id` 기준으로 확인합니다
+4. 파일 persistence 사용 환경이면 file-backed store에 같은 account id 데이터가 남아 있는지 확인합니다
+5. `Episode 9`가 backend response payload에 포함되는지 네트워크 응답 기준으로 확인합니다
+
+변경 필요성:
+
+- 1차 수정에서는 backend schema/API 변경이 필요하지 않습니다
+- backend response에 실제 `Episode 9` project가 포함되어 있다면 캐시 문제가 아니라 계정 데이터 문제로 별도 정리 항목을 만듭니다
+- active persistence driver가 MySQL인지 file인지 혼동되면 DB reset만으로는 화면 데이터가 사라지지 않으므로 환경 확인을 필수로 둡니다
+
+파일 후보:
+
+- 직접 수정 없음
+- 필요 시 `backend/src/persistence/routes.integration.test.ts`
+- 필요 시 `backend/src/auth/routes.integration.test.ts`
+
+검증:
+
+- 새 Google 계정에서 `/api/persistence/projects`가 `[]`이면 frontend에는 empty state만 표시됨
+- backend 응답에 folder 관련 필드가 없음을 확인함
+- backend 응답에 `Episode 9`가 없는데 화면에 보이면 frontend localStorage 문제로 확정함
+- backend 응답에 `Episode 9`가 있으면 해당 account의 persistence data 문제로 별도 처리함
+
+### 32.3 병합 순서
+
+1. Frontend route test로 stale sidebar folder localStorage 재현 케이스를 먼저 추가합니다
+2. `sanitizeSidebarFolders(...)`의 restore 정리 정책을 확정하고 테스트합니다
+3. `authenticated-empty` 및 `activeProjectId === null` 상태에서 sidebar local UI state를 초기화합니다
+4. 계정 전환 후 folder/pin 저장 effect가 빈 상태를 올바르게 반영하는지 확인합니다
+5. Backend는 실제 response smoke로 새 계정 project list가 비어 있는지만 확인합니다
+6. 필요 시 사용자에게 브라우저 localStorage 수동 삭제 없이도 자동 정리되는지 확인시킵니다
+
+### 32.4 리스크
+
+- 기존 사용자가 의도적으로 만든 빈 폴더까지 제거하면 UX 회귀가 될 수 있습니다
+- 계정 전환 순간 React effect 순서 때문에 오래된 state가 새 key에 저장되는 race가 생길 수 있습니다
+- 현재 환경이 file persistence인지 MySQL persistence인지 혼동하면 DB reset 결과와 화면 결과가 달라 보일 수 있습니다
+- folder가 frontend-only라서 여러 브라우저/기기 간 동기화되는 정보가 아니라는 점을 사용자 기대와 맞춰야 합니다
+
+### 32.5 결정
+
+채택합니다.
+
+1차는 frontend stale sidebar folder state 제거가 핵심입니다.
+Backend는 신규 계정 응답이 빈 project list인지 확인하는 검증 범위로 제한하고, folder schema/API는 추가하지 않습니다.
+
+### 32.6 후속 원인 및 보정
+
+추가 확인 결과, 폴더만 남는 경우와 에피소드까지 남는 경우는 원인이 다릅니다.
+
+- 폴더만 남는 경우는 sidebar localStorage 정리 문제입니다
+- 에피소드까지 남는 경우는 실제 workspace snapshot이 로드된 상태입니다
+- 인증 계정 초기화/로그인에서 `loadOrSeedWorkspace()`가 cloud project list보다 먼저 실행되면, 브라우저의 `account:<id>` 로컬 캐시가 먼저 표시되고 cloud로 다시 import될 수 있습니다
+- 따라서 신규 계정 보장 조건은 frontend sidebar 정리만으로 충분하지 않고, authenticated session bootstrap이 cloud project list를 먼저 신뢰해야 합니다
+
+보정 결정:
+
+- 인증 계정의 `initialize()`와 `signIn()`은 local account cache보다 cloud project list를 먼저 확인합니다
+- cloud project list가 비어 있으면 stale local account cache가 있어도 `authenticated-empty`를 표시합니다
+- 기존 local account snapshot은 registry에서 빠지므로 화면과 sidebar scope에 사용되지 않습니다
+- 명시적인 첫 프로젝트 생성 액션을 누르기 전에는 `Episode 1`도 생성하지 않습니다
+
+추가 검증:
+
+- account scope에 legacy/sample snapshot이 남아 있어도 cloud project가 0개이면 episodes/nodes가 0개여야 합니다
+- 이 상태에서 cloud import가 발생하면 안 됩니다
+- 기존 remote project가 있는 계정은 cloud snapshot을 정상 로드해야 합니다
+- sidebar stale folder 정리 테스트와 함께 controller authenticated empty regression을 유지합니다
+
+## detail-033 / Y축 근접 부모 연결 및 자연스러운 연결 화살표 계획
+
+이 섹션은 노드 생성/이동 시 레인 간 자동 연결 기준을 Y축 근접 기준으로 바꾸고, 같은 레인 노드 사이에는 위/아래 방향 흐름 화살표를 보여주며, 드래그 중 연결선이 노드 움직임을 따라 자연스럽게 갱신되도록 하는 수정 계획입니다.
+
+요구 요약:
+
+- 다른 레인에 노드를 만들면 가능한 한 Y축상 가장 가까운 부모 레벨 노드와 자동 연결되어야 합니다
+- 같은 레인의 노드들은 노드 위/아래 방향으로 연결 화살표가 보이면 좋겠습니다
+- 노드를 움직일 때 연결 화살표도 노드 위치를 따라 늘어나고 줄어들어야 합니다
+- 연결 화살표 끝 삼각형은 현재보다 작고 정돈된 메인 레인 화살표 계열의 형태여야 합니다
+
+수정된 전체 결정:
+
+- 레인 간 구조 연결은 기존 `parentId`를 사용합니다
+- `parentId` 자동 선택 기준은 orderIndex 주변 탐색이 아니라 화면 Y축 중심 거리입니다
+- 같은 레인 노드끼리의 위/아래 화살표는 저장되는 관계가 아니라 시각적 flow line입니다
+- 드래그 중 연결선은 저장 전 preview placement를 기준으로 실시간 재계산합니다
+- 연결선 arrowhead는 기존 큰 SVG 삼각형을 줄이고 메인 타임라인 화살표와 맞춘 compact marker로 바꿉니다
+
+현재 상태:
+
+- cross-lane 연결은 `StoryNode.parentId`로 저장됩니다
+- `createNode(...)`와 `moveNode(...)`는 현재 `inferParentId(...)`를 사용해 orderIndex 주변의 부모 레벨 노드를 고릅니다
+- 그래서 화면에서 Y축으로 더 가까운 노드가 있어도 orderIndex 기준 후보가 부모가 될 수 있습니다
+- `buildConnectionLines(...)`는 parent-child 연결선을 parent 오른쪽 중앙에서 child 왼쪽 중앙으로 그립니다
+- 현재 `connectionLines`는 기본 `nodePlacements`만 사용하므로, 드래그 중인 노드의 preview placement를 실시간으로 반영하지 못할 수 있습니다
+- 연결 화살표는 `canvas-arrowhead` SVG marker의 12x12 채움 삼각형이라 메인 타임라인 화살표보다 크게 보이고 둔탁합니다
+- backend는 `major -> minor -> detail` 부모 레벨만 허용하므로 같은 레인 노드를 `parentId`로 연결하면 `invalid_parent_level`이 됩니다
+
+### 33.1 Frontend
+
+목표:
+
+- 자동 부모 선택은 같은 에피소드 안에서 바로 위 부모 레벨 중 Y축 중심 거리가 가장 가까운 노드를 선택합니다
+- minor는 가장 가까운 major에, detail은 가장 가까운 minor에 연결합니다
+- major는 부모가 없으므로 기존처럼 `parentId: null`을 유지합니다
+- 같은 레인 연결은 data relationship이 아니라 시각적 order flow로 표시합니다
+- 드래그 중에도 parent-child line과 same-lane flow line이 preview 위치를 따라 즉시 갱신됩니다
+- 연결선 marker는 메인 타임라인 화살표와 톤/비율이 맞는 작고 날렵한 형태로 교체합니다
+
+자동 부모 선택 규칙:
+
+1. 새 노드 생성 시 drop/click 위치의 node centerY를 기준으로 부모 후보를 고릅니다
+2. 후보는 `getParentLevel(level)`에 해당하는 visible node만 사용합니다
+3. 후보의 centerY와 target centerY 차이가 가장 작은 노드를 선택합니다
+4. 거리 동률이면 위쪽에 있는 후보를 우선하고, 그래도 같으면 orderIndex가 빠른 후보를 선택합니다
+5. 후보가 없으면 기존처럼 `null`을 허용합니다
+6. 노드 이동 시에는 사용자가 직접 rewire한 부모를 무조건 보존할지, 이동 후 nearest parent로 재계산할지 정책이 필요합니다
+
+권장 이동 정책:
+
+- 새 노드 생성: 생성 위치 기준 nearest parent를 즉시 저장합니다
+- 기존 minor/detail 노드 이동 중: 드래그 preview는 현재 parent 기준 연결선을 먼저 따라가게 합니다
+- 기존 minor/detail 노드 drop 시: 최종 Y 위치 기준 nearest parent가 달라지면 `parentId`를 갱신합니다
+- 같은 레인 순서 변경: 같은 레인 flow line만 바뀌고, major/minor/detail 구조 규칙은 유지합니다
+- 사용자가 rewire handle로 명시 연결한 직후: 같은 위치 보정/미세 이동에서는 parent를 보존하고, 명확히 다른 부모 쪽으로 이동한 경우에만 nearest parent 재계산을 허용합니다
+- fixed node는 기존처럼 이동/연결 변경 불가
+
+같은 레인 flow line 규칙:
+
+- 같은 레인의 visible node를 lane layout 순서 또는 centerY 순서로 정렬합니다
+- 인접한 두 노드 사이를 `upper bottom center -> lower top center`로 연결합니다
+- 이 선은 `parentId`를 바꾸지 않는 순수 시각 요소입니다
+- major lane은 timeline rail과 중복될 수 있으므로 1차에서는 minor/detail에 우선 적용하고, major는 timeline 디자인과 충돌하지 않는 경우에만 적용합니다
+- collapsed ancestor로 숨겨진 노드는 flow line 대상에서 제외합니다
+
+연결선 렌더링 규칙:
+
+- `buildConnectionLines(...)`를 parent-child line builder와 same-lane flow line builder로 분리합니다
+- parent-child line은 다른 레인 연결일 때 기존처럼 좌우 anchor를 사용합니다
+- 같은 레인 flow line은 위/아래 anchor를 사용합니다
+- 드래그 중에는 `nodePlacements + activeNodeDragPreview`를 합친 `visualNodePlacements`를 connection builder에 넘깁니다
+- resize 중에는 `effectiveNodeSizes`를 그대로 사용해 선 endpoint가 카드 크기 변화를 따라가게 합니다
+- connection port 버튼은 parent-child relationship 조정용으로 유지하고, same-lane flow line에는 rewire port를 붙이지 않습니다
+
+화살표 스타일 규칙:
+
+- 기존 12x12 꽉 찬 삼각형 marker를 더 작은 marker viewBox로 교체합니다
+- stroke 색상은 메인 타임라인의 `#101214` 계열과 맞춥니다
+- marker path는 과하게 넓은 정삼각형 대신 타임라인 arrow처럼 세로 방향이 분명한 슬림한 비율로 조정합니다
+- parent-child line과 same-lane flow line은 기본적으로 같은 arrowhead marker를 사용합니다
+- preview line은 파란색 dashed line과 어울리도록 별도 preview arrowhead marker를 사용하거나 currentColor 기반 marker를 씁니다
+- marker가 zoom/retina 환경에서 너무 커 보이지 않도록 `markerWidth`, `markerHeight`, `refX`, `refY`, `viewBox`를 함께 조정합니다
+- rewire port hit area는 유지하되 marker 자체가 버튼처럼 보이지 않게 합니다
+
+파일 후보:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`
+- `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`
+- `frontend/src/persistence/nodeTree.ts`
+- `frontend/src/persistence/controller.ts`
+- `frontend/src/persistence/controller.test.ts`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+- `frontend/src/styles.css`
+
+구현 방향:
+
+1. `resolveNearestParentIdByY(...)` helper를 추가해 parent level 후보 중 centerY 최단거리 노드를 찾습니다
+2. `controller.createNode(...)`의 placement option에 explicit `parentId`를 받을 수 있게 확장합니다
+3. draft/lane click create path에서 생성 위치 centerY를 계산하고 explicit parentId를 넘깁니다
+4. `moveNodeFreely(...)`에서 drop 결과의 centerY로 nearest parent를 재계산하고, 기존 parent와 다를 때만 갱신합니다
+5. parent 갱신은 `controller.moveNode(...)` option에 `parentIdOverride`를 추가하거나, `moveNode` 이후 `rewireNode(...)`를 호출하는 방식 중 더 작은 변경으로 구현합니다
+6. `visualNodePlacements`를 만들어 `nodePlacements`에 `activeNodeDragPreview`를 합성합니다
+7. parent-child connection builder는 `visualNodePlacements`를 사용해 드래그 중 endpoint를 즉시 갱신합니다
+8. same-lane flow builder를 별도로 추가해 lane별 인접 노드의 bottom/top center를 연결합니다
+9. same-lane flow line은 rewire handle 대상에서 제외합니다
+10. `canvas-arrowhead` marker를 compact/timeline-style marker로 교체하고 preview용 marker 스타일도 함께 정리합니다
+
+작업 순서:
+
+1. nearest parent helper unit test를 먼저 추가합니다
+2. create path parent 선택을 고정합니다
+3. move/drop parent 재계산 정책을 적용합니다
+4. drag preview placement를 connection 계산에 반영합니다
+5. same-lane flow line을 추가합니다
+6. arrowhead marker를 메인 레인 화살표 계열로 정리합니다
+7. route test와 visual smoke로 생성/이동/화살표 모양을 검증합니다
+
+검증:
+
+- major 두 개 사이 중 아래쪽 major에 더 가까운 위치에 minor를 만들면 아래쪽 major가 parent가 됩니다
+- minor 두 개 사이 중 위쪽 minor에 더 가까운 위치에 detail을 만들면 위쪽 minor가 parent가 됩니다
+- 후보가 없으면 minor/detail도 parent 없이 생성되거나 기존 fallback 정책을 따릅니다
+- 같은 레인의 minor 두 개는 위 노드 bottom center에서 아래 노드 top center로 flow arrow가 표시됩니다
+- 노드를 드래그하는 동안 parent-child arrow endpoint가 드래그 preview를 따라 움직입니다
+- 노드를 resize하는 동안 arrow endpoint가 카드 크기 변화를 따라 움직입니다
+- rewire handle은 parent-child line에만 표시되고 same-lane flow line에는 표시되지 않습니다
+- connection arrowhead가 메인 타임라인 arrow와 유사한 비율로 보이고 기존보다 과하게 크지 않습니다
+- preview arrowhead가 파란 dashed preview line과 색상/크기에서 어긋나지 않습니다
+- fixed node는 연결 재계산으로 parentId가 바뀌지 않습니다
+
+### 33.2 Backend
+
+목표:
+
+- 기존 `parentId`, `canvasX`, `canvasY`, `orderIndex` 저장 구조를 그대로 사용합니다
+- same-lane flow line은 저장하지 않습니다
+- parent-child 관계의 레벨 정합성 검증을 유지합니다
+
+변경 필요성:
+
+- schema 변경은 필요하지 않습니다
+- shared type 변경도 필요하지 않습니다
+- backend는 `invalid_parent_level`, `missing_parent_node_dependency`, cycle 검증을 계속 유지해야 합니다
+- frontend가 same-lane visual flow를 `parentId`로 저장하지 않는지만 테스트로 방어합니다
+
+검증:
+
+- minor parent는 major만 허용됩니다
+- detail parent는 minor만 허용됩니다
+- same-lane flow line 때문에 backend sync payload에 같은 레벨 parentId가 들어가지 않습니다
+- 기존 reorder integration test가 계속 통과해야 합니다
+
+파일 후보:
+
+- 직접 수정 없음
+- 필요 시 `backend/src/persistence/routes.reorder.integration.test.ts` 또는 `backend/src/persistence/node-order.test.ts`에 regression 보강
+
+### 33.3 병합 순서
+
+1. Frontend helper test로 nearest parent by Y 규칙을 먼저 고정합니다
+2. create path에 explicit parent 선택을 연결합니다
+3. move path에 parent 보존/재계산 정책을 적용합니다
+4. connection line builder를 parent-child와 same-lane flow로 분리합니다
+5. drag preview placement를 connection builder에 반영합니다
+6. route test로 생성/이동/드래그 중 연결선 갱신을 검증합니다
+7. backend는 schema 변경 없이 기존 parent integrity test를 재실행합니다
+
+### 33.4 리스크
+
+- 이동할 때 parent를 자동으로 바꾸면 사용자가 의도적으로 rewire한 관계가 바뀔 수 있습니다
+- same-lane flow arrow가 parent-child arrow와 시각적으로 섞이면 구조 관계를 오해할 수 있습니다
+- major lane은 timeline rail이 이미 있어 flow arrow를 추가하면 화면이 복잡해질 수 있습니다
+- drag preview 중 path를 매 프레임 갱신하므로 과한 transition을 넣으면 오히려 지연되어 보일 수 있습니다
+- arrowhead를 너무 작게 줄이면 연결 방향성이 약해질 수 있으므로 실제 캔버스 zoom 기준으로 확인해야 합니다
+
+### 33.5 결정
+
+채택합니다.
+
+1차는 frontend에서 nearest-parent 선택과 connection rendering을 정리합니다.
+Backend는 기존 `parentId` 저장/검증만 유지하고, same-lane flow line은 저장하지 않습니다.
+
+### 33.6 사용자 정정
+
+- 같은 라인의 화살표는 자동 flow 표시가 아니라 실제 연결/preview 선이 같은 레벨 노드 사이에 있을 때 위/아래 앵커로 그리라는 의미입니다
+- 따라서 인접 노드 사이에 자동으로 same-lane flow arrow를 표시하지 않습니다
+- 같은 레벨 연결선이 존재하는 경우에만 top/bottom vertical path로 렌더링합니다
+
+### 33.7 사용자 정정 2
+
+- Y축 기준 nearest parent 연결은 노드 최초 생성 시에만 적용합니다
+- 기존 노드를 이동할 때는 연결된 parent node가 바뀌면 안 됩니다
+- 이동은 위치와 순서만 갱신하고, `parentId`는 기존 값을 보존합니다
+
+## detail-034 / 노드 및 연결선 드래그 중 캔버스 자동 스크롤 계획
+
+이 섹션은 노드 이동 또는 연결선 rewire 중 포인터가 현재 보이는 캔버스 viewport의 위/아래 가장자리로 접근하면 캔버스가 자동으로 스크롤되도록 하는 계획입니다.
+
+요구 요약:
+
+- 노드를 아래쪽이나 위쪽으로 이동할 때 보이는 영역 밖으로 자연스럽게 끌고 갈 수 있어야 합니다
+- 연결선을 다른 노드에 연결하려고 드래그할 때도 위/아래로 자동 스크롤되어야 합니다
+- 사용자는 별도로 휠/트랙패드를 조작하지 않아도 드래그를 유지한 채 멀리 있는 노드까지 이동할 수 있어야 합니다
+
+현재 상태:
+
+- 캔버스 viewport는 `canvasViewportRef`가 가리키는 `.canvas-viewport`입니다
+- node drag와 rewire drag는 `window.pointermove`에서 처리됩니다
+- pan drag만 직접 `scrollTop`, `scrollLeft`를 갱신하고 있습니다
+- node drag는 현재 pointer event가 들어올 때만 preview placement를 계산합니다
+- rewire drag도 pointer event가 들어올 때만 preview point와 hover target을 계산합니다
+- 따라서 포인터가 viewport edge에 멈춰 있으면 자동 스크롤과 preview 재계산이 발생하지 않습니다
+
+### 34.1 Frontend
+
+목표:
+
+- node drag와 rewire drag에서 공통 auto-scroll helper를 사용합니다
+- 포인터가 viewport 상단/하단 edge threshold 안에 들어가면 스크롤 속도를 edge 거리 기반으로 증가시킵니다
+- 포인터가 edge를 벗어나거나 드래그가 끝나면 auto-scroll loop를 즉시 중지합니다
+- 자동 스크롤 중에도 노드 preview 위치와 rewire preview line이 계속 갱신됩니다
+- 캔버스 확대/축소 상태에서도 스크롤 속도와 stage 좌표 계산이 어긋나지 않아야 합니다
+
+동작 규칙:
+
+- 1차 범위는 vertical auto-scroll입니다
+- threshold는 viewport 상/하단 약 64~96px 범위로 둡니다
+- max speed는 frame당 18~32px 정도로 시작하고, edge에 가까울수록 빨라지게 합니다
+- viewport 자체만 스크롤하고 document/window 스크롤은 건드리지 않습니다
+- `pan`, `divider`, `node-resize`, `timeline-end`는 1차 범위에서 제외합니다
+- `node-drag-pending`은 실제 drag로 승격된 뒤 auto-scroll을 시작합니다
+- `rewire-drag`은 시작 즉시 auto-scroll 대상이 됩니다
+
+구현 방향:
+
+1. `computeCanvasAutoScrollVelocity(...)` helper를 추가합니다
+2. `autoScrollStateRef`에 최신 pointer 좌표, animation id, 대상 drag kind를 저장합니다
+3. `startCanvasAutoScroll(...)`, `stopCanvasAutoScroll(...)`, `runCanvasAutoScrollFrame(...)` 함수를 둡니다
+4. pointermove 처리에서 node drag/rewire drag 좌표를 auto-scroll state에 업데이트합니다
+5. auto-scroll frame은 `canvasViewportRef.current.scrollTop`을 갱신한 뒤 같은 pointer 좌표로 drag preview 계산을 다시 실행합니다
+6. 이를 위해 현재 `handlePointerMove(...)` 안의 node drag/rewire drag 계산을 `updateNodeDragFromPointer(...)`, `updateRewireDragFromPointer(...)`처럼 재사용 가능한 함수로 분리합니다
+7. pointerup/pointercancel, drag kind 변경, component unmount 시 auto-scroll loop를 반드시 정리합니다
+8. major node를 아래로 끌 때는 기존 timeline/stage 확장 로직과 충돌하지 않게 스크롤 가능한 영역을 확보합니다
+
+파일 후보:
+
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`
+- `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+- 필요 시 `frontend/src/styles.css`
+
+검증:
+
+- node drag 중 포인터가 viewport 하단 threshold에 들어가면 `scrollTop`이 증가합니다
+- node drag 중 포인터가 viewport 상단 threshold에 들어가면 `scrollTop`이 감소합니다
+- 포인터가 edge를 벗어나면 auto-scroll이 멈춥니다
+- pointerup/pointercancel 후 auto-scroll animation frame이 남지 않습니다
+- 자동 스크롤 중 node preview placement가 스크롤 변화에 맞춰 계속 갱신됩니다
+- rewire drag 중 자동 스크롤 후에도 hover target과 preview line endpoint가 현재 화면 기준으로 갱신됩니다
+- zoom 상태에서도 스크롤 후 drop 위치가 포인터와 크게 어긋나지 않습니다
+
+테스트 후보:
+
+- `computeCanvasAutoScrollVelocity(...)` unit test
+- `WorkspaceShell.test.tsx`에서 mocked viewport rect/scrollTop으로 node drag auto-scroll smoke
+- rewire drag에서 edge 근처 pointermove 후 preview/hover update가 호출되는 route-level regression
+
+### 34.2 Backend
+
+목표:
+
+- backend 변경 없음
+- auto-scroll은 드래그 중 viewport UX이며 저장 모델과 무관합니다
+
+변경 필요성:
+
+- schema/API/shared type 변경이 필요하지 않습니다
+- 최종 drop 결과로 저장되는 `canvasX`, `canvasY`, `orderIndex`, `parentId` 정책은 기존 detail-033 결정을 따릅니다
+
+검증:
+
+- 기존 persistence/controller tests가 계속 통과해야 합니다
+- auto-scroll 도중 drop된 노드는 기존 node move/update path로만 저장되어야 합니다
+
+### 34.3 리스크
+
+- auto-scroll frame에서 preview를 재계산하지 않으면 화면은 스크롤되는데 노드/연결선이 뒤따라오지 않는 느낌이 납니다
+- scroll speed가 너무 빠르면 사용자가 원하는 노드를 지나칠 수 있습니다
+- pointermove와 requestAnimationFrame이 동시에 preview state를 갱신하면 jitter가 생길 수 있으므로 최신 pointer 좌표를 단일 ref에서 읽어야 합니다
+- major node drag는 timeline/stage 확장과 연결되어 있어 bottom auto-scroll 조건을 별도로 확인해야 합니다
+
+### 34.4 결정
+
+채택합니다.
+
+1차는 frontend-only로 구현합니다.
+node drag와 rewire drag에 vertical auto-scroll을 적용하고, horizontal auto-scroll은 실제 사용성 확인 후 별도 후속으로 판단합니다.
+
+### 34.5 구현 결과
+
+- `computeCanvasAutoScrollVelocity(...)`로 viewport edge 기준 vertical scroll 속도를 계산합니다
+- node drag와 rewire drag는 최신 pointer 좌표를 ref에 저장하고 requestAnimationFrame loop에서 같은 좌표로 preview를 재계산합니다
+- pointer가 edge를 벗어나거나 pointerup/pointercancel/unmount가 발생하면 auto-scroll loop를 정리합니다
+- node drag preview는 자동 스크롤 중에도 stage 좌표 기준으로 갱신되고, preview 위치도 stage height 계산에 반영됩니다
+- rewire preview는 자동 스크롤 후의 현재 stage rect를 기준으로 endpoint와 hover target을 다시 계산합니다
+- backend/schema/shared type 변경은 없습니다
+
+## detail-035 / 에피소드 0개 상태 허용 및 생성 유도 화면 제거
+
+이 섹션은 에피소드가 0개인 프로젝트 상태를 정상 상태로 허용하고, 게스트 워크스페이스에서 에피소드 생성 유도 화면이 뜨지 않도록 정리한 항목입니다.
+
+요구 요약:
+
+- 에피소드가 아무것도 없을 때 에피소드를 만들라는 별도 화면을 표시하지 않습니다
+- 마지막 에피소드 삭제를 막지 않습니다
+- 에피소드 0개 상태에서는 일반 워크스페이스 shell과 빈 캔버스를 그대로 보여줍니다
+
+### 35.1 Frontend
+
+변경:
+
+- guest empty workspace에서 `Add Episodes` 중심의 empty-state 화면으로 조기 return하지 않습니다
+- 에피소드가 0개여도 `WorkspaceShell`의 sidebar, canvas, profile 영역을 그대로 렌더링합니다
+- 사이드바 episode menu의 Delete 버튼에서 `snapshotEpisodeCount <= 1` 잠금을 제거합니다
+- 마지막 에피소드를 삭제한 뒤에도 `ARIAD` shell과 빈 canvas가 유지되는 regression을 추가합니다
+
+검증:
+
+- guest 상태에서 episode가 0개여도 생성 유도 화면 문구가 보이지 않아야 합니다
+- episode 1개 상태에서 Delete 버튼이 enabled여야 합니다
+- 마지막 episode 삭제 후 sidebar episode row가 사라지고 `node-count`가 0으로 유지되어야 합니다
+
+### 35.2 Backend
+
+변경:
+
+- DB schema 변경 없음
+- `cloud_projects.project_active_episode_id`는 이미 nullable이고, frontend snapshot에서는 빈 문자열 active id를 사용할 수 있습니다
+- 파일/MySQL store의 node/object/drawer dependency 검증은 유지합니다
+- 에피소드가 없는 프로젝트에는 node/object/drawer를 만들 수 없고, 이 데이터들은 마지막 episode 삭제 시 함께 제거됩니다
+
+검증:
+
+- `WorkspacePersistenceController.deleteEpisode(...)`가 마지막 episode 삭제를 허용합니다
+- 마지막 episode 삭제 시 `project.activeEpisodeId`는 `""`로 정리됩니다
+- 삭제된 episode에 속한 nodes/objects/drawer items는 snapshot에서 제거됩니다
+
+### 35.3 결정
+
+채택합니다.
+
+프로젝트는 에피소드 0개 상태를 가질 수 있습니다.
+다만 node/object/drawer는 여전히 episode scope 데이터이므로, 에피소드가 없을 때는 생성되지 않는 현재 데이터 계약을 유지합니다.

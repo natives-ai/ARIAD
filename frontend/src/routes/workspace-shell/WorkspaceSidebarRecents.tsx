@@ -81,7 +81,6 @@ type WorkspaceSidebarRecentsProps = {
   setRenamingEpisodeId: Dispatch<SetStateAction<string | null>>;
   setRenamingFolderId: Dispatch<SetStateAction<string | null>>;
   setSidebarFolders: Dispatch<SetStateAction<SidebarFolder[]>>;
-  snapshotEpisodeCount: number;
   snapshotEpisodes: StoryEpisode[];
   sortingFolderId: string | null;
   visibleFolders: VisibleSidebarFolder[];
@@ -122,7 +121,6 @@ function renderEpisodeItem(
     setFolderPickerEpisodeId,
     setFolderPickerPosition,
     setRenamingEpisodeId,
-    snapshotEpisodeCount,
     sortingFolderId
   } = props;
   const isActive = episode.id === activeEpisodeId;
@@ -299,7 +297,6 @@ function renderEpisodeItem(
                     )}
                     <button
                       className="button-secondary"
-                      disabled={snapshotEpisodeCount <= 1}
                       onClick={() => {
                         setDeleteEpisodeId(episode.id);
                         setEpisodeMenuId(null);

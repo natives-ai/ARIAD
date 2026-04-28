@@ -78,7 +78,10 @@ import {
   hasTextSelection,
   getPasteInsertIndex,
   getTimelineAnchorPositions,
-  snapMajorNodePlacementToTimelineAnchors
+  snapMajorNodePlacementToTimelineAnchors,
+  resolveNearestParentIdByY,
+  buildNodeConnectionPath,
+  computeCanvasAutoScrollVelocity
 } from "./workspace-shell/workspaceShell.canvas";
 import {
   extractInlineKeywords,
@@ -102,6 +105,7 @@ import {
 import {
   parseStoredFolderList,
   parseStoredEpisodePinMap,
+  sanitizeEpisodePinMap,
   sanitizeSidebarFolders,
   buildSidebarEpisodeCollections
 } from "./workspace-shell/workspaceShell.sidebar";
@@ -423,6 +427,17 @@ export function WorkspaceShell() {
       }
     | null
   >(null);
+  const canvasAutoScrollStateRef = useRef<{
+    animationId: number | null;
+    dragKind: "node-drag" | "rewire-drag" | null;
+    pointerClientX: number;
+    pointerClientY: number;
+  }>({
+    animationId: null,
+    dragKind: null,
+    pointerClientX: 0,
+    pointerClientY: 0
+  });
 
   useEffect(() => {
     const unsubscribe = controller.subscribe(setState);
@@ -460,7 +475,7 @@ export function WorkspaceShell() {
     };
   }, [controller]);
 
-  const activeProjectId = state?.snapshot.project.id ?? null;
+  const activeSidebarProjectId = state?.registry.activeProjectId ?? null;
   const activeEpisodeId = state?.snapshot.project.activeEpisodeId ?? null;
   const cacheScopeKey =
     state && state.session.mode === "authenticated" && state.session.accountId
@@ -483,6 +498,19 @@ export function WorkspaceShell() {
     snapshotNodes: state?.snapshot.nodes ?? emptyNodes,
     storagePrefix: env.storagePrefix
   });
+  const sidebarSnapshotEpisodesRef = useRef<StoryEpisode[]>([]);
+  const sidebarSnapshotObjectIdsRef = useRef<Set<string>>(new Set());
+  const sidebarStorageRestoreRef = useRef<SidebarStorageRestoreState>({
+    folders: null,
+    pinnedObjectIds: null,
+    pins: null,
+    scopeKey: null
+  });
+
+  sidebarSnapshotEpisodesRef.current = state?.snapshot.episodes ?? [];
+  sidebarSnapshotObjectIdsRef.current = new Set(
+    state?.snapshot.objects.map((object) => object.id) ?? []
+  );
 
   useEffect(() => {
     if (!state) {
@@ -519,60 +547,137 @@ export function WorkspaceShell() {
   }, [env.storagePrefix, isSidebarCollapsed]);
 
   useEffect(() => {
-    if (!activeProjectId) {
+    if (!activeSidebarProjectId) {
+      sidebarStorageRestoreRef.current = {
+        folders: null,
+        pinnedObjectIds: null,
+        pins: null,
+        scopeKey: null
+      };
+      queueMicrotask(() => {
+        setSidebarFolders((current) => (current.length > 0 ? [] : current));
+        setFolderEpisodePins((current) =>
+          Object.keys(current).length > 0 ? {} : current
+        );
+        setPinnedObjectIds((current) => (current.length > 0 ? [] : current));
+      });
       return;
     }
 
-    const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeProjectId}`;
-    const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeProjectId}`;
-    const nextSidebarFolders = parseStoredFolderList(window.localStorage.getItem(foldersKey));
-    const nextFolderEpisodePins = parseStoredEpisodePinMap(window.localStorage.getItem(pinsKey));
+    const scopeKey = getSidebarStorageScopeKey(cacheScopeKey, activeSidebarProjectId);
+    const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeSidebarProjectId}`;
+    const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeSidebarProjectId}`;
+    const pinnedObjectsKey = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeSidebarProjectId}`;
+    const nextSidebarFolders = sanitizeSidebarFolders(
+      parseStoredFolderList(window.localStorage.getItem(foldersKey)),
+      sidebarSnapshotEpisodesRef.current,
+      { dropEmptyFolders: true }
+    );
+    const nextFolderEpisodePins = sanitizeEpisodePinMap(
+      parseStoredEpisodePinMap(window.localStorage.getItem(pinsKey)),
+      sidebarSnapshotEpisodesRef.current
+    );
+    const nextPinnedObjectIds = parseStoredStringArray(
+      window.localStorage.getItem(pinnedObjectsKey)
+    ).filter((objectId) => sidebarSnapshotObjectIdsRef.current.has(objectId));
+
+    sidebarStorageRestoreRef.current = {
+      folders: JSON.stringify(nextSidebarFolders),
+      pinnedObjectIds: JSON.stringify(nextPinnedObjectIds),
+      pins: JSON.stringify(nextFolderEpisodePins),
+      scopeKey
+    };
 
     queueMicrotask(() => {
       setSidebarFolders(nextSidebarFolders);
       setFolderEpisodePins(nextFolderEpisodePins);
-    });
-  }, [activeProjectId, cacheScopeKey, env.storagePrefix]);
-
-  useEffect(() => {
-    if (!activeProjectId) {
-      return;
-    }
-
-    const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeProjectId}`;
-    window.localStorage.setItem(foldersKey, JSON.stringify(sidebarFolders));
-  }, [activeProjectId, cacheScopeKey, env.storagePrefix, sidebarFolders]);
-
-  useEffect(() => {
-    if (!activeProjectId) {
-      return;
-    }
-
-    const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeProjectId}`;
-    window.localStorage.setItem(pinsKey, JSON.stringify(folderEpisodePins));
-  }, [activeProjectId, cacheScopeKey, env.storagePrefix, folderEpisodePins]);
-
-  useEffect(() => {
-    if (!activeProjectId) {
-      return;
-    }
-
-    const key = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeProjectId}`;
-    const nextPinnedObjectIds = parseStoredStringArray(window.localStorage.getItem(key));
-
-    queueMicrotask(() => {
       setPinnedObjectIds(nextPinnedObjectIds);
     });
-  }, [activeProjectId, cacheScopeKey, env.storagePrefix]);
+  }, [activeSidebarProjectId, cacheScopeKey, env.storagePrefix]);
 
   useEffect(() => {
-    if (!activeProjectId) {
+    if (!activeSidebarProjectId) {
       return;
     }
 
-    const key = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeProjectId}`;
-    window.localStorage.setItem(key, JSON.stringify(pinnedObjectIds));
-  }, [activeProjectId, cacheScopeKey, env.storagePrefix, pinnedObjectIds]);
+    const scopeKey = getSidebarStorageScopeKey(cacheScopeKey, activeSidebarProjectId);
+    const serializedFolders = JSON.stringify(sidebarFolders);
+    const restoreState = sidebarStorageRestoreRef.current;
+
+    if (restoreState.scopeKey !== scopeKey) {
+      return;
+    }
+
+    if (restoreState.folders !== null) {
+      if (restoreState.folders !== serializedFolders) {
+        return;
+      }
+
+      sidebarStorageRestoreRef.current = {
+        ...restoreState,
+        folders: null
+      };
+    }
+
+    const foldersKey = `${env.storagePrefix}:${cacheScopeKey}:sidebar-folders:${activeSidebarProjectId}`;
+    window.localStorage.setItem(foldersKey, serializedFolders);
+  }, [activeSidebarProjectId, cacheScopeKey, env.storagePrefix, sidebarFolders]);
+
+  useEffect(() => {
+    if (!activeSidebarProjectId) {
+      return;
+    }
+
+    const scopeKey = getSidebarStorageScopeKey(cacheScopeKey, activeSidebarProjectId);
+    const serializedPins = JSON.stringify(folderEpisodePins);
+    const restoreState = sidebarStorageRestoreRef.current;
+
+    if (restoreState.scopeKey !== scopeKey) {
+      return;
+    }
+
+    if (restoreState.pins !== null) {
+      if (restoreState.pins !== serializedPins) {
+        return;
+      }
+
+      sidebarStorageRestoreRef.current = {
+        ...restoreState,
+        pins: null
+      };
+    }
+
+    const pinsKey = `${env.storagePrefix}:${cacheScopeKey}:folder-episode-pins:${activeSidebarProjectId}`;
+    window.localStorage.setItem(pinsKey, serializedPins);
+  }, [activeSidebarProjectId, cacheScopeKey, env.storagePrefix, folderEpisodePins]);
+
+  useEffect(() => {
+    if (!activeSidebarProjectId) {
+      return;
+    }
+
+    const scopeKey = getSidebarStorageScopeKey(cacheScopeKey, activeSidebarProjectId);
+    const serializedPinnedObjectIds = JSON.stringify(pinnedObjectIds);
+    const restoreState = sidebarStorageRestoreRef.current;
+
+    if (restoreState.scopeKey !== scopeKey) {
+      return;
+    }
+
+    if (restoreState.pinnedObjectIds !== null) {
+      if (restoreState.pinnedObjectIds !== serializedPinnedObjectIds) {
+        return;
+      }
+
+      sidebarStorageRestoreRef.current = {
+        ...restoreState,
+        pinnedObjectIds: null
+      };
+    }
+
+    const key = `${env.storagePrefix}:${cacheScopeKey}:pinned-objects:${activeSidebarProjectId}`;
+    window.localStorage.setItem(key, serializedPinnedObjectIds);
+  }, [activeSidebarProjectId, cacheScopeKey, env.storagePrefix, pinnedObjectIds]);
 
   useEffect(() => {
     if (!isEpisodeSearchVisible || isSidebarCollapsed) {
@@ -590,16 +695,16 @@ export function WorkspaceShell() {
     const sanitizedFolders = sanitizeSidebarFolders(sidebarFolders, state.snapshot.episodes);
     const changedFolders = JSON.stringify(sanitizedFolders) !== JSON.stringify(sidebarFolders);
 
-    const validEpisodeIds = new Set(state.snapshot.episodes.map((episode) => episode.id));
-    const sanitizedPins = Object.fromEntries(
-      Object.entries(folderEpisodePins).map(([scopeId, episodeIds]) => [
-        scopeId,
-        episodeIds.filter((episodeId) => validEpisodeIds.has(episodeId))
-      ])
-    );
+    const sanitizedPins = sanitizeEpisodePinMap(folderEpisodePins, state.snapshot.episodes);
     const changedPins = JSON.stringify(sanitizedPins) !== JSON.stringify(folderEpisodePins);
+    const validObjectIds = new Set(state.snapshot.objects.map((object) => object.id));
+    const sanitizedPinnedObjectIds = pinnedObjectIds.filter((objectId) =>
+      validObjectIds.has(objectId)
+    );
+    const changedPinnedObjectIds =
+      JSON.stringify(sanitizedPinnedObjectIds) !== JSON.stringify(pinnedObjectIds);
 
-    if (changedFolders || changedPins) {
+    if (changedFolders || changedPins || changedPinnedObjectIds) {
       queueMicrotask(() => {
         if (changedFolders) {
           setSidebarFolders(sanitizedFolders);
@@ -608,9 +713,13 @@ export function WorkspaceShell() {
         if (changedPins) {
           setFolderEpisodePins(sanitizedPins);
         }
+
+        if (changedPinnedObjectIds) {
+          setPinnedObjectIds(sanitizedPinnedObjectIds);
+        }
       });
     }
-  }, [folderEpisodePins, sidebarFolders, state]);
+  }, [folderEpisodePins, pinnedObjectIds, sidebarFolders, state]);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -802,6 +911,249 @@ export function WorkspaceShell() {
   }, []);
 
   useEffect(() => {
+    function updateRewireDragFromPointer(
+      dragState: {
+        kind: "rewire-drag";
+        nodeId: string;
+        stageLeft: number;
+        stageTop: number;
+      },
+      pointer: {
+        clientX: number;
+        clientY: number;
+      }
+    ) {
+      const hoveredTargetId =
+        [...candidateParentIdsRef.current].find((nodeId) => {
+          const element = nodeCardRefs.current.get(nodeId);
+
+          if (!element) {
+            return false;
+          }
+
+          const rect = element.getBoundingClientRect();
+
+          return (
+            pointer.clientX >= rect.left &&
+            pointer.clientX <= rect.right &&
+            pointer.clientY >= rect.top &&
+            pointer.clientY <= rect.bottom
+          );
+        }) ?? null;
+      const stageRect = canvasStageRef.current?.getBoundingClientRect();
+      const stageLeft = stageRect?.left ?? dragState.stageLeft;
+      const stageTop = stageRect?.top ?? dragState.stageTop;
+
+      setRewirePreviewPoint({
+        x: (pointer.clientX - stageLeft) / canvasZoom,
+        y: (pointer.clientY - stageTop) / canvasZoom
+      });
+      rewireHoverTargetIdRef.current = hoveredTargetId;
+      setRewireHoverTargetId(hoveredTargetId);
+    }
+
+    function updateNodeDragFromPointer(
+      activeDragState: {
+        kind: "node-drag" | "node-drag-pending";
+        level: StoryNodeLevel;
+        nodeId: string;
+        nodeSize: NodeSize;
+        pointerOffsetX: number;
+        pointerOffsetY: number;
+        pointerStartX: number;
+        pointerStartY: number;
+      },
+      pointer: {
+        clientX: number;
+        clientY: number;
+      }
+    ) {
+      const currentLaneCanvasBounds = laneCanvasBoundsRef.current;
+      const currentTimelineAnchors = timelineAnchorsRef.current;
+
+      if (!currentLaneCanvasBounds || !currentTimelineAnchors) {
+        return;
+      }
+
+      const stageRect = canvasStageRef.current?.getBoundingClientRect();
+
+      if (!stageRect) {
+        return;
+      }
+
+      const stagePoint = {
+        stageRect,
+        x: (pointer.clientX - stageRect.left) / canvasZoom,
+        y: (pointer.clientY - stageRect.top) / canvasZoom
+      };
+
+      const previewPlacement = snapMajorNodePlacementToTimelineAnchors(
+        activeDragState.level,
+        clampNodePlacement(
+          activeDragState.level,
+          {
+            x: stagePoint.x - activeDragState.pointerOffsetX,
+            y: stagePoint.y - activeDragState.pointerOffsetY
+          },
+          Math.max(
+            stageHeightRef.current,
+            stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
+          ),
+          currentLaneCanvasBounds,
+          activeDragState.nodeSize
+        ),
+        activeDragState.level === "major"
+          ? getTimelineAnchorPositions(
+              Math.max(
+                timelineStartY + 120,
+                stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
+              ),
+              currentLaneCanvasBounds.major,
+              activeDragState.nodeSize
+            )
+          : currentTimelineAnchors,
+        activeDragState.nodeSize
+      );
+
+      updateNodeDragPreview({
+        nodeId: activeDragState.nodeId,
+        placement: previewPlacement
+      });
+
+      if (activeDragState.level === "major") {
+        setTimelineEndY(
+          Math.max(
+            timelineStartY + 120,
+            Math.max(
+              0,
+              ...visibleNodesRef.current
+                .filter((node) => node.level === "major")
+                .map((node) => {
+                  const placement =
+                    node.id === activeDragState.nodeId
+                      ? previewPlacement
+                      : nodePlacementsRef.current.get(node.id);
+                  const size =
+                    node.id === activeDragState.nodeId
+                      ? activeDragState.nodeSize
+                      : getNodeSize(nodeSizesRef.current, node.id);
+
+                  return (placement?.y ?? 0) + size.height;
+                })
+            )
+          )
+        );
+      }
+    }
+
+    function stopCanvasAutoScroll() {
+      const autoScrollState = canvasAutoScrollStateRef.current;
+
+      if (autoScrollState.animationId !== null) {
+        window.cancelAnimationFrame(autoScrollState.animationId);
+      }
+
+      canvasAutoScrollStateRef.current = {
+        ...autoScrollState,
+        animationId: null,
+        dragKind: null
+      };
+    }
+
+    function runCanvasAutoScrollFrame() {
+      const autoScrollState = canvasAutoScrollStateRef.current;
+      const viewport = canvasViewportRef.current;
+      const dragState = canvasDragStateRef.current;
+
+      canvasAutoScrollStateRef.current = {
+        ...autoScrollState,
+        animationId: null
+      };
+
+      if (!viewport || autoScrollState.dragKind === null || !dragState) {
+        stopCanvasAutoScroll();
+        return;
+      }
+
+      const viewportRect = viewport.getBoundingClientRect();
+      const scrollVelocity = computeCanvasAutoScrollVelocity({
+        pointerClientY: autoScrollState.pointerClientY,
+        viewportBottom: viewportRect.bottom,
+        viewportTop: viewportRect.top
+      });
+
+      if (scrollVelocity === 0) {
+        stopCanvasAutoScroll();
+        return;
+      }
+
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollTop = Math.max(
+        0,
+        Math.min(viewport.scrollTop + scrollVelocity, maxScrollTop)
+      );
+
+      const pointer = {
+        clientX: autoScrollState.pointerClientX,
+        clientY: autoScrollState.pointerClientY
+      };
+
+      if (autoScrollState.dragKind === "rewire-drag" && dragState.kind === "rewire-drag") {
+        updateRewireDragFromPointer(dragState, pointer);
+      } else if (autoScrollState.dragKind === "node-drag" && dragState.kind === "node-drag") {
+        updateNodeDragFromPointer(dragState, pointer);
+      } else {
+        stopCanvasAutoScroll();
+        return;
+      }
+
+      canvasAutoScrollStateRef.current = {
+        ...canvasAutoScrollStateRef.current,
+        animationId: window.requestAnimationFrame(runCanvasAutoScrollFrame)
+      };
+    }
+
+    function syncCanvasAutoScroll(
+      dragKind: "node-drag" | "rewire-drag",
+      pointer: {
+        clientX: number;
+        clientY: number;
+      }
+    ) {
+      const viewport = canvasViewportRef.current;
+
+      if (!viewport) {
+        stopCanvasAutoScroll();
+        return;
+      }
+
+      const viewportRect = viewport.getBoundingClientRect();
+      const scrollVelocity = computeCanvasAutoScrollVelocity({
+        pointerClientY: pointer.clientY,
+        viewportBottom: viewportRect.bottom,
+        viewportTop: viewportRect.top
+      });
+
+      canvasAutoScrollStateRef.current = {
+        ...canvasAutoScrollStateRef.current,
+        dragKind,
+        pointerClientX: pointer.clientX,
+        pointerClientY: pointer.clientY
+      };
+
+      if (scrollVelocity === 0) {
+        stopCanvasAutoScroll();
+        return;
+      }
+
+      if (canvasAutoScrollStateRef.current.animationId === null) {
+        canvasAutoScrollStateRef.current = {
+          ...canvasAutoScrollStateRef.current,
+          animationId: window.requestAnimationFrame(runCanvasAutoScrollFrame)
+        };
+      }
+    }
+
     function handlePointerMove(event: PointerEvent) {
       const dragState = canvasDragStateRef.current;
 
@@ -849,30 +1201,8 @@ export function WorkspaceShell() {
       }
 
       if (dragState.kind === "rewire-drag") {
-        const hoveredTargetId =
-          [...candidateParentIdsRef.current].find((nodeId) => {
-            const element = nodeCardRefs.current.get(nodeId);
-
-            if (!element) {
-              return false;
-            }
-
-            const rect = element.getBoundingClientRect();
-
-            return (
-              event.clientX >= rect.left &&
-              event.clientX <= rect.right &&
-              event.clientY >= rect.top &&
-              event.clientY <= rect.bottom
-            );
-          }) ?? null;
-
-        setRewirePreviewPoint({
-          x: (event.clientX - dragState.stageLeft) / canvasZoom,
-          y: (event.clientY - dragState.stageTop) / canvasZoom
-        });
-        rewireHoverTargetIdRef.current = hoveredTargetId;
-        setRewireHoverTargetId(hoveredTargetId);
+        updateRewireDragFromPointer(dragState, event);
+        syncCanvasAutoScroll("rewire-drag", event);
         return;
       }
 
@@ -938,87 +1268,14 @@ export function WorkspaceShell() {
                 kind: "node-drag" as const
               }
             : dragState;
-        const currentLaneCanvasBounds = laneCanvasBoundsRef.current;
-        const currentTimelineAnchors = timelineAnchorsRef.current;
 
         if (dragState.kind === "node-drag-pending") {
           canvasDragStateRef.current = activeDragState;
           suppressNodeClickRef.current = dragState.nodeId;
         }
 
-        if (!currentLaneCanvasBounds || !currentTimelineAnchors) {
-          return;
-        }
-
-        const stageRect = canvasStageRef.current?.getBoundingClientRect();
-
-        if (!stageRect) {
-          return;
-        }
-
-        const stagePoint = {
-          stageRect,
-          x: (event.clientX - stageRect.left) / canvasZoom,
-          y: (event.clientY - stageRect.top) / canvasZoom
-        };
-
-        const previewPlacement = snapMajorNodePlacementToTimelineAnchors(
-          activeDragState.level,
-          clampNodePlacement(
-            activeDragState.level,
-            {
-              x: stagePoint.x - activeDragState.pointerOffsetX,
-              y: stagePoint.y - activeDragState.pointerOffsetY
-            },
-            Math.max(
-              stageHeightRef.current,
-              stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
-            ),
-            currentLaneCanvasBounds,
-            activeDragState.nodeSize
-          ),
-          activeDragState.level === "major"
-            ? getTimelineAnchorPositions(
-                Math.max(
-                  timelineStartY + 120,
-                  stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
-                ),
-                currentLaneCanvasBounds.major,
-                activeDragState.nodeSize
-              )
-            : currentTimelineAnchors,
-          activeDragState.nodeSize
-        );
-
-        updateNodeDragPreview({
-          nodeId: activeDragState.nodeId,
-          placement: previewPlacement
-        });
-
-        if (activeDragState.level === "major") {
-          setTimelineEndY(
-            Math.max(
-              timelineStartY + 120,
-              Math.max(
-                0,
-                ...visibleNodesRef.current
-                  .filter((node) => node.level === "major")
-                  .map((node) => {
-                    const placement =
-                      node.id === activeDragState.nodeId
-                        ? previewPlacement
-                        : nodePlacementsRef.current.get(node.id);
-                    const size =
-                      node.id === activeDragState.nodeId
-                        ? activeDragState.nodeSize
-                        : getNodeSize(nodeSizesRef.current, node.id);
-
-                    return (placement?.y ?? 0) + size.height;
-                  })
-              )
-            )
-          );
-        }
+        updateNodeDragFromPointer(activeDragState, event);
+        syncCanvasAutoScroll("node-drag", event);
         return;
       }
 
@@ -1061,6 +1318,7 @@ export function WorkspaceShell() {
     }
 
     function clearPointerDrag() {
+      stopCanvasAutoScroll();
       const dragState = canvasDragStateRef.current;
       canvasDragStateRef.current = null;
       setIsCanvasPanning(false);
@@ -1173,6 +1431,7 @@ export function WorkspaceShell() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", clearPointerDrag);
       window.removeEventListener("pointercancel", clearPointerDrag);
+      stopCanvasAutoScroll();
     };
   // syncSelectedNodeInputHeight는 렌더마다 새로 정의되므로 deps에 포함하지 않습니다.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1758,81 +2017,46 @@ export function WorkspaceShell() {
     (state.cloudProjectCount === 0 ||
       state.syncStatus === "authenticated-empty" ||
       state.syncStatus === "error");
-  const isGuestEmptyState =
-    state.session.mode === "guest" &&
-    state.linkage === null &&
-    isWorkspaceEmptyState;
   const isEmptyStateBusy =
     isAuthSignInInProgress ||
     state.syncStatus === "importing" ||
     state.syncStatus === "syncing";
 
-  if (isAuthenticatedEmptyState || isGuestEmptyState) {
+  if (isAuthenticatedEmptyState) {
     return (
       <div className="workspace-shell workspace-shell-loading">
         <section className="panel panel-canvas">
           <span className="eyebrow">Center</span>
           <h1>{copy.workspace.title}</h1>
-          <p>
-            {isAuthenticatedEmptyState
-              ? copy.persistence.authenticatedEmptyState
-              : copy.persistence.guestEmptyState}
-          </p>
+          <p>{copy.persistence.authenticatedEmptyState}</p>
           <div className="control-row">
-            {isAuthenticatedEmptyState ? (
-              <>
-                <button
-                  disabled={isEmptyStateBusy}
-                  onClick={() => {
-                    setAuthSignInError(null);
-                    setDetailError(null);
-                    void controller.createWorkspaceFromEmptyState().catch((error) => {
-                      setDetailError(toMessage(error));
-                    });
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.createProject}
-                </button>
-                <button
-                  className="button-secondary"
-                  disabled={isEmptyStateBusy}
-                  onClick={() => {
-                    setAuthSignInError(null);
-                    setDetailError(null);
-                    void controller.signOut().catch((error) => {
-                      setAuthSignInError(describeSignInError(error));
-                    });
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.signOut}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  disabled={isEmptyStateBusy}
-                  onClick={() => {
-                    setDetailError(null);
-                    void controller.createEpisode().catch((error) => {
-                      setDetailError(toMessage(error));
-                    });
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.addEpisodes}
-                </button>
-                <button
-                  className="button-secondary"
-                  disabled={isEmptyStateBusy}
-                  onClick={handleSignInWithGoogle}
-                  type="button"
-                >
-                  {isAuthSignInInProgress ? copy.persistence.signingIn : signInLabel}
-                </button>
-              </>
-            )}
+            <button
+              disabled={isEmptyStateBusy}
+              onClick={() => {
+                setAuthSignInError(null);
+                setDetailError(null);
+                void controller.createWorkspaceFromEmptyState().catch((error) => {
+                  setDetailError(toMessage(error));
+                });
+              }}
+              type="button"
+            >
+              {copy.persistence.createProject}
+            </button>
+            <button
+              className="button-secondary"
+              disabled={isEmptyStateBusy}
+              onClick={() => {
+                setAuthSignInError(null);
+                setDetailError(null);
+                void controller.signOut().catch((error) => {
+                  setAuthSignInError(describeSignInError(error));
+                });
+              }}
+              type="button"
+            >
+              {copy.persistence.signOut}
+            </button>
           </div>
           <p>{describeCloudStatus(state)}</p>
           {state.lastError ? <p>{`Error: ${state.lastError}`}</p> : null}
@@ -1972,17 +2196,26 @@ export function WorkspaceShell() {
     }
   });
   const nodePlacements = getLaneLayoutNodePlacements(laneLayoutsByLevel);
+  const visualNodePlacements = new Map(nodePlacements);
+
+  if (activeNodeDragPreview) {
+    visualNodePlacements.set(activeNodeDragPreview.nodeId, activeNodeDragPreview.placement);
+  }
+
   const majorLaneTimelineLocalCenterX =
     timelineAnchors.railCenterX - laneCanvasBounds.major.left;
   const connectionLines = buildConnectionLines(
     visibleNodes,
-    nodePlacements,
+    visualNodePlacements,
     effectiveNodeSizes
   );
   const lowestNodeBottom = Math.max(
     0,
     ...visibleNodes.map((node) => {
-      const placement = nodePlacements.get(node.id);
+      const placement =
+        activeNodeDragPreview?.nodeId === node.id
+          ? activeNodeDragPreview.placement
+          : nodePlacements.get(node.id);
       const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
       return (placement?.y ?? 0) + nodeSize.height;
     })
@@ -2124,6 +2357,22 @@ export function WorkspaceShell() {
     const orderedIndex = orderedNodes.findIndex((node) => node.id === anchorNode.id);
 
     return orderedIndex === -1 ? orderedNodes.length : orderedIndex;
+  }
+
+  // 이 함수는 배치 중심 Y에 가장 가까운 부모 노드를 찾습니다.
+  function getNearestParentIdForCanvasY(
+    level: StoryNodeLevel,
+    targetCenterY: number,
+    excludedNodeIds?: Set<string>
+  ) {
+    return resolveNearestParentIdByY({
+      excludedNodeIds,
+      level,
+      nodePlacements,
+      nodes: visibleNodes,
+      nodeSizes: effectiveNodeSizes,
+      targetCenterY
+    });
   }
 
   // 이 함수는 major 노드 기준의 타임라인 끝 후보를 계산합니다.
@@ -2808,7 +3057,11 @@ export function WorkspaceShell() {
         canvasHeight: draftNodeSize.height,
         canvasWidth: draftNodeSize.width,
         canvasX: resolvedPlacement.x,
-        canvasY: resolvedPlacement.y
+        canvasY: resolvedPlacement.y,
+        parentId: getNearestParentIdForCanvasY(
+          level,
+          resolvedPlacement.y + draftNodeSize.height / 2
+        )
       }
     );
 
@@ -3378,14 +3631,19 @@ export function WorkspaceShell() {
             hoveredTarget !== null ? nodePlacements.get(hoveredTarget.id) ?? null : null;
           const hoveredSize =
             hoveredTarget !== null ? getNodeSize(effectiveNodeSizes, hoveredTarget.id) : null;
-          const startX =
-            hoveredPlacement && hoveredSize
-              ? hoveredPlacement.x + hoveredSize.width / 2
-              : rewirePreviewPoint.x;
-          const startY =
-            hoveredPlacement && hoveredSize
-              ? hoveredPlacement.y + hoveredSize.height / 2
-              : rewirePreviewPoint.y;
+
+          if (hoveredTarget && hoveredPlacement && hoveredSize) {
+            return buildNodeConnectionPath({
+              isSameLevel: hoveredTarget.level === rewireNode.level,
+              sourcePlacement: hoveredPlacement,
+              sourceSize: hoveredSize,
+              targetPlacement: sourcePlacement,
+              targetSize: sourceSize
+            }).path;
+          }
+
+          const startX = rewirePreviewPoint.x;
+          const startY = rewirePreviewPoint.y;
           const endX = sourcePlacement.x + sourceSize.width / 2;
           const endY = sourcePlacement.y + sourceSize.height / 2;
           const bendDistance = Math.max(34, Math.abs(endX - startX) * 0.36);
@@ -4300,7 +4558,6 @@ export function WorkspaceShell() {
               setRenamingEpisodeId={setRenamingEpisodeId}
               setRenamingFolderId={setRenamingFolderId}
               setSidebarFolders={setSidebarFolders}
-              snapshotEpisodeCount={snapshot.episodes.length}
               snapshotEpisodes={snapshot.episodes}
               sortingFolderId={sortingFolderId}
               visibleFolders={visibleFolders}
@@ -4723,23 +4980,43 @@ export function WorkspaceShell() {
               <defs>
                 <marker
                   id="canvas-arrowhead"
-                  markerHeight="12"
-                  markerWidth="12"
-                  orient="auto-start-reverse"
-                  refX="11"
-                  refY="6"
+                  markerHeight="7"
+                  markerWidth="7"
+                  orient="auto"
+                  refX="6.3"
+                  refY="3.5"
+                  viewBox="0 0 7 7"
                 >
-                  <path d="M 0 0 L 12 6 L 0 12 z" />
+                  <path d="M 0.8 0.8 L 6.2 3.5 L 0.8 6.2 L 2.2 3.5 Z" />
+                </marker>
+                <marker
+                  id="canvas-preview-arrowhead"
+                  markerHeight="7"
+                  markerWidth="7"
+                  orient="auto"
+                  refX="6.3"
+                  refY="3.5"
+                  viewBox="0 0 7 7"
+                >
+                  <path
+                    className="connection-preview-arrowhead"
+                    d="M 0.8 0.8 L 6.2 3.5 L 0.8 6.2 L 2.2 3.5 Z"
+                  />
                 </marker>
               </defs>
               {connectionLines.map((line) => (
-                <path d={line.path} key={line.id} markerEnd="url(#canvas-arrowhead)" />
+                <path
+                  className="connection-parent-line"
+                  d={line.path}
+                  key={line.id}
+                  markerEnd="url(#canvas-arrowhead)"
+                />
               ))}
               {rewirePreviewLine ? (
                 <path
                   className="connection-preview-line"
                   d={rewirePreviewLine}
-                  markerEnd="url(#canvas-arrowhead)"
+                  markerEnd="url(#canvas-preview-arrowhead)"
                 />
               ) : null}
             </svg>
@@ -5171,5 +5448,17 @@ export function WorkspaceShell() {
       ) : null}
     </div>
   );
+}
+
+type SidebarStorageRestoreState = {
+  folders: string | null;
+  pinnedObjectIds: string | null;
+  pins: string | null;
+  scopeKey: string | null;
+};
+
+// 사이드바 로컬 UI 저장 범위를 계정과 프로젝트 기준으로 계산합니다.
+function getSidebarStorageScopeKey(cacheScopeKey: string, projectId: string) {
+  return `${cacheScopeKey}:${projectId}`;
 }
 

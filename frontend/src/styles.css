@@ -1231,6 +1231,10 @@ textarea {
   fill: rgba(16, 19, 22, 0.94);
 }
 
+.connection-layer .connection-preview-arrowhead {
+  fill: #2d77d6;
+}
+
 .lane-grid {
   min-height: var(--stage-height);
   position: relative;

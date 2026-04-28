@@ -734,6 +734,60 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("ignores stale authenticated local cache when cloud projects do not exist", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const staleSnapshot = createSampleWorkspace(now());
+    const staleLocal = new LocalPersistenceStore(storage, "test");
+
+    staleLocal.setCacheScope("account:account-empty");
+    staleLocal.saveSnapshot(staleSnapshot);
+    staleLocal.saveRegistry({
+      activeProjectId: staleSnapshot.project.id,
+      projects: [
+        {
+          cloudLinked: false,
+          lastOpenedAt: staleSnapshot.project.updatedAt,
+          linkedAccountId: null,
+          projectId: staleSnapshot.project.id,
+          summary: staleSnapshot.project.summary,
+          title: staleSnapshot.project.title,
+          updatedAt: staleSnapshot.project.updatedAt
+        }
+      ]
+    });
+
+    const auth = new ControlledAuthBoundary({
+      accountId: "account-empty",
+      displayName: "Empty Account",
+      mode: "authenticated"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const state = controller.getState()!;
+    const cloudProjects = await cloud.listProjects();
+
+    expect(state.session.mode).toBe("authenticated");
+    expect(state.session.accountId).toBe("account-empty");
+    expect(state.syncStatus).toBe("authenticated-empty");
+    expect(state.registry.activeProjectId).toBeNull();
+    expect(state.registry.projects).toHaveLength(0);
+    expect(state.snapshot.project.id).not.toBe(staleSnapshot.project.id);
+    expect(state.snapshot.episodes).toHaveLength(0);
+    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(cloudProjects.projects).toHaveLength(0);
+
+    controller.dispose();
+  });
+
   it("creates the first authenticated project only after explicit empty-state action", async () => {
     const now = createClock();
     const storage = new MemoryStorage();
@@ -804,6 +858,66 @@ describe("workspace persistence controller", () => {
     expect(state.session.accountId).toBe("account-new");
     expect(state.syncStatus).toBe("authenticated-empty");
     expect(state.linkage).toBeNull();
+    expect(state.snapshot.episodes).toHaveLength(0);
+    expect(state.snapshot.nodes).toHaveLength(0);
+    expect(cloudProjects.projects).toHaveLength(0);
+
+    controller.dispose();
+  });
+
+  it("ignores stale authenticated local cache when signing in to an empty cloud account", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const staleSnapshot = createSampleWorkspace(now());
+    const staleLocal = new LocalPersistenceStore(storage, "test");
+
+    staleLocal.setCacheScope("account:account-new");
+    staleLocal.saveSnapshot(staleSnapshot);
+    staleLocal.saveRegistry({
+      activeProjectId: staleSnapshot.project.id,
+      projects: [
+        {
+          cloudLinked: false,
+          lastOpenedAt: staleSnapshot.project.updatedAt,
+          linkedAccountId: null,
+          projectId: staleSnapshot.project.id,
+          summary: staleSnapshot.project.summary,
+          title: staleSnapshot.project.title,
+          updatedAt: staleSnapshot.project.updatedAt
+        }
+      ]
+    });
+
+    const auth = new ControlledAuthBoundary({
+      accountId: null,
+      displayName: "Guest Creator",
+      mode: "guest"
+    });
+    auth.setNextSignInSession({
+      accountId: "account-new",
+      displayName: "Account New",
+      mode: "authenticated"
+    });
+    const cloud = new SessionScopedCloudPersistenceGateway(now, () => auth.getCurrentAccountId());
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud,
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    await controller.signIn();
+
+    const state = controller.getState()!;
+    const cloudProjects = await cloud.listProjects();
+
+    expect(state.session.mode).toBe("authenticated");
+    expect(state.session.accountId).toBe("account-new");
+    expect(state.syncStatus).toBe("authenticated-empty");
+    expect(state.registry.activeProjectId).toBeNull();
+    expect(state.registry.projects).toHaveLength(0);
+    expect(state.snapshot.project.id).not.toBe(staleSnapshot.project.id);
     expect(state.snapshot.episodes).toHaveLength(0);
     expect(state.snapshot.nodes).toHaveLength(0);
     expect(cloudProjects.projects).toHaveLength(0);
@@ -1674,6 +1788,15 @@ describe("workspace persistence controller", () => {
     expect(deleted).toBe(true);
     expect(state.snapshot.episodes.some((episode) => episode.id === nextEpisodeId)).toBe(false);
     expect(state.snapshot.nodes.some((node) => node.episodeId === nextEpisodeId)).toBe(false);
+
+    const deletedLastEpisode = await controller.deleteEpisode(initialEpisodeId);
+
+    state = controller.getState()!;
+
+    expect(deletedLastEpisode).toBe(true);
+    expect(state.snapshot.project.activeEpisodeId).toBe("");
+    expect(state.snapshot.episodes).toHaveLength(0);
+    expect(state.snapshot.nodes.some((node) => node.episodeId === initialEpisodeId)).toBe(false);
 
     controller.dispose();
   });

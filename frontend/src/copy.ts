@@ -28,8 +28,6 @@ export const copy = {
     closeDetails: "Close Details",
     episodeDeleteConfirmation:
       "This episode will be removed together with its canvas nodes and drawer items. Do you want to delete it?",
-    episodeDeleteLocked:
-      "Keep at least one episode in the project. Create another episode before deleting this one.",
     fixed: "Fixed",
     fold: "Fold",
     hideSavedKeywords: "Hide Saved Keywords",
@@ -37,8 +35,6 @@ export const copy = {
     drawerOpen: "Drawer open",
     empty: "Empty",
     guestMode: "Guest mode keeps work in local cache only.",
-    guestEmptyState:
-      "No guest project is open yet. Create your first local episode or sign in to load account projects.",
     important: "Important",
     keywordCloudEmpty: "No keyword suggestions are available yet for this node.",
     keywordSelectionHint: "Select one or more keywords, then save them or unlock sentence suggestions.",

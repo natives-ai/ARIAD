@@ -1,7 +1,7 @@
 ﻿// 이 파일은 WorkspaceShell 캔버스 배치/연결 계산 함수를 제공합니다.
 import type { StoryNode, StoryNodeLevel } from "@scenaairo/shared";
 
-import { collectSubtreeNodes } from "../../persistence/nodeTree";
+import { collectSubtreeNodes, getParentLevel } from "../../persistence/nodeTree";
 import {
   laneGap,
   laneContentStartY,
@@ -127,6 +127,37 @@ export function getMajorLaneTimelineCenterX(majorLaneBounds: {
 
 export function clampCanvasZoom(value: number) {
   return Math.min(maxCanvasZoom, Math.max(minCanvasZoom, Number(value.toFixed(2))));
+}
+
+// 이 함수는 캔버스 포인터 위치를 기준으로 자동 스크롤 속도를 계산합니다.
+export function computeCanvasAutoScrollVelocity(params: {
+  maxVelocity?: number;
+  pointerClientY: number;
+  threshold?: number;
+  viewportBottom: number;
+  viewportTop: number;
+}) {
+  const threshold = params.threshold ?? 80;
+  const maxVelocity = params.maxVelocity ?? 24;
+
+  if (threshold <= 0 || maxVelocity <= 0 || params.viewportBottom <= params.viewportTop) {
+    return 0;
+  }
+
+  const topDistance = params.pointerClientY - params.viewportTop;
+  const bottomDistance = params.viewportBottom - params.pointerClientY;
+  const topRatio = Math.min(1, Math.max(0, (threshold - topDistance) / threshold));
+  const bottomRatio = Math.min(1, Math.max(0, (threshold - bottomDistance) / threshold));
+
+  if (topRatio === 0 && bottomRatio === 0) {
+    return 0;
+  }
+
+  if (topRatio >= bottomRatio) {
+    return -Math.ceil(maxVelocity * topRatio);
+  }
+
+  return Math.ceil(maxVelocity * bottomRatio);
 }
 export function rectanglesOverlap(
   leftPlacement: { x: number; y: number },
@@ -361,6 +392,120 @@ export function hasCollapsedAncestor(node: StoryNode, nodesById: Map<string, Sto
   return false;
 }
 
+// 이 함수는 대상 Y 중심과 가장 가까운 부모 레벨 노드를 찾습니다.
+export function resolveNearestParentIdByY(params: {
+  excludedNodeIds?: Set<string> | undefined;
+  level: StoryNodeLevel;
+  nodePlacements: Map<string, { x: number; y: number }>;
+  nodes: StoryNode[];
+  nodeSizes: Record<string, NodeSize>;
+  targetCenterY: number;
+}) {
+  const parentLevel = getParentLevel(params.level);
+
+  if (!parentLevel) {
+    return null;
+  }
+
+  const candidates = params.nodes
+    .filter((node) => node.level === parentLevel)
+    .filter((node) => !params.excludedNodeIds?.has(node.id))
+    .map((node) => {
+      const placement = params.nodePlacements.get(node.id);
+
+      if (!placement) {
+        return null;
+      }
+
+      const size = getNodeSize(params.nodeSizes, node.id);
+      const centerY = placement.y + size.height / 2;
+
+      return {
+        centerY,
+        distance: Math.abs(centerY - params.targetCenterY),
+        isAbove: centerY <= params.targetCenterY,
+        node
+      };
+    })
+    .filter(
+      (
+        entry
+      ): entry is {
+        centerY: number;
+        distance: number;
+        isAbove: boolean;
+        node: StoryNode;
+      } => entry !== null
+    )
+    .sort((left, right) => {
+      if (left.distance !== right.distance) {
+        return left.distance - right.distance;
+      }
+
+      if (left.isAbove !== right.isAbove) {
+        return left.isAbove ? -1 : 1;
+      }
+
+      return (
+        left.node.orderIndex - right.node.orderIndex ||
+        left.node.createdAt.localeCompare(right.node.createdAt) ||
+        left.node.id.localeCompare(right.node.id)
+      );
+    });
+
+  return candidates[0]?.node.id ?? null;
+}
+
+// 이 함수는 두 노드 사이의 연결선 앵커와 path를 계산합니다.
+export function buildNodeConnectionPath(params: {
+  isSameLevel?: boolean;
+  sourcePlacement: { x: number; y: number };
+  sourceSize: NodeSize;
+  targetPlacement: { x: number; y: number };
+  targetSize: NodeSize;
+}) {
+  if (params.isSameLevel) {
+    const sourceCenterY = params.sourcePlacement.y + params.sourceSize.height / 2;
+    const targetCenterY = params.targetPlacement.y + params.targetSize.height / 2;
+    const sourceAboveTarget = sourceCenterY <= targetCenterY;
+    const direction = sourceAboveTarget ? 1 : -1;
+    const startX = params.sourcePlacement.x + params.sourceSize.width / 2;
+    const startY = sourceAboveTarget
+      ? params.sourcePlacement.y + params.sourceSize.height
+      : params.sourcePlacement.y;
+    const endX = params.targetPlacement.x + params.targetSize.width / 2;
+    const endY = sourceAboveTarget
+      ? params.targetPlacement.y
+      : params.targetPlacement.y + params.targetSize.height;
+    const bendDistance = Math.max(24, Math.abs(endY - startY) * 0.34);
+
+    return {
+      endX,
+      endY,
+      path: `M ${startX} ${startY} C ${startX} ${startY + bendDistance * direction}, ${endX} ${endY - bendDistance * direction}, ${endX} ${endY}`,
+      startX,
+      startY
+    };
+  }
+
+  const startX = params.sourcePlacement.x + params.sourceSize.width;
+  const endX = params.targetPlacement.x;
+  const startY = params.sourcePlacement.y + params.sourceSize.height / 2;
+  const endY = params.targetPlacement.y + params.targetSize.height / 2;
+  const bendDistance = Math.max(34, Math.abs(endX - startX) * 0.36);
+  const curveDirection = endX >= startX ? 1 : -1;
+  const firstCurveX = startX + bendDistance * curveDirection;
+  const secondCurveX = endX - bendDistance * curveDirection;
+
+  return {
+    endX,
+    endY,
+    path: `M ${startX} ${startY} C ${firstCurveX} ${startY}, ${secondCurveX} ${endY}, ${endX} ${endY}`,
+    startX,
+    startY
+  };
+}
+
 export function buildConnectionLines(
   nodes: StoryNode[],
   nodePlacements: Map<string, { x: number; y: number }>,
@@ -383,24 +528,23 @@ export function buildConnectionLines(
 
     const parentSize = getNodeSize(nodeSizes, parentNode.id);
     const childSize = getNodeSize(nodeSizes, node.id);
-    const startX = parentPlacement.x + parentSize.width;
-    const endX = childPlacement.x;
-    const startY = parentPlacement.y + parentSize.height / 2;
-    const endY = childPlacement.y + childSize.height / 2;
-    const bendDistance = Math.max(34, Math.abs(endX - startX) * 0.36);
-    const curveDirection = endX >= startX ? 1 : -1;
-    const firstCurveX = startX + bendDistance * curveDirection;
-    const secondCurveX = endX - bendDistance * curveDirection;
+    const line = buildNodeConnectionPath({
+      isSameLevel: parentNode.level === node.level,
+      sourcePlacement: parentPlacement,
+      sourceSize: parentSize,
+      targetPlacement: childPlacement,
+      targetSize: childSize
+    });
 
     return [
       {
         childId: node.id,
+        endX: line.endX,
+        endY: line.endY,
         id: `${parentNode.id}-${node.id}`,
-        endX,
-        endY,
-        path: `M ${startX} ${startY} C ${firstCurveX} ${startY}, ${secondCurveX} ${endY}, ${endX} ${endY}`,
-        startX,
-        startY
+        path: line.path,
+        startX: line.startX,
+        startY: line.startY
       }
     ];
   });
