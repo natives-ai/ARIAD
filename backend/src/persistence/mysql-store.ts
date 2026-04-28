@@ -81,6 +81,8 @@ interface CloudObjectRow extends RowDataPacket {
 }
 
 interface CloudNodeRow extends RowDataPacket {
+  canvas_height: number | null;
+  canvas_width: number | null;
   canvas_x: number | null;
   canvas_y: number | null;
   content_mode: string;
@@ -192,6 +194,21 @@ const CLOUD_PROJECT_BACKFILL_COLUMNS: ReadonlyArray<{
   {
     name: "snapshot_json",
     definition: "snapshot_json JSON NULL"
+  }
+];
+
+// 레거시 cloud_nodes 테이블의 레이아웃 크기 컬럼을 보완합니다.
+const CLOUD_NODE_BACKFILL_COLUMNS: ReadonlyArray<{
+  definition: string;
+  name: string;
+}> = [
+  {
+    name: "canvas_width",
+    definition: "canvas_width DOUBLE NULL"
+  },
+  {
+    name: "canvas_height",
+    definition: "canvas_height DOUBLE NULL"
   }
 ];
 // 배열에서 같은 ID 항목을 치환하거나 추가합니다.
@@ -611,6 +628,8 @@ export class MySqlBackedPersistenceStore {
             is_fixed TINYINT(1) NULL,
             canvas_x DOUBLE NULL,
             canvas_y DOUBLE NULL,
+            canvas_width DOUBLE NULL,
+            canvas_height DOUBLE NULL,
             order_index INT NOT NULL,
             created_at VARCHAR(40) NOT NULL,
             updated_at VARCHAR(40) NOT NULL,
@@ -686,31 +705,46 @@ export class MySqlBackedPersistenceStore {
           await this.pool.execute(statement);
         }
         await this.ensureCloudProjectsBackfillColumns();
+        await this.ensureCloudNodesBackfillColumns();
       })();
     }
 
     await this.schemaReady;
   }
 
-  // MySQL 버전 차이와 무관하게 cloud_projects 백워드 컬럼을 보완합니다.
-  private async ensureCloudProjectsBackfillColumns() {
+  // MySQL 버전 차이와 무관하게 nullable 백워드 컬럼을 보완합니다.
+  private async ensureBackfillColumns(
+    tableName: "cloud_nodes" | "cloud_projects",
+    columns: ReadonlyArray<{ definition: string; name: string }>
+  ) {
     const [rows] = await this.pool.query<InformationSchemaColumnRow[]>(
       `SELECT COLUMN_NAME
        FROM INFORMATION_SCHEMA.COLUMNS
        WHERE TABLE_SCHEMA = DATABASE()
-         AND TABLE_NAME = 'cloud_projects'`
+         AND TABLE_NAME = ?`,
+      [tableName]
     );
     const existingColumnNames = new Set(rows.map((row) => row.COLUMN_NAME));
 
-    for (const column of CLOUD_PROJECT_BACKFILL_COLUMNS) {
+    for (const column of columns) {
       if (existingColumnNames.has(column.name)) {
         continue;
       }
 
       await this.pool.execute(
-        `ALTER TABLE cloud_projects ADD COLUMN ${column.definition}`
+        `ALTER TABLE ${tableName} ADD COLUMN ${column.definition}`
       );
     }
+  }
+
+  // MySQL 버전 차이와 무관하게 cloud_projects 백워드 컬럼을 보완합니다.
+  private async ensureCloudProjectsBackfillColumns() {
+    await this.ensureBackfillColumns("cloud_projects", CLOUD_PROJECT_BACKFILL_COLUMNS);
+  }
+
+  // MySQL 버전 차이와 무관하게 cloud_nodes 크기 컬럼을 보완합니다.
+  private async ensureCloudNodesBackfillColumns() {
+    await this.ensureBackfillColumns("cloud_nodes", CLOUD_NODE_BACKFILL_COLUMNS);
   }
 
   // 계정 기반 영속화를 위해 최소 계정 레코드를 보장합니다.
@@ -767,6 +801,8 @@ export class MySqlBackedPersistenceStore {
          is_fixed,
          canvas_x,
          canvas_y,
+         canvas_width,
+         canvas_height,
          order_index,
          created_at,
          updated_at
@@ -847,7 +883,9 @@ export class MySqlBackedPersistenceStore {
         ...(row.is_fixed === null ? {} : { isFixed: row.is_fixed === 1 }),
         ...(row.is_important === null ? {} : { isImportant: row.is_important === 1 }),
         ...(row.canvas_x === null ? {} : { canvasX: Number(row.canvas_x) }),
-        ...(row.canvas_y === null ? {} : { canvasY: Number(row.canvas_y) })
+        ...(row.canvas_y === null ? {} : { canvasY: Number(row.canvas_y) }),
+        ...(row.canvas_width === null ? {} : { canvasWidth: Number(row.canvas_width) }),
+        ...(row.canvas_height === null ? {} : { canvasHeight: Number(row.canvas_height) })
       })),
       objects: objectRows.map((row) => ({
         category: row.category as StoryObjectCategory,
@@ -1059,10 +1097,12 @@ export class MySqlBackedPersistenceStore {
           is_fixed,
           canvas_x,
           canvas_y,
+          canvas_width,
+          canvas_height,
           order_index,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           accountId,
           project.id,
@@ -1077,6 +1117,8 @@ export class MySqlBackedPersistenceStore {
           toNullableTinyInt(node.isFixed),
           node.canvasX ?? null,
           node.canvasY ?? null,
+          node.canvasWidth ?? null,
+          node.canvasHeight ?? null,
           node.orderIndex,
           node.createdAt,
           node.updatedAt

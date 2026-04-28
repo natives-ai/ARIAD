@@ -145,6 +145,47 @@ export function getObjectToken(name: string) {
   return `${objectTokenStart}${name}${objectTokenEnd}`;
 }
 
+export type ObjectMentionCreateCandidate = {
+  name: string;
+  normalizedName: string;
+};
+
+const objectMentionCreateNameMaxLength = 80;
+
+// 생성 후보 이름을 inline marker가 없는 표시 이름으로 정규화합니다.
+export function sanitizeObjectMentionCreateName(query: string) {
+  return stripInlineFormattingMarkers(query)
+    .replace(/@/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// 열린 object mention query에서 새 오브젝트 생성 후보를 계산합니다.
+export function getObjectMentionCreateCandidate(
+  query: string,
+  objects: Array<{ name: string }>
+): ObjectMentionCreateCandidate | null {
+  const name = sanitizeObjectMentionCreateName(query);
+
+  if (!name || name.length > objectMentionCreateNameMaxLength || name.includes("\n")) {
+    return null;
+  }
+
+  const normalizedName = name.toLowerCase();
+  const hasExactObject = objects.some(
+    (object) => object.name.trim().toLowerCase() === normalizedName
+  );
+
+  if (hasExactObject) {
+    return null;
+  }
+
+  return {
+    name,
+    normalizedName
+  };
+}
+
 export function normalizeInlineObjectMentions(value: string) {
   return value.replace(/@([^@\n]+?)@/g, (_, name: string) => getObjectToken(name.trim()));
 }

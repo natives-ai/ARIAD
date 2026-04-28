@@ -72,7 +72,7 @@ export function parseStoredEpisodeCanvasUiState(
   }
 }
 
-// 에피소드 ID 목록에 맞춰 저장된 캔버스 UI 상태의 nodeSizes를 정리합니다.
+// 에피소드 노드 목록에 맞춰 저장된 캔버스 UI 상태를 정리합니다.
 export function sanitizeEpisodeCanvasUiState(
   storedState: EpisodeCanvasUiState,
   nodes: StoryNode[],
@@ -81,6 +81,7 @@ export function sanitizeEpisodeCanvasUiState(
   const clampNumber = (value: number, fallbackValue: number) => {
     return Number.isFinite(value) ? value : fallbackValue;
   };
+  const hasMajorNodes = nodes.some((node) => node.level === "major");
 
   return {
     laneDividerXs: {
@@ -88,7 +89,9 @@ export function sanitizeEpisodeCanvasUiState(
       first: clampNumber(storedState.laneDividerXs.first, fallback.laneDividerXs.first),
       second: clampNumber(storedState.laneDividerXs.second, fallback.laneDividerXs.second)
     },
-    timelineEndY: clampNumber(storedState.timelineEndY, fallback.timelineEndY),
+    timelineEndY: hasMajorNodes
+      ? clampNumber(storedState.timelineEndY, fallback.timelineEndY)
+      : fallback.timelineEndY,
     nodeSizes: sanitizeNodeSizeMap(storedState.nodeSizes, nodes)
   } as EpisodeCanvasUiState;
 }

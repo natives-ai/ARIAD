@@ -2638,3 +2638,113 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Fixed-node content mutation is blocked at UI and handler layers, and the major timeline arrow no longer stretches to minor/detail nodes while canvas height still accommodates them.
 - Warnings / blockers: Vitest/Vite build needed sandbox escalation on Windows due `spawn EPERM`.
 - Approval needed: `none`
+
+### 2026-04-28 / loop-171
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Investigated the newly reported broad node movement instability: nodes sometimes jump downward during drag/drop and nearby nodes appear to move together. Re-read the current frontend placement pipeline and confirmed the highest-risk frontend paths are render-time `applyLaneVerticalReflow(...)` over full lanes, drag/drop `resolveNodeOverlapPlacement(...)`, and `moveNodeFreely(...) -> controller.moveNode(...)` structural reorder happening in the same interaction. Backend is currently a preservation/smoke concern rather than the likely source. Added `detail-028 / 노드 이동 안정화 종합 점검 계획` with separate Frontend and Backend ownership.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.layout.test.ts` (pass, 4 tests, outside sandbox after `spawn EPERM`); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 58 tests, outside sandbox after `spawn EPERM`); `corepack yarn --cwd frontend test -- src/routes/WorkspaceShell.test.tsx` (fails because the package test script still loads stale broader tests: `AppRoutes.test.tsx` expects `Canvas` on an empty guest state, and `controller.reorder.test.ts` assumes seeded initial nodes).
+- Result: Current focused route/layout movement-related baseline is green, but the reported UX symptoms are not yet covered by dedicated regressions. The next implementation should first add route-level reproductions for sibling movement, parent-descendant movement, and preview/drop y stability before changing reflow behavior.
+- Warnings / blockers: Full frontend package test entry remains noisy due unrelated stale expectations from empty-first workspace behavior. The movement fix should keep `WorkspaceShell.tsx` effectively single-writer because it is the central drag/render file.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-172
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Replanned the node movement stabilization around the user's lane-array idea. Added `detail-029 / Lane Array + Spacer 기반 노드 이동 안정화 재계획`, which supersedes the preferred implementation direction of `detail-028`: lanes should be represented internally as `node` and layout-only `spacer` blocks, drag/drop should become block movement plus spacer-height adjustment, and backend/shared persistence should stay unchanged in phase 1 by continuing to save existing `canvasX`, `canvasY`, `orderIndex`, and `parentId` fields.
+- Tests run: planning update only
+- Result: The recommended direction is now to adopt a frontend-only lane array + spacer layout model first, then defer any backend/shared lane-layout persistence decision until after the interaction model is stable.
+- Warnings / blockers: A later backend/shared persistence model for lane arrays would trigger shared-contract/schema/version-control review and likely human approval; phase 1 explicitly avoids that scope.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-173
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.laneLayout.ts`, `frontend/src/routes/workspace-shell/workspaceShell.laneLayout.test.ts`, `frontend/src/routes/workspace-shell/CanvasLaneSpacer.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Implemented `detail-029` phase 1 without changing backend/shared contracts. Added a lane-array layout helper that converts each lane into `node` and layout-only `spacer` blocks, preserves saved vertical gaps as spacer height, repairs overlaps with the minimum gap, and projects drop positions into stable block slots. Switched `WorkspaceShell` render placement away from full-lane `applyLaneVerticalReflow(...)` and into lane-layout-derived node placement, rendered spacer blocks inside lane tracks, and routed draft/node drops through lane slot projection. Kept existing persistence fields (`canvasX`, `canvasY`, `orderIndex`, `parentId`) as the only saved model.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.laneLayout.test.ts` (pass, 5 tests, outside sandbox after Vite `spawn EPERM`); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.layout.test.ts` (pass, 4 tests, outside sandbox); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 58 tests, outside sandbox); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend eslint (pass); `corepack yarn workspace @scenaairo/backend integration` (pass, 25 tests); `corepack yarn workspace @scenaairo/frontend build` (pass outside sandbox after Vite `spawn EPERM`)
+- Result: Lane rendering now uses an explicit node/spacer layout model, route regressions around major drag/timeline behavior remain green, and backend persistence smoke confirms no contract/schema change was needed.
+- Warnings / blockers: Vitest and Vite build still require sandbox escalation on Windows because config loading can hit `spawn EPERM`; no product hard stop or backend/shared persistence change was introduced.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-174
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Version Control
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Added `detail-030 / 노드 크기 DB 저장 계획` as a separate follow-up item at the user's request. The new plan keeps lane array/spacer as a frontend-only calculated model, but adds canonical node size persistence through optional `canvasWidth` and `canvasHeight` fields on nodes. It explicitly scopes the work across shared types, backend MySQL schema/store/read-write paths, frontend node size source/migration behavior, and validation gates.
+- Tests run: planning update only
+- Result: DB persistence for node size is now separated from `detail-029` and ready as its own implementation item.
+- Warnings / blockers: Implementing `detail-030` will touch shared contracts and backend schema, so it must go through Version Control gate with rollback/backward-compatibility coverage before code changes.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-175
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Planned restoration of inline object creation from unmatched `@` mention queries. Added `detail-031 / 인라인 작성 중 미등록 오브젝트 생성 복구 계획`, covering a frontend-first UX where the object mention menu shows `Create "Name" as object` when the typed query has no exact existing object match, then reuses the existing inline object token and object attach flow. Backend is scoped to existing object persistence smoke only, with no schema/API change.
+- Tests run: planning update and read-only code inspection only
+- Result: The missing create-from-mention UX is now separated as its own frontend-led implementation plan.
+- Warnings / blockers: Existing code already auto-creates missing objects when a closed `@name@` token is present, so implementation must avoid duplicate object creation by reusing the normalized name lookup.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-176
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend, Frontend, Version Control
+- Touched zones: `shared/src/types/domain.ts`, `shared/src/types/domain.d.ts`, `backend/mysql/init/001_create_cloud_projects.sql`, `backend/src/persistence/mysql-store.ts`, `backend/src/persistence/node-order.ts`, `backend/src/persistence/node-order.test.ts`, `backend/src/persistence/routes.integration.test.ts`, `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/useEpisodeCanvasState.ts`, `frontend/src/routes/workspace-shell/workspaceShell.storage.ts`, `PLANS.md`
+- What changed: Implemented `detail-030` node-size canonical persistence. Added optional `canvasWidth`/`canvasHeight` to `StoryNode`, added nullable MySQL columns plus bootstrap/backfill handling, persisted/read node sizes through the MySQL store, and extended reorder/canonicalization tests so size fields are preserved. Frontend controller create/update placement now accepts node size, `WorkspaceShell` resolves size as canonical DB value -> legacy localStorage fallback -> default size, and resize/create/move paths write canonical size. Hydration now avoids restoring stale episode UI timeline state on pure node position/size changes and drops stored timeline length when no major nodes remain.
+- Tests run: `git diff --check` (pass); `corepack yarn workspace @scenaairo/shared typecheck` (pass); `corepack yarn workspace @scenaairo/backend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); `corepack yarn workspace @scenaairo/shared test` (pass, outside sandbox after `spawn EPERM`); `corepack yarn workspace @scenaairo/backend test` (pass, 19 tests); `corepack yarn workspace @scenaairo/backend integration` (pass, 25 tests); `corepack yarn workspace @scenaairo/recommendation test` (pass, 22 tests); `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts src/routes/workspace-shell/workspaceShell.laneLayout.test.ts src/routes/WorkspaceShell.test.tsx` (pass, 89 tests, outside sandbox); `corepack yarn workspace @scenaairo/shared lint` (pass); `corepack yarn workspace @scenaairo/backend lint` (pass); changed-file frontend ESLint (pass); `corepack yarn build` (pass, outside sandbox after Vite `spawn EPERM`).
+- Result: Node card dimensions are now part of canonical persistence while lane array/spacer remains frontend-only calculated layout. Existing nodes without size fields continue to fall back to local/default sizes.
+- Warnings / blockers: Full `corepack yarn workspace @scenaairo/frontend lint` still fails on unrelated pre-existing `frontend/src/routes/AuthCallbackPage.tsx` `react-hooks/set-state-in-effect`. Requested Docker/MySQL DB reset was attempted only as far as checking Docker availability; `docker compose -f docker-compose.mysql.yml down -v` failed because Docker Desktop engine was not running, `Start-Service com.docker.service` failed due permissions, and the user then requested no Docker work. Docker service remains `Stopped`, no volume was removed, and DB recreation is intentionally not performed in this loop.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-177
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Version Control
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/useEpisodeCanvasState.ts`, `frontend/src/routes/workspace-shell/workspaceShell.storage.ts`, `frontend/src/persistence/controller.test.ts`, `PLANS.md`
+- What changed: Reconciled the final `detail-030` frontend patch. Resize now keeps a local active-size overlay during pointer movement but writes canonical `canvasWidth/canvasHeight` only on pointer-up. The final-major delete/timeline shrink regression was preserved by avoiding stale episode UI hydration during node position/size changes, and the route suite now includes a canonical resize reload test that clears episode UI `nodeSizes` before remounting.
+- Tests run: `corepack yarn workspace @scenaairo/shared typecheck` (pass); `corepack yarn workspace @scenaairo/backend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass after final edits); `corepack yarn workspace @scenaairo/shared lint` (pass); `corepack yarn workspace @scenaairo/backend lint` (pass); changed-file frontend ESLint plus storage file lint (pass); `corepack yarn --cwd backend run -T vitest run src/persistence/node-order.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); `corepack yarn --cwd backend run -T vitest run --pool threads src/persistence/routes.integration.test.ts` (pass, 7 tests); `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 25 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass on rerun, 59 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.laneLayout.test.ts` (outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `corepack yarn workspace @scenaairo/shared build` (pass); `corepack yarn workspace @scenaairo/backend build` (pass); `corepack yarn --cwd shared run -T vitest run src/index.test.ts` (outside sandbox pass, 1 test); `git diff --check` (pass, line-ending warnings only).
+- Result: Final detail-030 patch is validated with canonical-size persistence, live resize behavior, old local-size fallback, and final-major timeline shrink intact.
+- Warnings / blockers: Windows sandbox still blocks some Vitest/Vite worker/config spawning with `spawn EPERM`; approved escalation was required for those commands. `corepack yarn workspace @scenaairo/shared test` picked up generated `shared/dist/index.test.js` after build, so the focused source test was used in this verification pass.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-178
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: local MySQL `scenaairo_local`, `PLANS.md`
+- What changed: Reset the local MySQL database requested for `detail-030`. Confirmed `MySQL80` service is running, connected with the repo default local MySQL config, dropped and recreated `scenaairo_local`, then reapplied `backend/mysql/init/001_create_cloud_projects.sql`.
+- Tests run: Local MySQL connection smoke (`SELECT DATABASE(), VERSION()`) pass; schema recreation command pass; `INFORMATION_SCHEMA.COLUMNS` check confirmed `cloud_nodes.canvas_width` and `cloud_nodes.canvas_height` are nullable `double` columns; row count smoke confirmed `cloud_projects`, `cloud_nodes`, and `cloud_accounts` are empty.
+- Result: Local MySQL DB is now clean and recreated from the updated schema with the new node size columns.
+- Warnings / blockers: This was the local `MySQL80` service, not Docker. The reset is destructive and removed local `scenaairo_local` data as requested.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-179
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: local MySQL `scenaairo_local`, `PLANS.md`
+- What changed: Rechecked the user's report that the DB did not look reset. Found `scenaairo_local` had been repopulated with 1 project and 5 nodes after the previous reset, then reset the local MySQL database again by dropping/recreating `scenaairo_local` and reapplying `backend/mysql/init/001_create_cloud_projects.sql`.
+- Tests run: Immediate table count smoke after reset (all 9 tables 0 rows); delayed table count smoke after 5 seconds (all 9 tables still 0 rows).
+- Result: Local MySQL is currently empty and recreated from the updated schema.
+- Warnings / blockers: `backend/.env` currently has `PERSISTENCE_DRIVER=file`, so visible app data may come from file persistence or browser localStorage rather than MySQL.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-180
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: local MySQL `scenaairo_local`, `PLANS.md`
+- What changed: Recreated the local MySQL database again on user request. Dropped and recreated `scenaairo_local`, then reapplied `backend/mysql/init/001_create_cloud_projects.sql`.
+- Tests run: `cloud_nodes.canvas_width` and `cloud_nodes.canvas_height` column check (pass, nullable `double`); immediate row count smoke across all 9 tables (all 0); delayed row count smoke after 5 seconds (all 0).
+- Result: Local MySQL `scenaairo_local` is recreated and empty.
+- Warnings / blockers: Visible app data can still come from file persistence or browser localStorage if the app is not configured to use MySQL.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-181
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Implemented `detail-031`. Added an inline object mention create-candidate helper that sanitizes open `@` mention queries, rejects blank/too-long/exact existing object names, and preserves the display casing for valid unmatched names. `WorkspaceShell` now shows `Create "Name" as object` at the bottom of the object mention menu when a typed query has no exact existing match, including partial-match states. `CanvasNodeCard` keyboard handling now treats existing suggestions and the create option as one option list, with `Enter`/`Tab` selecting the active option and `Space` remaining available for multi-word mention typing. The selection path reuses `applyObjectMentionSelection(...)` and the existing `syncInlineObjectMentions(...)` object create/attach flow.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for the detail-031 files (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 9 tests); focused `WorkspaceShell.test.tsx` mention tests (pass, 3 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 60 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Inline editing can now recover unmatched `@` mention queries by offering a create action, while fixed nodes remain blocked from create candidates and exact existing object names continue to show only the existing object option.
+- Warnings / blockers: Windows sandbox still blocks some Vitest/Vite worker/config spawning with `spawn EPERM`; approved escalation was required for those commands. No backend, schema, or shared contract change was introduced for `detail-031`.
+- Approval needed: `none`

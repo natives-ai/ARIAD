@@ -352,6 +352,8 @@ describe("persistence routes integration", () => {
           ...snapshot.nodes[0]!,
           canvasX: 180,
           canvasY: 96,
+          canvasHeight: 188,
+          canvasWidth: 304,
           isCollapsed: false,
           isFixed: true,
           isImportant: true,
@@ -379,6 +381,8 @@ describe("persistence routes integration", () => {
             payload: {
               canvasX: 420,
               canvasY: 244,
+              canvasHeight: 144,
+              canvasWidth: 292,
               contentMode: "text",
               createdAt: "2026-04-15T04:00:00.000Z",
               episodeId: "episode_alpha",
@@ -417,12 +421,16 @@ describe("persistence routes integration", () => {
 
     expect(nodeAlpha?.canvasX).toBe(180);
     expect(nodeAlpha?.canvasY).toBe(96);
+    expect(nodeAlpha?.canvasWidth).toBe(304);
+    expect(nodeAlpha?.canvasHeight).toBe(188);
     expect(nodeAlpha?.isFixed).toBe(true);
     expect(nodeAlpha?.isImportant).toBe(true);
     expect(nodeAlpha?.isCollapsed).toBe(false);
 
     expect(nodeBeta?.canvasX).toBe(420);
     expect(nodeBeta?.canvasY).toBe(244);
+    expect(nodeBeta?.canvasWidth).toBe(292);
+    expect(nodeBeta?.canvasHeight).toBe(144);
     expect(nodeBeta?.isFixed).toBe(false);
     expect(nodeBeta?.isImportant).toBe(false);
     expect(nodeBeta?.isCollapsed).toBe(true);

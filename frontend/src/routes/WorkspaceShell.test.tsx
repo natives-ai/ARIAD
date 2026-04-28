@@ -475,6 +475,84 @@ describe("workspace shell recommendation flow", () => {
     }
   });
 
+  it("restores resized node dimensions from canonical snapshot fields", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+    const { unmount } = render(<WorkspaceShell />);
+    const selectedNode = await getSelectedNodeCard();
+    const selectedNodeId = selectedNode.getAttribute("data-testid");
+
+    if (!selectedNodeId) {
+      throw new Error("canonical_resize_node_testid_missing");
+    }
+
+    await user.click(selectedNode);
+    fireEvent.pointerDown(
+      within(selectedNode).getByRole("button", { name: "Resize horizontally" }),
+      {
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      }
+    );
+    fireEvent.pointerMove(window, { clientX: 148, clientY: 100 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(selectedNode.style.width).toBe("316px");
+    });
+
+    const env = loadFrontendEnv();
+    const local = new LocalPersistenceStore(window.localStorage, env.storagePrefix);
+    local.setCacheScope("guest");
+
+    await waitFor(() => {
+      const projectId = local.getRegistry().activeProjectId;
+
+      if (!projectId) {
+        throw new Error("canonical_resize_project_id_missing");
+      }
+
+      const storedNode = local
+        .getSnapshot(projectId)
+        ?.nodes.find((node) => `node-${node.id}` === selectedNodeId);
+
+      expect(storedNode?.canvasWidth).toBe(316);
+    });
+
+    for (const key of Object.keys(window.localStorage).filter((entry) =>
+      entry.includes(":episode-canvas-ui:")
+    )) {
+      const parsed = JSON.parse(window.localStorage.getItem(key) ?? "{}") as Record<
+        string,
+        unknown
+      >;
+
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          ...parsed,
+          nodeSizes: {}
+        })
+      );
+    }
+
+    unmount();
+    render(<WorkspaceShell />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(selectedNodeId).style.width).toBe("316px");
+    });
+  });
+
   it("removes keyword cloud save and sentence controls in the immediate-apply flow", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(
@@ -885,6 +963,85 @@ describe("workspace shell recommendation flow", () => {
 
     expect(coatObjectRow).not.toBeNull();
     expect(coatObjectRow as HTMLElement).toHaveTextContent("(1)");
+  });
+
+  it("creates an object from an unmatched inline mention query", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.type(inlineInput, "She notices @new coat");
+
+    const mentionMenu = await waitFor(() => {
+      const menu = document.querySelector(".object-mention-menu");
+
+      if (!(menu instanceof HTMLElement)) {
+        throw new Error("object_mention_menu_missing_for_create_candidate");
+      }
+
+      return menu;
+    });
+
+    await user.click(
+      within(mentionMenu).getByRole("button", {
+        name: 'Create "new coat" as object'
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("new coat", {
+          selector: ".node-object-mention"
+        })
+      ).toBeInTheDocument();
+    });
+
+    const newCoatRow = (await screen.findByText("new coat", {
+      selector: ".object-row-name"
+    })).closest(".object-row");
+
+    expect(newCoatRow).not.toBeNull();
+    expect(newCoatRow as HTMLElement).toHaveTextContent("(1)");
+
+    const refreshedInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.clear(refreshedInput);
+    await user.type(refreshedInput, "@Heroine's Mother");
+
+    const exactMatchMenu = await waitFor(() => {
+      const menu = document.querySelector(".object-mention-menu");
+
+      if (!(menu instanceof HTMLElement)) {
+        throw new Error("object_mention_menu_missing_for_exact_match");
+      }
+
+      return menu;
+    });
+
+    expect(
+      within(exactMatchMenu).queryByRole("button", {
+        name: /Create/
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      within(exactMatchMenu).getByRole("button", {
+        name: "Heroine's Mother"
+      })
+    ).toBeInTheDocument();
   });
 
   it("offers existing object names as inline object conversions without @ typing", async () => {

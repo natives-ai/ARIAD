@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildDisplayedKeywordSuggestions,
+  getObjectMentionCreateCandidate,
   getInlineKeywordToken,
   getObjectToken,
   keywordCloudSlotCount,
@@ -119,5 +120,26 @@ describe("workspaceShell.inlineEditor buildDisplayedKeywordSuggestions", () => {
     expect(displayed.map((entry) => entry.label)).toEqual(
       selectedKeywords.slice(0, keywordCloudSlotCount)
     );
+  });
+});
+
+describe("workspaceShell.inlineEditor getObjectMentionCreateCandidate", () => {
+  it("creates a candidate for unmatched mention text and preserves display casing", () => {
+    const candidate = getObjectMentionCreateCandidate("New Coat", [
+      { name: "Heroine's Mother" }
+    ]);
+
+    expect(candidate).toEqual({
+      name: "New Coat",
+      normalizedName: "new coat"
+    });
+  });
+
+  it("hides the candidate for blank, long, or exact existing names", () => {
+    expect(getObjectMentionCreateCandidate("   ", [])).toBeNull();
+    expect(getObjectMentionCreateCandidate("Heroine's Mother", [
+      { name: "heroine's mother" }
+    ])).toBeNull();
+    expect(getObjectMentionCreateCandidate("x".repeat(81), [])).toBeNull();
   });
 });

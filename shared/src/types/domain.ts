@@ -59,6 +59,8 @@ export interface StoryNode {
   isFixed?: boolean;
   canvasX?: number;
   canvasY?: number;
+  canvasWidth?: number;
+  canvasHeight?: number;
   orderIndex: number;
   createdAt: string;
   updatedAt: string;

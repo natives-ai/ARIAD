@@ -65,7 +65,7 @@ function getEpisodeCanvasHistorySignature(
   const nodeSignature = nodes
     .map(
       (node) =>
-        `${node.id}:${node.orderIndex}:${node.parentId ?? ""}:${node.level}:${node.canvasX ?? ""}:${node.canvasY ?? ""}`
+        `${node.id}:${node.orderIndex}:${node.parentId ?? ""}:${node.level}:${node.canvasX ?? ""}:${node.canvasY ?? ""}:${node.canvasWidth ?? ""}:${node.canvasHeight ?? ""}`
     )
     .join("|");
 
@@ -120,6 +120,7 @@ export function useEpisodeCanvasState({
   const laneDividerXsRef = useRef(laneDividerXs);
   const nodeSizesRef = useRef<Record<string, NodeSize>>({});
   const timelineEndYRef = useRef(timelineEndY);
+  const activeEpisodeNodesRef = useRef<StoryNode[]>([]);
   const episodeCanvasHistoryRef = useRef<Record<string, EpisodeCanvasHistoryState>>({});
   const isHydratingRef = useRef(false);
 
@@ -155,7 +156,12 @@ export function useEpisodeCanvasState({
     nodeSizesRef.current = nodeSizes;
   }, [nodeSizes]);
 
+  useEffect(() => {
+    activeEpisodeNodesRef.current = activeEpisodeNodes;
+  }, [activeEpisodeNodes]);
+
   // 에피소드 전환 시 localStorage에서 캔버스 UI를 복원합니다.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     isHydratingRef.current = true;
 
@@ -196,7 +202,10 @@ export function useEpisodeCanvasState({
         },
         timelineEndY: initialTimelineEndY
       });
-    const sanitizedState = sanitizeEpisodeCanvasUiDefaults(parsedState, activeEpisodeNodes);
+    const sanitizedState = sanitizeEpisodeCanvasUiDefaults(
+      parsedState,
+      activeEpisodeNodesRef.current
+    );
 
     setLaneDividerXs(cloneLaneDividerState(sanitizedState.laneDividerXs));
     setTimelineEndY(sanitizedState.timelineEndY);
@@ -217,9 +226,9 @@ export function useEpisodeCanvasState({
     activeEpisodeId,
     activeEpisodeNodeIds,
     cacheScopeKey,
-    storagePrefix,
-    activeEpisodeNodes
+    storagePrefix
   ]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // 현재 시그니처 기준으로 undo/redo 복원용 UI 이력을 저장합니다.
   useEffect(() => {

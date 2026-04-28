@@ -31,6 +31,8 @@ function createSnapshot(): StoryWorkspaceSnapshot {
       {
         canvasX: 480,
         canvasY: 320,
+        canvasHeight: 154,
+        canvasWidth: 312,
         contentMode: "text",
         createdAt: "2026-04-22T00:01:00.000Z",
         episodeId: "episode_alpha",
@@ -50,6 +52,8 @@ function createSnapshot(): StoryWorkspaceSnapshot {
       {
         canvasX: 160,
         canvasY: 120,
+        canvasHeight: 180,
+        canvasWidth: 288,
         contentMode: "keywords",
         createdAt: "2026-04-22T00:00:30.000Z",
         episodeId: "episode_alpha",
@@ -133,6 +137,8 @@ function expectNodeShapePreserved(previous: StoryNode, next: StoryNode) {
   expect(next.updatedAt).toBe(previous.updatedAt);
   expect(next.canvasX).toBe(previous.canvasX);
   expect(next.canvasY).toBe(previous.canvasY);
+  expect(next.canvasWidth).toBe(previous.canvasWidth);
+  expect(next.canvasHeight).toBe(previous.canvasHeight);
   expect(next.isCollapsed).toBe(previous.isCollapsed);
   expect(next.isFixed).toBe(previous.isFixed);
   expect(next.isImportant).toBe(previous.isImportant);

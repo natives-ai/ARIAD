@@ -116,6 +116,8 @@ export interface NodeVisualStateDraft {
 export interface NodePlacementDraft {
   canvasX?: number;
   canvasY?: number;
+  canvasWidth?: number;
+  canvasHeight?: number;
 }
 
 export interface StoryObjectDraft {
@@ -1221,6 +1223,8 @@ export class WorkspacePersistenceController {
     const node: StoryNode = {
       canvasX: placement?.canvasX ?? fallbackPlacement.canvasX,
       canvasY: placement?.canvasY ?? fallbackPlacement.canvasY,
+      ...(placement?.canvasWidth === undefined ? {} : { canvasWidth: placement.canvasWidth }),
+      ...(placement?.canvasHeight === undefined ? {} : { canvasHeight: placement.canvasHeight }),
       contentMode: "empty",
       createdAt: timestamp,
       episodeId: activeEpisode.id,
@@ -1316,6 +1320,12 @@ export class WorkspacePersistenceController {
             ...node,
             canvasX: draft.canvasX ?? node.canvasX ?? defaultNodeXByLevel[node.level],
             canvasY: draft.canvasY ?? node.canvasY ?? defaultNodeYByLevel[node.level],
+            ...(draft.canvasWidth !== undefined || node.canvasWidth !== undefined
+              ? { canvasWidth: draft.canvasWidth ?? node.canvasWidth }
+              : {}),
+            ...(draft.canvasHeight !== undefined || node.canvasHeight !== undefined
+              ? { canvasHeight: draft.canvasHeight ?? node.canvasHeight }
+              : {}),
             updatedAt: timestamp
           }
         : node

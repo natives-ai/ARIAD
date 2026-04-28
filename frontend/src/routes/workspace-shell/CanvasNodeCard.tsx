@@ -18,7 +18,8 @@ import {
   normalizeInlineObjectMentions,
   removeAdjacentInlineToken,
   removeInlineSelectionWithTokenBoundaries,
-  renderTextWithObjectMentions
+  renderTextWithObjectMentions,
+  type ObjectMentionCreateCandidate
 } from "./workspaceShell.inlineEditor";
 import type {
   NodeResizeDirection,
@@ -78,8 +79,11 @@ type CanvasNodeCardProps = {
   nodeCardRefs: MutableRefObject<Map<string, HTMLElement>>;
   nodeMenuButtonRefs: MutableRefObject<Map<string, HTMLButtonElement>>;
   nodeSize: NodeSize;
+  objectMentionCreateCandidate: ObjectMentionCreateCandidate | null;
   objectMentionQuery: ObjectMentionQuery | null;
   objectMentionSuggestions: ObjectMentionSuggestion[];
+  onBeforeSelectNode: (nextNodeId: string | null) => void;
+  onClearRewireHoverTarget: () => void;
   onRewireNode: (sourceNodeId: string, targetNodeId: string) => Promise<void>;
   openKeywordSuggestions: (node: StoryNode, options?: { refresh?: boolean }) => Promise<void>;
   persistInlineNodeContent: (
@@ -154,8 +158,11 @@ export function CanvasNodeCard({
   nodeCardRefs,
   nodeMenuButtonRefs,
   nodeSize,
+  objectMentionCreateCandidate,
   objectMentionQuery,
   objectMentionSuggestions,
+  onBeforeSelectNode,
+  onClearRewireHoverTarget,
   onRewireNode,
   openKeywordSuggestions,
   persistInlineNodeContent,
@@ -194,6 +201,8 @@ export function CanvasNodeCard({
   const isReadOnlySelectedNode = isSelected && node.isFixed;
   const resolvedShouldShowPlaceholder =
     shouldShowPlaceholder || (isReadOnlySelectedNode && !displayBodyText && !hasVisibleKeywords);
+  const objectMentionOptionCount =
+    objectMentionSuggestions.length + (objectMentionCreateCandidate ? 1 : 0);
 
   return (
     <article
@@ -208,14 +217,17 @@ export function CanvasNodeCard({
 
         if (isRewireTarget && rewireNode) {
           void onRewireNode(rewireNode.id, node.id);
+          onBeforeSelectNode(rewireNode.id);
           setSelectedNodeId(rewireNode.id);
           setRewireNodeId(null);
+          onClearRewireHoverTarget();
           setRewireHoverTargetId(null);
           setRewirePreviewPoint(null);
           return;
         }
 
         shouldFocusSelectedNodeRef.current = true;
+        onBeforeSelectNode(node.id);
         setSelectedNodeId(node.id);
       }}
       onDoubleClick={(event) => {
@@ -224,6 +236,7 @@ export function CanvasNodeCard({
         }
 
         shouldFocusSelectedNodeRef.current = true;
+        onBeforeSelectNode(node.id);
         setSelectedNodeId(node.id);
         centerCanvasViewportOnNode(node.id);
       }}
@@ -269,6 +282,7 @@ export function CanvasNodeCard({
               onClick={(event) => {
                 event.stopPropagation();
                 const nextOpen = !(isSelected && isNodeMoreMenuOpen);
+                onBeforeSelectNode(node.id);
                 setSelectedNodeId(node.id);
                 setIsNodeMoreMenuOpen(nextOpen);
                 setNodeMenuPosition(
@@ -356,6 +370,13 @@ export function CanvasNodeCard({
                   const selectionEnd = event.currentTarget.selectionEnd ?? 0;
                   const activeMentionSuggestion =
                     objectMentionSuggestions[activeObjectMentionIndex] ?? null;
+                  const activeMentionCreateCandidate =
+                    objectMentionCreateCandidate &&
+                    activeObjectMentionIndex === objectMentionSuggestions.length
+                      ? objectMentionCreateCandidate
+                      : null;
+                  const activeMentionName =
+                    activeMentionSuggestion?.name ?? activeMentionCreateCandidate?.name ?? null;
 
                   if (selectionStart === selectionEnd) {
                     const removableToken =
@@ -420,28 +441,23 @@ export function CanvasNodeCard({
                   }
 
                   if (
-                    activeMentionSuggestion &&
-                    (event.key === "Enter" ||
-                      event.key === "Tab" ||
-                      (objectMentionQuery?.mode === "mention" && event.key === " "))
+                    activeMentionName &&
+                    (event.key === "Enter" || event.key === "Tab")
                   ) {
                     event.preventDefault();
-                    applyObjectMentionSelection(
-                      activeMentionSuggestion.name,
-                      objectMentionQuery?.mode === "mention" && event.key === " "
-                    );
+                    applyObjectMentionSelection(activeMentionName);
                     return;
                   }
 
-                  if (objectMentionSuggestions.length > 0 && event.key === "ArrowDown") {
+                  if (objectMentionOptionCount > 0 && event.key === "ArrowDown") {
                     event.preventDefault();
                     setActiveObjectMentionIndex((current) =>
-                      Math.min(current + 1, objectMentionSuggestions.length - 1)
+                      Math.min(current + 1, objectMentionOptionCount - 1)
                     );
                     return;
                   }
 
-                  if (objectMentionSuggestions.length > 0 && event.key === "ArrowUp") {
+                  if (objectMentionOptionCount > 0 && event.key === "ArrowUp") {
                     event.preventDefault();
                     setActiveObjectMentionIndex((current) => Math.max(current - 1, 0));
                     return;

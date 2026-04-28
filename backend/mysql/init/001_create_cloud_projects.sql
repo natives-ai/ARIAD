@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS cloud_nodes (
   is_fixed TINYINT(1) NULL,
   canvas_x DOUBLE NULL,
   canvas_y DOUBLE NULL,
+  canvas_width DOUBLE NULL,
+  canvas_height DOUBLE NULL,
   order_index INT NOT NULL,
   created_at VARCHAR(40) NOT NULL,
   updated_at VARCHAR(40) NOT NULL,

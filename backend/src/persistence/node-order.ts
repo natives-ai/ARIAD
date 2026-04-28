@@ -109,6 +109,8 @@ function hasSameNodeState(left: StoryNode, right: StoryNode): boolean {
     (left.isFixed ?? null) !== (right.isFixed ?? null) ||
     (left.canvasX ?? null) !== (right.canvasX ?? null) ||
     (left.canvasY ?? null) !== (right.canvasY ?? null) ||
+    (left.canvasWidth ?? null) !== (right.canvasWidth ?? null) ||
+    (left.canvasHeight ?? null) !== (right.canvasHeight ?? null) ||
     left.keywords.length !== right.keywords.length ||
     left.objectIds.length !== right.objectIds.length
   ) {

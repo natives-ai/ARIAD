@@ -1178,6 +1178,8 @@ describe("workspace persistence controller", () => {
     await controller.createEpisode();
 
     const nextNodeId = await controller.createNode("minor", 1, {
+      canvasHeight: 132,
+      canvasWidth: 284,
       canvasX: 452,
       canvasY: 244
     });
@@ -1185,6 +1187,8 @@ describe("workspace persistence controller", () => {
     expect(nextNodeId).toBeTruthy();
 
     await controller.updateNodePlacement(nextNodeId!, {
+      canvasHeight: 176,
+      canvasWidth: 312,
       canvasX: 516,
       canvasY: 308
     });
@@ -1193,6 +1197,8 @@ describe("workspace persistence controller", () => {
 
     expect(movedNode?.canvasX).toBe(516);
     expect(movedNode?.canvasY).toBe(308);
+    expect(movedNode?.canvasWidth).toBe(312);
+    expect(movedNode?.canvasHeight).toBe(176);
 
     controller.dispose();
   });
@@ -1251,6 +1257,8 @@ describe("workspace persistence controller", () => {
       isFixed: true
     });
     await controller.updateNodePlacement(nodeId, {
+      canvasHeight: 220,
+      canvasWidth: 420,
       canvasX: (initialNode.canvasX ?? 0) + 140,
       canvasY: (initialNode.canvasY ?? 0) + 88
     });
@@ -1259,6 +1267,8 @@ describe("workspace persistence controller", () => {
 
     expect(fixedNode?.canvasX).toBe(initialNode.canvasX);
     expect(fixedNode?.canvasY).toBe(initialNode.canvasY);
+    expect(fixedNode?.canvasWidth).toBe(initialNode.canvasWidth);
+    expect(fixedNode?.canvasHeight).toBe(initialNode.canvasHeight);
 
     controller.dispose();
   });

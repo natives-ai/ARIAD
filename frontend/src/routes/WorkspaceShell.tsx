@@ -69,7 +69,6 @@ import {
   getFallbackNodePlacementWithinBounds,
   clampNodePlacement,
   clampCanvasZoom,
-  resolveNodeOverlapPlacement,
   getMentionPopoverPosition,
   canStartCanvasPan,
   hasCollapsedAncestor,
@@ -79,8 +78,7 @@ import {
   hasTextSelection,
   getPasteInsertIndex,
   getTimelineAnchorPositions,
-  snapMajorNodePlacementToTimelineAnchors,
-  applyLaneVerticalReflow
+  snapMajorNodePlacementToTimelineAnchors
 } from "./workspace-shell/workspaceShell.canvas";
 import {
   extractInlineKeywords,
@@ -91,12 +89,9 @@ import {
   getObjectToken,
   normalizeInlineObjectMentions,
   getClosedObjectWordQuery,
-  renderTextWithObjectMentions,
   buildDisplayedKeywordSuggestions,
-  keywordCloudSlotCount,
+  getObjectMentionCreateCandidate,
   toggleInlineKeywordToken,
-  removeInlineSelectionWithTokenBoundaries,
-  removeAdjacentInlineToken,
   getObjectMentionSignature,
   deriveNodeContentMode
 } from "./workspace-shell/workspaceShell.inlineEditor";
@@ -112,6 +107,13 @@ import {
 } from "./workspace-shell/workspaceShell.sidebar";
 import { WorkspaceSidebarRecents } from "./workspace-shell/WorkspaceSidebarRecents";
 import { WorkspaceObjectPanel } from "./workspace-shell/WorkspaceObjectPanel";
+import { CanvasNodeCard } from "./workspace-shell/CanvasNodeCard";
+import { CanvasLaneSpacer } from "./workspace-shell/CanvasLaneSpacer";
+import {
+  buildLaneLayoutsByLevel,
+  getLaneLayoutNodePlacements,
+  resolveLaneDropPlacement
+} from "./workspace-shell/workspaceShell.laneLayout";
 import { useEpisodeCanvasState } from "./workspace-shell/useEpisodeCanvasState";
 import type {
   DragPayload,
@@ -147,6 +149,44 @@ function describeSignInError(error: unknown) {
     default:
       return message;
   }
+}
+
+// 양수 크기 값만 canonical 노드 크기로 인정합니다.
+function getPositiveNodeSizeValue(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// 노드의 canonical 크기와 로컬 fallback 크기를 합칩니다.
+function resolveNodeSize(
+  node: StoryNode,
+  localSize: NodeSize | undefined,
+  preferLocalSize: boolean
+): NodeSize {
+  const canonicalWidth = getPositiveNodeSizeValue(node.canvasWidth);
+  const canonicalHeight = getPositiveNodeSizeValue(node.canvasHeight);
+
+  return {
+    height: preferLocalSize
+      ? localSize?.height ?? canonicalHeight ?? nodeCardHeight
+      : canonicalHeight ?? localSize?.height ?? nodeCardHeight,
+    width: preferLocalSize
+      ? localSize?.width ?? canonicalWidth ?? nodeCardWidth
+      : canonicalWidth ?? localSize?.width ?? nodeCardWidth
+  };
+}
+
+// 현재 렌더에서 사용할 노드 크기 맵을 계산합니다.
+function buildEffectiveNodeSizes(
+  nodes: StoryNode[],
+  nodeSizes: Record<string, NodeSize>,
+  activeNodeResizeId: string | null
+) {
+  return Object.fromEntries(
+    nodes.map((node) => [
+      node.id,
+      resolveNodeSize(node, nodeSizes[node.id], activeNodeResizeId === node.id)
+    ])
+  ) satisfies Record<string, NodeSize>;
 }
 
 // 이 컴포넌트는 워크스페이스 화면 전체를 렌더링합니다.
@@ -189,6 +229,7 @@ export function WorkspaceShell() {
       y: number;
     };
   } | null>(null);
+  const [activeNodeResizeId, setActiveNodeResizeId] = useState<string | null>(null);
   const [rewireNodeId, setRewireNodeId] = useState<string | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -331,6 +372,10 @@ export function WorkspaceShell() {
   const suppressNodeClickRef = useRef<string | null>(null);
   const autoNodeHeightsRef = useRef<Record<string, number>>({});
   const isNodeResizingRef = useRef(false);
+  const pendingNodeResizeSizeRef = useRef<{
+    nodeId: string;
+    size: NodeSize;
+  } | null>(null);
   const canvasDragStateRef = useRef<
     | {
         kind: "divider";
@@ -857,13 +902,19 @@ export function WorkspaceShell() {
                 maxResizableNodeWidth,
                 Math.max(nodeCardWidth, dragState.initialWidth + deltaX)
               );
+        const nextNodeSize = {
+          height: nextHeight,
+          width: nextWidth
+        };
+
+        pendingNodeResizeSizeRef.current = {
+          nodeId: dragState.nodeId,
+          size: nextNodeSize
+        };
 
         setNodeSizes((current) => ({
           ...current,
-          [dragState.nodeId]: {
-            height: nextHeight,
-            width: nextWidth
-          }
+          [dragState.nodeId]: nextNodeSize
         }));
 
         return;
@@ -1017,6 +1068,22 @@ export function WorkspaceShell() {
 
       if (dragState?.kind === "node-resize") {
         isNodeResizingRef.current = false;
+        const resizedNodeSize =
+          pendingNodeResizeSizeRef.current?.nodeId === dragState.nodeId
+            ? pendingNodeResizeSizeRef.current.size
+            : getNodeSize(nodeSizesRef.current, dragState.nodeId);
+
+        pendingNodeResizeSizeRef.current = null;
+        void controller
+          .updateNodePlacement(dragState.nodeId, {
+            canvasHeight: resizedNodeSize.height,
+            canvasWidth: resizedNodeSize.width
+          })
+          .finally(() => {
+            setActiveNodeResizeId((current) =>
+              current === dragState.nodeId ? null : current
+            );
+          });
       }
 
       if (dragState?.kind === "node-drag" || dragState?.kind === "node-drag-pending") {
@@ -1180,6 +1247,11 @@ export function WorkspaceShell() {
           state.snapshot.nodes.filter((node) => node.episodeId === activeEpisodeId)
         )
       : emptyNodes;
+  const effectiveNodeSizes = buildEffectiveNodeSizes(
+    orderedNodes,
+    nodeSizes,
+    activeNodeResizeId
+  );
   const activeDrawerItems =
     state && activeEpisodeId
       ? state.snapshot.temporaryDrawer.filter((item) => item.episodeId === activeEpisodeId)
@@ -1786,19 +1858,19 @@ export function WorkspaceShell() {
     minLaneWidth,
     ...visibleNodes
       .filter((node) => node.level === "major")
-      .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
+      .map((node) => getNodeSize(effectiveNodeSizes, node.id).width + laneDividerNodePadding * 2)
   );
   const minorLaneRequiredWidth = Math.max(
     minLaneWidth,
     ...visibleNodes
       .filter((node) => node.level === "minor")
-      .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
+      .map((node) => getNodeSize(effectiveNodeSizes, node.id).width + laneDividerNodePadding * 2)
   );
   const detailLaneRequiredWidth = Math.max(
     minLaneWidth,
     ...visibleNodes
       .filter((node) => node.level === "detail")
-      .map((node) => getNodeSize(nodeSizes, node.id).width + laneDividerNodePadding * 2)
+      .map((node) => getNodeSize(effectiveNodeSizes, node.id).width + laneDividerNodePadding * 2)
   );
   const autoFirstDividerX = Math.max(
     initialLaneDividerXs.first,
@@ -1845,18 +1917,6 @@ export function WorkspaceShell() {
   const orderedMajorNodes = orderedNodes.filter((node) => node.level === "major");
   const lockedStartMajorNodeId = orderedMajorNodes[0]?.id ?? null;
   const lockedEndMajorNodeId = orderedMajorNodes.at(-1)?.id ?? lockedStartMajorNodeId;
-  const lockedMajorAnchorNodeIds = new Set(
-    [lockedStartMajorNodeId].filter(
-      (nodeId): nodeId is string => nodeId !== null
-    )
-  );
-  const nodePlacements = new Map<string, { x: number; y: number }>();
-  const visibleNodeIdsByLevel = {
-    detail: visibleNodes.filter((entry) => entry.level === "detail").map((entry) => entry.id),
-    major: visibleNodes.filter((entry) => entry.level === "major").map((entry) => entry.id),
-    minor: visibleNodes.filter((entry) => entry.level === "minor").map((entry) => entry.id)
-  } satisfies Record<StoryNodeLevel, string[]>;
-
   // 이 함수는 major 시작/끝 앵커 노드의 기준 배치를 계산합니다.
   function getAnchoredMajorPlacement(node: StoryNode, nodeSize: NodeSize) {
     const fallbackPlacement = getFallbackNodePlacementWithinBounds(
@@ -1884,21 +1944,10 @@ export function WorkspaceShell() {
     return snappedPlacement;
   }
 
-  for (const node of visibleNodes) {
-    if (node.level !== "major" || !lockedMajorAnchorNodeIds.has(node.id)) {
-      continue;
-    }
-
-    const nodeSize = getNodeSize(nodeSizes, node.id);
-    nodePlacements.set(node.id, getAnchoredMajorPlacement(node, nodeSize));
-  }
+  const baseNodePlacements = new Map<string, { x: number; y: number }>();
 
   for (const node of visibleNodes) {
-    const nodeSize = getNodeSize(nodeSizes, node.id);
-
-    if (node.level === "major" && lockedMajorAnchorNodeIds.has(node.id)) {
-      continue;
-    }
+    const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
 
     const fallbackPlacement = getFallbackNodePlacementWithinBounds(
       node,
@@ -1910,38 +1959,31 @@ export function WorkspaceShell() {
       node.level === "major"
         ? getAnchoredMajorPlacement(node, nodeSize)
         : fallbackPlacement;
-    const resolvedPlacement = resolveNodeOverlapPlacement(
-      node.id,
-      alignedPlacement,
-      nodeSize,
-      nodePlacements,
-      nodeSizes,
-      visibleNodeIdsByLevel[node.level],
-      {
-        gap: 0
-      }
-    );
 
-    nodePlacements.set(node.id, resolvedPlacement);
+    baseNodePlacements.set(node.id, alignedPlacement);
   }
-  // major 레인은 구조 순서를 우선으로 최소 세로 간격만 보정해 자유 이동/재정렬 충돌을 줄입니다.
-  applyLaneVerticalReflow(visibleNodeIdsByLevel.major, nodePlacements, nodeSizes, {
+  const laneLayoutsByLevel = buildLaneLayoutsByLevel({
+    basePlacements: baseNodePlacements,
     gap: 8,
-    lockedNodeIds: new Set(
-      [lockedStartMajorNodeId].filter((nodeId): nodeId is string => nodeId !== null)
-    )
+    nodes: visibleNodes,
+    nodeSizes: effectiveNodeSizes,
+    priorityNodeIdsByLevel: {
+      major: [lockedStartMajorNodeId]
+    }
   });
-  // 같은 레인의 노드 높이가 바뀐 경우 최소 간격만큼 아래 노드를 밀어 겹침을 완화합니다.
-  applyLaneVerticalReflow(visibleNodeIdsByLevel.minor, nodePlacements, nodeSizes);
-  applyLaneVerticalReflow(visibleNodeIdsByLevel.detail, nodePlacements, nodeSizes);
+  const nodePlacements = getLaneLayoutNodePlacements(laneLayoutsByLevel);
   const majorLaneTimelineLocalCenterX =
     timelineAnchors.railCenterX - laneCanvasBounds.major.left;
-  const connectionLines = buildConnectionLines(visibleNodes, nodePlacements, nodeSizes);
+  const connectionLines = buildConnectionLines(
+    visibleNodes,
+    nodePlacements,
+    effectiveNodeSizes
+  );
   const lowestNodeBottom = Math.max(
     0,
     ...visibleNodes.map((node) => {
       const placement = nodePlacements.get(node.id);
-      const nodeSize = getNodeSize(nodeSizes, node.id);
+      const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
       return (placement?.y ?? 0) + nodeSize.height;
     })
   );
@@ -1956,7 +1998,7 @@ export function WorkspaceShell() {
         return null;
       }
 
-      const nodeSize = getNodeSize(nodeSizes, node.id);
+      const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
 
       return {
         id: node.id,
@@ -1995,7 +2037,7 @@ export function WorkspaceShell() {
   const endMajorNodeSize =
     endMajorNodeId === null
       ? null
-      : getNodeSize(nodeSizes, endMajorNodeId);
+      : getNodeSize(effectiveNodeSizes, endMajorNodeId);
   const endMajorBottomY =
     endMajorPlacement && endMajorNodeSize
       ? endMajorPlacement.y + endMajorNodeSize.height
@@ -2033,7 +2075,7 @@ export function WorkspaceShell() {
       .filter((node) => node.level === level && node.id !== excludedNodeId)
       .map((node) => {
         const placement = nodePlacements.get(node.id);
-        const size = getNodeSize(nodeSizes, node.id);
+        const size = getNodeSize(effectiveNodeSizes, node.id);
 
         return {
           centerY: (placement?.y ?? 0) + size.height / 2,
@@ -2102,7 +2144,7 @@ export function WorkspaceShell() {
           const nodeSize =
             node.id === overrideNodeId && overrideSize
               ? overrideSize
-              : getNodeSize(nodeSizes, node.id);
+              : getNodeSize(effectiveNodeSizes, node.id);
 
           return (placement?.y ?? 0) + nodeSize.height;
         })
@@ -2437,7 +2479,7 @@ export function WorkspaceShell() {
       return;
     }
 
-    const nodeSize = getNodeSize(nodeSizes, nodeId);
+    const nodeSize = getNodeSize(effectiveNodeSizes, nodeId);
     const placement =
       nodePlacements.get(nodeId) ??
       getFallbackNodePlacementWithinBounds(node, orderedNodes, laneCanvasBounds, nodeSize);
@@ -2479,12 +2521,17 @@ export function WorkspaceShell() {
       return;
     }
 
-    const nodeSize = getNodeSize(nodeSizes, nodeId);
+    const nodeSize = getNodeSize(effectiveNodeSizes, nodeId);
 
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     isNodeResizingRef.current = true;
+    pendingNodeResizeSizeRef.current = {
+      nodeId,
+      size: nodeSize
+    };
+    setActiveNodeResizeId(nodeId);
     setDragPayload(null);
     flushSelectedNodeDraftBeforeSelection(nodeId);
     setSelectedNodeId(nodeId);
@@ -2664,7 +2711,7 @@ export function WorkspaceShell() {
     );
 
     setNodeSizes((current) => {
-      const existing = getNodeSize(current, nodeId);
+      const existing = current[nodeId] ?? getNodeSize(effectiveNodeSizes, nodeId);
       const previousAutoHeight = autoNodeHeightsRef.current[nodeId] ?? nodeCardHeight;
       const isAutoSized = Math.abs(existing.height - previousAutoHeight) <= 1;
 
@@ -2730,22 +2777,36 @@ export function WorkspaceShell() {
       return;
     }
 
-    const resolvedPlacement = resolveNodeOverlapPlacement(
-      null,
-      placement,
-      {
-        height: nodeCardHeight,
-        width: nodeCardWidth
-      },
-      nodePlacements,
-      nodeSizes,
-      orderedNodes.filter((entry) => entry.level === level).map((entry) => entry.id)
-    );
+    const draftNodeSize = {
+      height: nodeCardHeight,
+      width: nodeCardWidth
+    };
+    const laneResolvedPlacement =
+      level === "major"
+        ? placement
+        : resolveLaneDropPlacement({
+            layout: laneLayoutsByLevel[level],
+            minY: laneCanvasBounds[level].startY,
+            nodeId: "__draft__",
+            nodeSize: draftNodeSize,
+            targetPlacement: placement
+          });
+    const resolvedPlacement =
+      level === "major"
+        ? snapMajorNodePlacementToTimelineAnchors(
+            level,
+            laneResolvedPlacement,
+            timelineAnchors,
+            draftNodeSize
+          )
+        : laneResolvedPlacement;
 
     const createdNodeId = await controller.createNode(
       level,
       getInsertIndexForCanvasY(level, resolvedPlacement.y + nodeCardHeight / 2),
       {
+        canvasHeight: draftNodeSize.height,
+        canvasWidth: draftNodeSize.width,
         canvasX: resolvedPlacement.x,
         canvasY: resolvedPlacement.y
       }
@@ -2765,6 +2826,10 @@ export function WorkspaceShell() {
             width: nodeCardWidth
           }
         }));
+        await controller.updateNodePlacement(createdNodeId, {
+          canvasHeight: timelineSpanHeight,
+          canvasWidth: nodeCardWidth
+        });
       }
 
       shouldFocusSelectedNodeRef.current = true;
@@ -2792,27 +2857,23 @@ export function WorkspaceShell() {
       return;
     }
 
-    const resolvedPlacement = resolveNodeOverlapPlacement(
-      nodeId,
-      placement,
-      getNodeSize(nodeSizes, nodeId),
-      nodePlacements,
-      nodeSizes,
-      visibleNodes.filter((entry) => entry.level === level).map((entry) => entry.id)
-    );
-    const nodeSize = getNodeSize(nodeSizes, nodeId);
+    const nodeSize = getNodeSize(effectiveNodeSizes, nodeId);
+    const laneResolvedPlacement =
+      level === "major"
+        ? placement
+        : resolveLaneDropPlacement({
+            layout: laneLayoutsByLevel[level],
+            minY: laneCanvasBounds[level].startY,
+            nodeId,
+            nodeSize,
+            targetPlacement: placement
+          });
 
     if (level === "major") {
-      const intendedSnappedPlacement = snapMajorNodePlacementToTimelineAnchors(
-        level,
-        placement,
-        timelineAnchors,
-        nodeSize
-      );
       const requiredTimelineEndY = Math.max(
         timelineStartY + 120,
         effectiveTimelineEndY,
-        placement.y + nodeSize.height
+        laneResolvedPlacement.y + nodeSize.height
       );
       const dynamicTimelineAnchors = getTimelineAnchorPositions(
         requiredTimelineEndY,
@@ -2821,7 +2882,7 @@ export function WorkspaceShell() {
       );
       const snappedPlacement = snapMajorNodePlacementToTimelineAnchors(
         level,
-        intendedSnappedPlacement,
+        laneResolvedPlacement,
         dynamicTimelineAnchors,
         nodeSize
       );
@@ -2834,6 +2895,8 @@ export function WorkspaceShell() {
       );
 
       await controller.updateNodePlacement(nodeId, {
+        canvasHeight: nodeSize.height,
+        canvasWidth: nodeSize.width,
         canvasX: snappedPlacement.x,
         canvasY: snappedPlacement.y
       });
@@ -2852,12 +2915,14 @@ export function WorkspaceShell() {
     }
 
     await controller.updateNodePlacement(nodeId, {
-      canvasX: resolvedPlacement.x,
-      canvasY: resolvedPlacement.y
+      canvasHeight: nodeSize.height,
+      canvasWidth: nodeSize.width,
+      canvasX: laneResolvedPlacement.x,
+      canvasY: laneResolvedPlacement.y
     });
     const targetInsertIndex = getInsertIndexForCanvasY(
       level,
-      resolvedPlacement.y + nodeSize.height / 2,
+      laneResolvedPlacement.y + nodeSize.height / 2,
       nodeId
     );
     await controller.moveNode(nodeId, targetInsertIndex, {
@@ -2918,7 +2983,7 @@ export function WorkspaceShell() {
       dragPayload.level,
       event.clientX,
       event.clientY,
-      getNodeSize(nodeSizes, dragPayload.nodeId)
+      getNodeSize(effectiveNodeSizes, dragPayload.nodeId)
     );
 
     if (!placement) {
@@ -2945,7 +3010,7 @@ export function WorkspaceShell() {
       ...remainingVisibleNodes
         .filter((node) => node.level === "major")
         .map((node) => {
-          const nodeSize = getNodeSize(nodeSizes, node.id);
+          const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
           const placement =
             nodePlacements.get(node.id) ??
             getFallbackNodePlacementWithinBounds(
@@ -2960,9 +3025,9 @@ export function WorkspaceShell() {
     );
     const nextTimelineEndY = Math.max(timelineStartY + 120, remainingLowestMajorBottom);
 
-    if (nextTimelineEndY < timelineEndY) {
-      setTimelineEndY(nextTimelineEndY);
-    }
+    setTimelineEndY((currentTimelineEndY) =>
+      nextTimelineEndY < currentTimelineEndY ? nextTimelineEndY : currentTimelineEndY
+    );
   }
 
   async function persistInlineNodeContent(
@@ -3169,14 +3234,14 @@ export function WorkspaceShell() {
           )
           .sort((left, right) => left.name.localeCompare(right.name))
           .slice(0, 8);
+  const objectMentionCreateCandidate =
+    objectMentionQuery?.mode === "mention" && selectedNode && !selectedNode.isFixed
+      ? getObjectMentionCreateCandidate(objectMentionQuery.query, activeEpisodeObjects)
+      : null;
   const displayedKeywordSuggestions = buildDisplayedKeywordSuggestions(
     selectedAiKeywords,
     keywordSuggestions,
     keywordRefreshCycle
-  );
-  const keywordCloudEmptySlotCount = Math.max(
-    0,
-    keywordCloudSlotCount - displayedKeywordSuggestions.length
   );
 
   if (activeEpisodeId) {
@@ -3191,14 +3256,14 @@ export function WorkspaceShell() {
   nodePlacementsRef.current = nodePlacements;
   visibleNodesRef.current = visibleNodes;
   laneCanvasBoundsRef.current = laneCanvasBounds;
-  nodeSizesRef.current = nodeSizes;
+  nodeSizesRef.current = effectiveNodeSizes;
   timelineAnchorsRef.current = timelineAnchors;
   endMajorNodeIdRef.current = endMajorNodeId;
   stageHeightRef.current = stageHeight;
   selectedNodeIdRef.current = selectedNodeId;
 
   const renderedNodes = visibleNodes.map((node) => {
-    const nodeSize = getNodeSize(nodeSizes, node.id);
+    const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
     const isSelected = selectedNode?.id === node.id;
     const isDragging = activeNodeDragPreview?.nodeId === node.id;
     const isRewireSource = rewireNode?.id === node.id;
@@ -3215,421 +3280,93 @@ export function WorkspaceShell() {
     const displayText = isSelected ? inlineNodeTextDraft : node.text;
     const hasVisibleKeywords = activeKeywords.length > 0;
     const displayBodyText = extractDisplayText(displayText);
-    const isReadOnlySelectedNode = isSelected && node.isFixed;
+    const isReadOnlySelectedNode = isSelected && (node.isFixed ?? false);
     const shouldShowPlaceholder =
       (!isSelected || isReadOnlySelectedNode) && !displayBodyText && !hasVisibleKeywords;
     const selectedNodeTitle =
       extractDisplayText(displayText) || activeKeywords.join(" ") || getNodeHeadline(node);
 
     return (
-      <article
-        className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNode?.id === node.id ? " has-keyword-cloud" : ""}`}
-        data-testid={`node-${node.id}`}
-        draggable={false}
+      <CanvasNodeCard
+        activeKeywords={activeKeywords}
+        activeObjectMentionIndex={activeObjectMentionIndex}
+        aiPanelNodeId={aiPanelNode?.id ?? null}
+        applyObjectMentionSelection={applyObjectMentionSelection}
+        beginNodeDrag={beginNodeDrag}
+        beginNodeResize={beginNodeResize}
+        centerCanvasViewportOnNode={centerCanvasViewportOnNode}
+        displayBodyText={displayBodyText}
+        displayedKeywordSuggestions={displayedKeywordSuggestions}
+        displayText={displayText}
+        getViewportMenuPosition={getViewportMenuPosition}
+        hasVisibleKeywords={hasVisibleKeywords}
+        inlineNodeTextDraft={inlineNodeTextDraft}
+        isBusy={isBusy}
+        isDragging={isDragging}
+        isEndMajorNode={isEndMajorNode}
+        isHoveredRewireTarget={isHoveredRewireTarget}
+        isLoadingKeywords={isLoadingKeywords}
+        isNodeMoreMenuOpen={isNodeMoreMenuOpen}
+        isRewireSource={isRewireSource}
+        isRewireTarget={isRewireTarget}
+        isSelected={isSelected}
+        isStartMajorNode={isStartMajorNode}
         key={node.id}
-        onClick={() => {
-          if (suppressNodeClickRef.current === node.id) {
-            suppressNodeClickRef.current = null;
-            return;
-          }
-
-          if (isRewireTarget && rewireNode) {
-            void controller.rewireNode(rewireNode.id, node.id);
-            flushSelectedNodeDraftBeforeSelection(rewireNode.id);
-            setSelectedNodeId(rewireNode.id);
-            setRewireNodeId(null);
-            rewireHoverTargetIdRef.current = null;
-            setRewireHoverTargetId(null);
-            setRewirePreviewPoint(null);
-            return;
-          }
-
-          shouldFocusSelectedNodeRef.current = true;
-          flushSelectedNodeDraftBeforeSelection(node.id);
-          setSelectedNodeId(node.id);
+        node={node}
+        nodeCardRefs={nodeCardRefs}
+        nodeMenuButtonRefs={nodeMenuButtonRefs}
+        nodeSize={nodeSize}
+        objectMentionCreateCandidate={objectMentionCreateCandidate}
+        objectMentionQuery={objectMentionQuery}
+        objectMentionSuggestions={objectMentionSuggestions}
+        onBeforeSelectNode={flushSelectedNodeDraftBeforeSelection}
+        onClearRewireHoverTarget={() => {
+          rewireHoverTargetIdRef.current = null;
         }}
-        onDoubleClick={(event) => {
-          if (isInteractiveTarget(event.target)) {
-            return;
-          }
-
-          shouldFocusSelectedNodeRef.current = true;
-          flushSelectedNodeDraftBeforeSelection(node.id);
-          setSelectedNodeId(node.id);
-          centerCanvasViewportOnNode(node.id);
-        }}
-        onPointerDown={(event) => {
-          beginNodeDrag(node.id, node.level, event);
-        }}
-        ref={(element) => {
-          if (element) {
-            nodeCardRefs.current.set(node.id, element);
-          } else {
-            nodeCardRefs.current.delete(node.id);
-          }
-        }}
-        style={{
-          left: `${placement.x}px`,
-          top: `${placement.y}px`,
-          height: `${nodeSize.height}px`,
-          width: `${nodeSize.width}px`
-        } as CSSProperties}
-      >
-        <div className="node-card-header">
-          <span className="visually-hidden">{node.level} node</span>
-          <div className="node-header-actions">
-            <button
-              aria-label={node.isCollapsed ? copy.persistence.unfold : copy.persistence.fold}
-              className="button-secondary node-header-button"
-              disabled={isBusy}
-              onClick={(event) => {
-                event.stopPropagation();
-                void controller.updateNodeVisualState(node.id, {
-                  isCollapsed: !(node.isCollapsed ?? false)
-                });
-              }}
-              type="button"
-            >
-              {node.isCollapsed ? ">" : "<"}
-            </button>
-            <div className="node-menu-shell">
-              <button
-                aria-expanded={isSelected && isNodeMoreMenuOpen}
-                aria-label={`${copy.persistence.more} ${getNodeHeadline(node)}`}
-                className="button-secondary node-header-button node-more-button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  const nextOpen = !(isSelected && isNodeMoreMenuOpen);
-                  flushSelectedNodeDraftBeforeSelection(node.id);
-                  setSelectedNodeId(node.id);
-                  setIsNodeMoreMenuOpen(nextOpen);
-                  setNodeMenuPosition(
-                    nextOpen
-                      ? getViewportMenuPosition(
-                          (event.currentTarget as HTMLButtonElement).getBoundingClientRect()
-                        )
-                      : null
-                  );
-                }}
-                ref={(element) => {
-                  if (element) {
-                    nodeMenuButtonRefs.current.set(node.id, element);
-                  } else {
-                    nodeMenuButtonRefs.current.delete(node.id);
-                  }
-                }}
-                type="button"
-              >
-                ...
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="node-card-body">
-          {node.contentMode === "text" && activeKeywords.length > 0 ? (
-            <span aria-label="AI-assisted node" className="visually-hidden" />
-          ) : null}
-          <span
-            className="visually-hidden"
-            data-testid={isSelected ? "selected-node-title" : undefined}
-          >
-            {selectedNodeTitle}
-          </span>
-          {isSelected && !node.isFixed ? (
-            <div
-              className="node-inline-editor"
-              onClick={(event) => {
-                event.stopPropagation();
-                selectedNodeInputRef.current?.focus();
-              }}
-            >
-              <div className="node-inline-input-shell">
-                <div
-                  aria-hidden="true"
-                  className={`node-inline-preview${
-                    !displayBodyText && activeKeywords.length === 0 ? " is-placeholder" : ""
-                  }`}
-                >
-                  {displayText
-                    ? renderTextWithObjectMentions(displayText)
-                    : activeKeywords.length === 0
-                      ? "Type the beat"
-                      : "\u200b"}
-                </div>
-                <textarea
-                  className="node-inline-input"
-                  data-node-id={node.id}
-                  onBlur={() => {
-                    void persistInlineNodeContent(node, inlineNodeTextDraft, activeKeywords);
-                  }}
-                  onChange={(event) => {
-                    const nextValue = normalizeInlineObjectMentions(event.target.value);
-                    const nextCaret = event.target.selectionStart ?? nextValue.length;
-
-                    setInlineNodeTextDraft(nextValue);
-                    setSelectedAiKeywords(extractInlineKeywords(nextValue));
-                    updateObjectMentionQueryFromInput(event.currentTarget, nextValue);
-                    syncSelectedNodeInputHeight(node.id, event.currentTarget);
-                    syncInlineObjectMentions(node.id, nextValue);
-
-                    if (nextValue !== event.target.value) {
-                      window.requestAnimationFrame(() => {
-                        selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
-                      });
-                    }
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    updateObjectMentionQueryFromInput(event.currentTarget);
-                  }}
-                  onKeyDown={(event) => {
-                    const selectionStart = event.currentTarget.selectionStart ?? 0;
-                    const selectionEnd = event.currentTarget.selectionEnd ?? 0;
-                    const activeMentionSuggestion =
-                      objectMentionSuggestions[activeObjectMentionIndex] ?? null;
-
-                    if (selectionStart === selectionEnd) {
-                      const removableToken =
-                        event.key === "Backspace"
-                          ? removeAdjacentInlineToken(inlineNodeTextDraft, selectionStart, "backward")
-                          : event.key === "Delete"
-                            ? removeAdjacentInlineToken(inlineNodeTextDraft, selectionStart, "forward")
-                            : null;
-
-                      if (removableToken) {
-                        event.preventDefault();
-                        setInlineNodeTextDraft(removableToken.nextText);
-                        setSelectedAiKeywords(extractInlineKeywords(removableToken.nextText));
-                        syncInlineObjectMentions(node.id, removableToken.nextText);
-
-                        window.requestAnimationFrame(() => {
-                          selectedNodeInputRef.current?.focus();
-                          selectedNodeInputRef.current?.setSelectionRange(
-                            removableToken.nextCaret,
-                            removableToken.nextCaret
-                          );
-                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
-                        });
-                        return;
-                      }
-                    }
-
-                    if (
-                      selectionStart !== selectionEnd &&
-                      (event.key === "Backspace" || event.key === "Delete")
-                    ) {
-                      const removableSelection = removeInlineSelectionWithTokenBoundaries(
-                        inlineNodeTextDraft,
-                        selectionStart,
-                        selectionEnd
-                      );
-
-                      if (removableSelection) {
-                        event.preventDefault();
-                        setInlineNodeTextDraft(removableSelection.nextText);
-                        setSelectedAiKeywords(extractInlineKeywords(removableSelection.nextText));
-                        syncInlineObjectMentions(node.id, removableSelection.nextText);
-
-                        window.requestAnimationFrame(() => {
-                          selectedNodeInputRef.current?.focus();
-                          selectedNodeInputRef.current?.setSelectionRange(
-                            removableSelection.nextCaret,
-                            removableSelection.nextCaret
-                          );
-                          syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
-                        });
-                        return;
-                      }
-                    }
-
-                    if (
-                      activeMentionSuggestion &&
-                      (event.key === "Enter" ||
-                        event.key === "Tab" ||
-                        (objectMentionQuery?.mode === "mention" && event.key === " "))
-                    ) {
-                      event.preventDefault();
-                      applyObjectMentionSelection(
-                        activeMentionSuggestion.name,
-                        objectMentionQuery?.mode === "mention" && event.key === " "
-                      );
-                      return;
-                    }
-
-                    if (objectMentionSuggestions.length > 0 && event.key === "ArrowDown") {
-                      event.preventDefault();
-                      setActiveObjectMentionIndex((current) =>
-                        Math.min(current + 1, objectMentionSuggestions.length - 1)
-                      );
-                      return;
-                    }
-
-                    if (objectMentionSuggestions.length > 0 && event.key === "ArrowUp") {
-                      event.preventDefault();
-                      setActiveObjectMentionIndex((current) => Math.max(current - 1, 0));
-                      return;
-                    }
-
-                    if (objectMentionQuery !== null && event.key === "Escape") {
-                      event.preventDefault();
-                      setObjectMentionQuery(null);
-                      setObjectMentionMenuPosition(null);
-                      setActiveObjectMentionIndex(0);
-                    }
-                  }}
-                  onKeyUp={(event) => {
-                    updateObjectMentionQueryFromInput(event.currentTarget);
-                  }}
-                  placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
-                  ref={selectedNodeInputRef}
-                  rows={1}
-                  value={inlineNodeTextDraft}
-                />
-              </div>
-            </div>
-          ) : displayBodyText || hasVisibleKeywords ? (
-            <div className="node-text-flow">
-              {displayText ? (
-                <span className="node-inline-text">{renderTextWithObjectMentions(displayText)}</span>
-              ) : null}
-            </div>
-          ) : null}
-          {shouldShowPlaceholder ? (
-            <p className="node-simple-text is-placeholder">
-              {isReadOnlySelectedNode ? "Type the beat" : displayText}
-            </p>
-          ) : null}
-        </div>
-        {isSelected && !node.isFixed ? (
-          <>
-            <button
-              aria-label="Resize horizontally"
-              className="node-resize-handle node-resize-handle-horizontal"
-              onPointerDown={(event) => {
-                beginNodeResize(node.id, "horizontal", event);
-              }}
-              type="button"
-            />
-            <button
-              aria-label="Resize vertically"
-              className="node-resize-handle node-resize-handle-vertical"
-              onPointerDown={(event) => {
-                beginNodeResize(node.id, "vertical", event);
-              }}
-              type="button"
-            />
-            <button
-              aria-label="Resize diagonally"
-              className="node-resize-handle node-resize-handle-diagonal"
-              onPointerDown={(event) => {
-                beginNodeResize(node.id, "diagonal", event);
-              }}
-              type="button"
-            />
-          </>
-        ) : null}
-
-        {aiPanelNode?.id === node.id && !node.isFixed ? (
-          <section
-            className="recommendation-panel"
-            data-testid="keyword-cloud"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <div className="recommendation-panel-header">
-              <strong>{copy.persistence.keywordSuggestions}</strong>
-              <div className="recommendation-panel-actions">
-                <button
-                  className="button-secondary"
-                  disabled={isLoadingKeywords}
-                  onClick={() => {
-                    void openKeywordSuggestions(node, { refresh: true });
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.keywordRefresh}
-                </button>
-                <button
-                  className="button-secondary"
-                  onClick={() => {
-                    setAiPanelNodeId(null);
-                    setRecommendationError(null);
-                  }}
-                  type="button"
-                >
-                  {copy.persistence.cancel}
-                </button>
-              </div>
-            </div>
-
-            {recommendationError ? (
-              <p className="recommendation-error">
-                {copy.persistence.recommendationFailed}: {recommendationError}
-              </p>
-            ) : null}
-
-            <div
-              className={`keyword-suggestion-grid${isLoadingKeywords ? " is-loading" : ""}`}
-              data-testid="keyword-suggestion-grid"
-            >
-              {isLoadingKeywords
-                ? Array.from({ length: keywordCloudSlotCount }).map((_, slotIndex) => (
-                    <div
-                      aria-hidden="true"
-                      className="keyword-suggestion keyword-suggestion-skeleton"
-                      data-testid={`keyword-suggestion-skeleton-${slotIndex}`}
-                      key={`keyword-skeleton-${slotIndex}`}
-                    >
-                      <span />
-                    </div>
-                  ))
-                : (
-                    <>
-                      {displayedKeywordSuggestions.map((suggestion, suggestionIndex) => {
-                        const isSelectedKeyword = selectedAiKeywords.includes(suggestion.label);
-
-                        return (
-                          <button
-                            aria-pressed={isSelectedKeyword}
-                            className={`keyword-suggestion${isSelectedKeyword ? " is-selected" : ""}`}
-                            data-testid={`keyword-suggestion-${suggestionIndex}`}
-                            key={suggestion.label}
-                            onClick={() => {
-                              void toggleAiKeyword(node, suggestion.label);
-                            }}
-                            type="button"
-                          >
-                            <span>{suggestion.label}</span>
-                          </button>
-                        );
-                      })}
-                      {Array.from({ length: keywordCloudEmptySlotCount }).map((_, slotIndex) => (
-                        <div
-                          aria-hidden="true"
-                          className="keyword-suggestion keyword-suggestion-empty-slot"
-                          key={`keyword-empty-${slotIndex}`}
-                        />
-                      ))}
-                    </>
-                  )}
-            </div>
-
-            {!isLoadingKeywords && displayedKeywordSuggestions.length === 0 ? (
-              <p className="support-copy">{copy.persistence.keywordCloudEmpty}</p>
-            ) : null}
-          </section>
-        ) : null}
-
-      </article>
+        onRewireNode={(sourceNodeId, targetNodeId) =>
+          controller.rewireNode(sourceNodeId, targetNodeId)
+        }
+        openKeywordSuggestions={openKeywordSuggestions}
+        persistInlineNodeContent={persistInlineNodeContent}
+        placement={placement}
+        recommendationError={recommendationError}
+        rewireNode={rewireNode}
+        selectedAiKeywords={selectedAiKeywords}
+        selectedNodeInputRef={selectedNodeInputRef}
+        selectedNodeTitle={selectedNodeTitle}
+        setActiveObjectMentionIndex={setActiveObjectMentionIndex}
+        setAiPanelNodeId={setAiPanelNodeId}
+        setInlineNodeTextDraft={setInlineNodeTextDraft}
+        setIsNodeMoreMenuOpen={setIsNodeMoreMenuOpen}
+        setNodeMenuPosition={setNodeMenuPosition}
+        setObjectMentionMenuPosition={setObjectMentionMenuPosition}
+        setObjectMentionQuery={setObjectMentionQuery}
+        setRecommendationError={setRecommendationError}
+        setRewireHoverTargetId={setRewireHoverTargetId}
+        setRewireNodeId={setRewireNodeId}
+        setRewirePreviewPoint={setRewirePreviewPoint}
+        setSelectedAiKeywords={setSelectedAiKeywords}
+        setSelectedNodeId={setSelectedNodeId}
+        shouldFocusSelectedNodeRef={shouldFocusSelectedNodeRef}
+        shouldShowPlaceholder={shouldShowPlaceholder}
+        suppressNodeClickRef={suppressNodeClickRef}
+        syncInlineObjectMentions={syncInlineObjectMentions}
+        syncSelectedNodeInputHeight={syncSelectedNodeInputHeight}
+        toggleAiKeyword={toggleAiKeyword}
+        toggleNodeCollapsed={(nodeId, nextCollapsed) =>
+          controller.updateNodeVisualState(nodeId, {
+            isCollapsed: nextCollapsed
+          })
+        }
+        updateObjectMentionQueryFromInput={updateObjectMentionQueryFromInput}
+      />
     );
   });
   const rewirePreviewLine =
     rewireNode && rewirePreviewPoint
       ? (() => {
           const sourcePlacement = nodePlacements.get(rewireNode.id);
-          const sourceSize = getNodeSize(nodeSizes, rewireNode.id);
+          const sourceSize = getNodeSize(effectiveNodeSizes, rewireNode.id);
 
           if (!sourcePlacement) {
             return null;
@@ -3640,7 +3377,7 @@ export function WorkspaceShell() {
           const hoveredPlacement =
             hoveredTarget !== null ? nodePlacements.get(hoveredTarget.id) ?? null : null;
           const hoveredSize =
-            hoveredTarget !== null ? getNodeSize(nodeSizes, hoveredTarget.id) : null;
+            hoveredTarget !== null ? getNodeSize(effectiveNodeSizes, hoveredTarget.id) : null;
           const startX =
             hoveredPlacement && hoveredSize
               ? hoveredPlacement.x + hoveredSize.width / 2
@@ -3937,7 +3674,7 @@ export function WorkspaceShell() {
     selectedNode &&
     objectMentionQuery &&
     objectMentionMenuPosition &&
-    objectMentionSuggestions.length > 0
+    (objectMentionSuggestions.length > 0 || objectMentionCreateCandidate)
       ? renderViewportOverlay(
           <section
             className="object-mention-menu"
@@ -3966,6 +3703,25 @@ export function WorkspaceShell() {
                   : object.name}
               </button>
             ))}
+            {objectMentionCreateCandidate ? (
+              <button
+                aria-selected={
+                  activeObjectMentionIndex === objectMentionSuggestions.length
+                }
+                className={`button-secondary object-mention-option${
+                  activeObjectMentionIndex === objectMentionSuggestions.length
+                    ? " is-active"
+                    : ""
+                }`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  applyObjectMentionSelection(objectMentionCreateCandidate.name);
+                }}
+                type="button"
+              >
+                {`Create "${objectMentionCreateCandidate.name}" as object`}
+              </button>
+            ) : null}
           </section>
         )
       : null;
@@ -4949,7 +4705,7 @@ export function WorkspaceShell() {
                 maybeExtendTimelineForDraggedNode(
                   event.clientY,
                   dragPayload.level,
-                  getNodeSize(nodeSizes, dragPayload.nodeId)
+                  getNodeSize(effectiveNodeSizes, dragPayload.nodeId)
                 );
               }
             }}
@@ -5088,7 +4844,7 @@ export function WorkspaceShell() {
                         maybeExtendTimelineForDraggedNode(
                           event.clientY,
                           dragPayload.level,
-                          getNodeSize(nodeSizes, dragPayload.nodeId)
+                          getNodeSize(effectiveNodeSizes, dragPayload.nodeId)
                         );
                       }
                     }}
@@ -5142,6 +4898,16 @@ export function WorkspaceShell() {
                         </button>
                       </>
                     ) : null}
+                    {laneLayoutsByLevel[lane.level].blocks
+                      .filter((block) => block.kind === "spacer")
+                      .map((block) => (
+                        <CanvasLaneSpacer
+                          height={block.height}
+                          key={block.id}
+                          role={block.role}
+                          y={block.top}
+                        />
+                      ))}
                   </div>
                 </section>
               ))}
