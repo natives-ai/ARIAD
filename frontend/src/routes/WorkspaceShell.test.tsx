@@ -1020,7 +1020,7 @@ describe("workspace shell recommendation flow", () => {
     const refreshedInput = within(selectedNodeCard).getByRole("textbox");
 
     await user.clear(refreshedInput);
-    await user.type(refreshedInput, "@Heroine's Mother");
+    await user.type(refreshedInput, "@heroine's mother");
 
     const exactMatchMenu = await waitFor(() => {
       const menu = document.querySelector(".object-mention-menu");
@@ -3519,7 +3519,7 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
-  it("auto-scrolls the canvas viewport while dragging a node near the bottom edge", async () => {
+  it("auto-scrolls the canvas viewport while dragging a node near the browser bottom edge", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -3550,7 +3550,16 @@ describe("workspace shell recommendation flow", () => {
       configurable: true,
       value: 2200
     });
-    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 400));
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      configurable: true,
+      value: 400
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      value: 2600
+    });
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(400);
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 1200));
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       frameCallbacks.push(callback);
       frameId += 1;
@@ -3560,6 +3569,7 @@ describe("workspace shell recommendation flow", () => {
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
 
     viewport.scrollTop = 120;
+    document.documentElement.scrollTop = 90;
 
     fireEvent.pointerDown(selectedMinorNode, {
       button: 0,
@@ -3588,6 +3598,7 @@ describe("workspace shell recommendation flow", () => {
     });
 
     expect(viewport.scrollTop).toBeGreaterThan(120);
+    expect(document.documentElement.scrollTop).toBeGreaterThan(90);
 
     fireEvent.pointerUp(window);
   });

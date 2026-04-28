@@ -116,8 +116,32 @@ function toTitleCase(value: string) {
 // 컨텍스트 앵커에서 동적 확장용 핵심 구문을 추출합니다.
 function extractAnchorPhrases(context: RecommendationContext) {
   const phrases: string[] = [];
+  const structuredAnchors = context.structuredContext
+    ? [
+        context.structuredContext.currentNode.text,
+        ...context.structuredContext.currentNode.keywords,
+        ...context.structuredContext.directConnections.flatMap((node) => [
+          node.text,
+          ...node.keywords
+        ]),
+        ...context.structuredContext.majorLaneFlow.flatMap((item) => [
+          item.text,
+          ...item.keywords
+        ]),
+        context.structuredContext.episodeContext.objective,
+        context.structuredContext.episodeContext.endpoint,
+        ...context.structuredContext.objectContext.flatMap((object) => [
+          object.name,
+          object.summary
+        ]),
+        ...context.structuredContext.rankedItems.flatMap((item) => [
+          item.text,
+          ...item.keywords
+        ])
+      ]
+    : [];
 
-  for (const anchor of context.anchors) {
+  for (const anchor of [...structuredAnchors, ...context.anchors]) {
     const tokens = anchor
       .toLowerCase()
       .split(/[^a-z0-9]+/)
@@ -141,6 +165,10 @@ function extractAnchorPhrases(context: RecommendationContext) {
 
 // 추천 개수 옵션을 안전한 범위로 정규화합니다.
 function resolveKeywordSuggestionLimit(value: number | undefined) {
+  if (value === 0) {
+    return 0;
+  }
+
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     return defaultKeywordSuggestionLimit;
   }
@@ -156,11 +184,17 @@ function buildKeywordSuggestions(
   const limit = resolveKeywordSuggestionLimit(maxSuggestions);
   const suggestions: KeywordSuggestion[] = [];
   const seenLabels = new Set<string>();
+  const selectedLabels = new Set(
+    context.selectedKeywords
+      .map((keyword) => keyword.trim().toLowerCase())
+      .filter(Boolean)
+  );
 
+  // 중복되거나 이미 선택된 키워드를 제외하고 제안을 추가합니다.
   const pushSuggestion = (suggestion: KeywordSuggestion) => {
     const label = suggestion.label.trim().toLowerCase();
 
-    if (!label || seenLabels.has(label)) {
+    if (!label || seenLabels.has(label) || selectedLabels.has(label)) {
       return;
     }
 
@@ -171,6 +205,10 @@ function buildKeywordSuggestions(
     });
   };
 
+  for (const suggestion of levelSeedSuggestions[context.nodeLevel]) {
+    pushSuggestion(suggestion);
+  }
+
   for (const phrase of extractAnchorPhrases(context)) {
     for (const template of dynamicSuffixes[context.nodeLevel]) {
       pushSuggestion({
@@ -178,10 +216,6 @@ function buildKeywordSuggestions(
         reason: template.reason
       });
     }
-  }
-
-  for (const suggestion of levelSeedSuggestions[context.nodeLevel]) {
-    pushSuggestion(suggestion);
   }
 
   const fallbackPhrases = cleanList([
@@ -319,11 +353,16 @@ export function createHeuristicRecommendationProvider(
 ): RecommendationProvider {
   return {
     async requestKeywords(context) {
-      if (!context.focus.trim()) {
+      const maxSuggestions =
+        typeof context.maxSuggestions === "number" && Number.isInteger(context.maxSuggestions)
+          ? Math.max(0, Math.min(context.maxSuggestions, resolveKeywordSuggestionLimit(options.maxSuggestions)))
+          : options.maxSuggestions;
+
+      if (!context.focus.trim() || maxSuggestions === 0) {
         return [];
       }
 
-      return buildKeywordSuggestions(context, options.maxSuggestions);
+      return buildKeywordSuggestions(context, maxSuggestions);
     },
     async requestSentences(context) {
       if (context.selectedKeywords.length === 0) {

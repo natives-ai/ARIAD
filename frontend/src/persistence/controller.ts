@@ -30,6 +30,7 @@ import {
   clampInsertIndex,
   collectDescendantIds,
   collectSubtreeNodes,
+  getParentLevel,
   inferParentId,
   isDescendant,
   normalizeNodeOrder,
@@ -494,6 +495,30 @@ function mergeEpisodeNodes(
   nextEpisodeNodes: StoryNode[]
 ) {
   return [...allNodes.filter((node) => node.episodeId !== episodeId), ...nextEpisodeNodes];
+}
+
+// 삭제 후 자식 노드가 사용할 수 있는 부모인지 확인합니다.
+function isReconnectParentIdValid(
+  remainingNodes: StoryNode[],
+  remainingNodesById: Map<string, StoryNode>,
+  childNode: StoryNode,
+  parentId: string | null
+) {
+  if (parentId === null) {
+    return true;
+  }
+
+  const parentNode = remainingNodesById.get(parentId);
+  const expectedParentLevel = getParentLevel(childNode.level);
+
+  return (
+    parentNode !== undefined &&
+    expectedParentLevel !== null &&
+    parentNode.level === expectedParentLevel &&
+    parentNode.projectId === childNode.projectId &&
+    parentNode.episodeId === childNode.episodeId &&
+    !isDescendant(remainingNodes, childNode.id, parentNode.id)
+  );
 }
 
 function assignNodesToEpisode(
@@ -1837,6 +1862,91 @@ export class WorkspacePersistenceController {
       snapshot,
       createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
     );
+  }
+
+  // 이 함수는 선택 노드만 삭제하고 직접 자식을 새 부모로 재연결합니다.
+  async deleteNodeAndReconnectChildren(
+    nodeId: string,
+    childParentIds: Map<string, string | null> = new Map()
+  ) {
+    const current = this.requireState();
+    const targetNode = current.snapshot.nodes.find((node) => node.id === nodeId);
+
+    if (!targetNode) {
+      return;
+    }
+
+    const episodeNodes = getOrderedEpisodeNodes(current.snapshot, targetNode.episodeId);
+    const remainingEpisodeNodes = episodeNodes.filter((node) => node.id !== nodeId);
+
+    if (remainingEpisodeNodes.length === episodeNodes.length) {
+      return;
+    }
+
+    const timestamp = this.now();
+    const remainingNodesById = new Map(
+      remainingEpisodeNodes.map((node) => [node.id, node])
+    );
+    const reconnectedEpisodeNodes = remainingEpisodeNodes.map((node, index) => {
+      if (node.parentId !== nodeId) {
+        return node;
+      }
+
+      const requestedParentId = childParentIds.has(node.id)
+        ? childParentIds.get(node.id) ?? null
+        : inferParentId(remainingEpisodeNodes, node.level, index, new Set([node.id]));
+      const parentId = isReconnectParentIdValid(
+        remainingEpisodeNodes,
+        remainingNodesById,
+        node,
+        requestedParentId
+      )
+        ? requestedParentId
+        : null;
+
+      return {
+        ...node,
+        parentId
+      };
+    });
+    const nextEpisodeNodes = normalizeNodeOrder(
+      stampNodes(reconnectedEpisodeNodes, timestamp)
+    );
+    const nextNodes = mergeEpisodeNodes(
+      current.snapshot.nodes,
+      targetNode.episodeId,
+      nextEpisodeNodes
+    );
+    let hasDrawerSourceUpdate = false;
+    const nextDrawer = current.snapshot.temporaryDrawer.map((item) => {
+      if (item.sourceNodeId !== nodeId) {
+        return item;
+      }
+
+      hasDrawerSourceUpdate = true;
+
+      return {
+        ...item,
+        sourceNodeId: null,
+        updatedAt: timestamp
+      };
+    });
+    const snapshot: StoryWorkspaceSnapshot = {
+      ...current.snapshot,
+      nodes: nextNodes,
+      temporaryDrawer: nextDrawer
+    };
+
+    this.applyLocalMutation(snapshot, [
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
+      ...(hasDrawerSourceUpdate
+        ? createDrawerOperations(
+            current.snapshot.temporaryDrawer,
+            nextDrawer,
+            current.snapshot.project.id
+          )
+        : [])
+    ]);
   }
 
   async moveNodeToDrawer(nodeId: string) {

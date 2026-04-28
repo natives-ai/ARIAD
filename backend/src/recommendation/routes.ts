@@ -50,6 +50,11 @@ const recommendationRouteMetrics: RecommendationRouteMetrics = {
   timeout: 0
 };
 
+// 선택 숫자 필드가 비어 있거나 유한한 숫자인지 확인합니다.
+function isOptionalFiniteNumber(value: unknown) {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
 // 추천 오류 메시지에 따라 HTTP 상태 코드를 결정합니다.
 function resolveRecommendationErrorStatus(message: string) {
   if (message === "missing_api_key" || message === "unsupported_provider") {
@@ -90,26 +95,119 @@ function resolveMaxSuggestions(value: number) {
   return Math.min(value, 25);
 }
 
+// request 값과 서버 상한을 함께 적용해 실제 키워드 개수를 계산합니다.
+function resolveRequestMaxSuggestions(
+  requestValue: number | undefined,
+  serverValue: number
+) {
+  const serverMaxSuggestions = resolveMaxSuggestions(serverValue);
+
+  if (requestValue === undefined) {
+    return serverMaxSuggestions;
+  }
+
+  if (!Number.isInteger(requestValue) || requestValue < 0) {
+    return serverMaxSuggestions;
+  }
+
+  return Math.min(requestValue, serverMaxSuggestions);
+}
+
 // 키워드 응답을 최대 개수 제한에 맞춰 잘라 반환합니다.
 function trimKeywordSuggestions(
   response: KeywordRecommendationResponse,
   maxSuggestions: number
 ): KeywordRecommendationResponse {
   return {
-    suggestions: response.suggestions.slice(0, resolveMaxSuggestions(maxSuggestions))
+    suggestions: response.suggestions.slice(0, maxSuggestions)
   };
+}
+
+// structured recommendation context의 최소 shape를 검증합니다.
+function hasValidStructuredContext(body: KeywordRecommendationRequest | SentenceRecommendationRequest) {
+  if (body.structuredContext === undefined) {
+    return true;
+  }
+
+  const context = body.structuredContext;
+
+  if (typeof context !== "object" || context === null) {
+    return false;
+  }
+
+  const validNodeLevels = new Set(["major", "minor", "detail"]);
+  const validLanguages = new Set(["en", "ko", "ja"]);
+  const validRankedSources = new Set(["node", "object", "episode", "flow"]);
+  const validRankedRoles = new Set([
+    "attached-object",
+    "child",
+    "current",
+    "episode-endpoint",
+    "episode-objective",
+    "major-flow",
+    "parent",
+    "same-lane-after",
+    "same-lane-before"
+  ]);
+  const hasValidRankedItems =
+    Array.isArray(context.rankedItems) &&
+    context.rankedItems.length <= 40 &&
+    context.rankedItems.every((item) => {
+      return (
+        typeof item === "object" &&
+        item !== null &&
+        typeof item.id === "string" &&
+        item.id.trim().length > 0 &&
+        validRankedSources.has(item.source) &&
+        validRankedRoles.has(item.role) &&
+        typeof item.priorityScore === "number" &&
+        Number.isFinite(item.priorityScore) &&
+        item.priorityScore >= 0 &&
+        item.priorityScore <= 1 &&
+        typeof item.text === "string" &&
+        item.text.length <= 1200 &&
+        Array.isArray(item.keywords) &&
+        item.keywords.every((keyword) => typeof keyword === "string") &&
+        (item.objectIds === undefined ||
+          (Array.isArray(item.objectIds) &&
+            item.objectIds.every((objectId) => typeof objectId === "string"))) &&
+        (item.level === undefined || validNodeLevels.has(item.level)) &&
+        isOptionalFiniteNumber(item.distance) &&
+        isOptionalFiniteNumber(item.canvasY) &&
+        isOptionalFiniteNumber(item.orderIndex)
+      );
+    });
+
+  return (
+    typeof context.currentNode?.id === "string" &&
+    validNodeLevels.has(context.currentNode.level) &&
+    context.currentNode.role === "current" &&
+    Array.isArray(context.directConnections) &&
+    Array.isArray(context.majorLaneFlow) &&
+    typeof context.episodeContext?.title === "string" &&
+    Array.isArray(context.objectContext) &&
+    hasValidRankedItems &&
+    Array.isArray(context.selectedKeywords) &&
+    validLanguages.has(context.language) &&
+    validNodeLevels.has(context.nodeLevel) &&
+    Number.isInteger(context.maxSuggestions) &&
+    context.maxSuggestions >= 0
+  );
 }
 
 // 요청/모델 기준으로 키워드 캐시 키를 생성합니다.
 function buildKeywordCacheKey(
   body: KeywordRecommendationRequest,
-  options: RegisterRecommendationRoutesOptions
+  options: RegisterRecommendationRoutesOptions,
+  maxSuggestions: number
 ) {
   return JSON.stringify({
-    maxSuggestions: resolveMaxSuggestions(options.recommendationConfig.maxSuggestions),
+    maxSuggestions,
     model: options.recommendationConfig.model,
     provider: options.recommendationConfig.provider,
-    story: body.story
+    selectedKeywords: body.selectedKeywords ?? [],
+    story: body.story,
+    structuredContext: body.structuredContext ?? null
   });
 }
 
@@ -193,9 +291,12 @@ function createRecommendationServiceAccessor(options: RegisterRecommendationRout
     try {
       const provider = createRecommendationProvider({
         apiKey: options.recommendationApiKey,
+        cacheTtlMs: options.recommendationConfig.cacheTtlMs,
         fallbackToHeuristicOnError: options.recommendationConfig.fallbackToHeuristicOnError,
+        maxSuggestions: options.recommendationConfig.maxSuggestions,
         model: options.recommendationConfig.model,
-        provider: options.recommendationConfig.provider
+        provider: options.recommendationConfig.provider,
+        timeoutMs: options.recommendationConfig.timeoutMs
       });
 
       service = createRecommendationService(provider);
@@ -249,8 +350,17 @@ export async function registerRecommendationRoutes(
       });
     }
 
-    const maxSuggestions = resolveMaxSuggestions(options.recommendationConfig.maxSuggestions);
-    const cacheKey = buildKeywordCacheKey(body, options);
+    if (!hasValidStructuredContext(body)) {
+      return reply.status(400).send({
+        message: "structured_context_invalid"
+      });
+    }
+
+    const maxSuggestions = resolveRequestMaxSuggestions(
+      body.maxSuggestions,
+      options.recommendationConfig.maxSuggestions
+    );
+    const cacheKey = buildKeywordCacheKey(body, options, maxSuggestions);
     const cachedResponse = readKeywordCache(cacheKey);
 
     if (cachedResponse) {
@@ -327,6 +437,12 @@ export async function registerRecommendationRoutes(
     if (!body?.story) {
       return reply.status(400).send({
         message: "story is required"
+      });
+    }
+
+    if (!hasValidStructuredContext(body)) {
+      return reply.status(400).send({
+        message: "structured_context_invalid"
       });
     }
 

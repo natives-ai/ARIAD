@@ -6274,6 +6274,18 @@ node drag와 rewire drag에 vertical auto-scroll을 적용하고, horizontal aut
 - rewire preview는 자동 스크롤 후의 현재 stage rect를 기준으로 endpoint와 hover target을 다시 계산합니다
 - backend/schema/shared type 변경은 없습니다
 
+### 34.6 사용자 보정
+
+- auto-scroll edge 기준은 캔버스 element 전체 끝이 아니라 브라우저에서 실제로 보이는 화면 영역도 포함합니다
+- 캔버스 viewport의 bottom이 브라우저 화면 밖에 있어도 pointer가 브라우저 화면 하단에 가까우면 캔버스 scrollTop을 증가시킵니다
+- 이 보정은 vertical auto-scroll에만 적용합니다
+
+### 34.7 사용자 보정 2
+
+- 캔버스가 브라우저 화면보다 아래로 더 이어져 있으면 window/document scroll도 함께 움직여야 합니다
+- pointer가 브라우저 화면 상/하단 edge에 가까우면 document scroll을 먼저 갱신하고, 캔버스 내부 edge에도 걸린 경우 canvas viewport scrollTop도 함께 갱신합니다
+- node drag와 rewire drag preview는 window scroll 이후에도 현재 stage rect 기준으로 다시 계산합니다
+
 ## detail-035 / 에피소드 0개 상태 허용 및 생성 유도 화면 제거
 
 이 섹션은 에피소드가 0개인 프로젝트 상태를 정상 상태로 허용하고, 게스트 워크스페이스에서 에피소드 생성 유도 화면이 뜨지 않도록 정리한 항목입니다.
@@ -6320,3 +6332,491 @@ node drag와 rewire drag에 vertical auto-scroll을 적용하고, horizontal aut
 
 프로젝트는 에피소드 0개 상태를 가질 수 있습니다.
 다만 node/object/drawer는 여전히 episode scope 데이터이므로, 에피소드가 없을 때는 생성되지 않는 현재 데이터 계약을 유지합니다.
+
+## detail-036 / 오브젝트 mention 대소문자 중복 생성 방지
+
+이 섹션은 노드 텍스트 에디터에서 `@`로 오브젝트를 불러오거나 생성할 때 대문자/소문자 차이만 있는 이름을 같은 오브젝트로 취급하도록 정리한 항목입니다.
+
+요구 요약:
+
+- 기존 오브젝트가 `Hero`일 때 `@hero`를 입력해도 새 오브젝트 생성 후보를 보여주지 않습니다
+- 기존 오브젝트 검색/선택과 mention 동기화도 같은 비교 기준을 사용합니다
+- 표시 이름은 기존 오브젝트의 casing을 유지하되, 중복 판정은 case-insensitive로 합니다
+
+### 36.1 Frontend
+
+변경:
+
+- 오브젝트 mention 비교용 `normalizeObjectMentionMatchName(...)` helper를 사용합니다
+- 생성 후보 계산, mention signature, 기존 object id lookup, suggestion filter가 같은 case-insensitive key를 공유합니다
+- `@heroine's mother`가 기존 `Heroine's Mother`를 찾고, `Create` 후보를 만들지 않는 regression을 추가합니다
+
+검증:
+
+- `getObjectMentionCreateCandidate("hero", [{ name: "Hero" }])`는 `null`이어야 합니다
+- 기존 오브젝트와 대소문자만 다른 mention query에서는 create option이 보이면 안 됩니다
+- 기존 오브젝트 suggestion은 계속 표시되어 선택할 수 있어야 합니다
+
+### 36.2 Backend
+
+변경:
+
+- backend/schema 변경 없음
+- 이번 규칙은 노드 inline editor의 frontend 중복 방지 정책입니다
+
+주의:
+
+- 다른 생성 경로에서 프로젝트/에피소드 단위 case-insensitive uniqueness를 강제하려면 별도 backend/API 검증 항목으로 분리해야 합니다
+
+### 36.3 결정
+
+채택합니다.
+
+노드 텍스트 에디터의 `@` mention 생성/검색에서는 오브젝트 이름을 case-insensitive로 비교합니다.
+
+## detail-037 / Gemini Provider Structured Context 추천 품질 개선 계획
+
+이 섹션은 `GEMINI_PROVIDER_RECOMMENDATION_PRD.md`를 기준으로 Gemini-first keyword recommendation과 structured context 도입 계획을 정리합니다.
+
+핵심 판단:
+
+- 1차 구현은 RAG나 fine-tuning이 아니라 deterministic structured context assembly로 갑니다
+- 현재 ARIAD 데이터는 이미 workspace snapshot 안에 current node, parent/children, major lane flow, episode metadata, object references가 있으므로 요청 시점에 구조화해서 보내는 방식이 가장 작고 빠릅니다
+- context 범위별 요약 저장은 좋은 후속 방향이지만, 지금은 folder/cross-episode context가 backend first-class data가 아니므로 1차 범위에서 제외합니다
+- RAG는 장기적으로 cross-episode/large project 검색이 필요할 때 검토하고, fine-tuning은 사용자별 실시간 작품 맥락을 넣는 용도에는 우선순위가 낮습니다
+
+### 37.1 목표
+
+- Gemini가 현재 노드 텍스트를 최우선으로 이해하게 합니다
+- parent/child/direct structural context와 major lane flow를 source/priority가 보이는 구조로 제공합니다
+- keyword response shape는 기존 `KeywordSuggestion { label, reason }`을 유지합니다
+- keyword cloud는 문장 생성이 아니라 scene/event/next-beat clue를 제안합니다
+- selected keywords는 중복 금지 신호이자 open slot 계산 기준으로 사용합니다
+- Gemini 실패 시 heuristic fallback으로 앱이 깨지지 않게 합니다
+
+### 37.2 Structured Context 저장 방식 결정
+
+1차 결정:
+
+- context를 DB에 저장하지 않고, recommendation request 시점에 frontend snapshot에서 조립합니다
+- 추천 요청 payload에 `structuredContext`를 추가하거나 기존 `story`를 `structuredContext` 중심으로 확장합니다
+- backend/recommendation package는 이 구조를 그대로 provider context로 변환합니다
+- 캐시 키는 기존 flat story JSON 대신 structured context의 stable subset으로 계산합니다
+
+이유:
+
+- 현재 추천 대상은 사용자가 보고 있는 canvas 상태이므로 최신 UI 배치/노드 텍스트가 중요합니다
+- 별도 요약 저장소를 먼저 만들면 invalidation, scope, stale summary 문제가 더 커집니다
+- RAG/fine-tuning 없이도 PRD가 요구하는 current node, direct context, major lane flow는 이미 계산 가능합니다
+
+후속 결정:
+
+- episode/folder/cross-episode context가 길어지면 `context_summaries` 같은 별도 저장 항목을 만들 수 있습니다
+- summary scope 후보는 `project`, `episode`, `folder`, `object`, `node-subtree`입니다
+- 각 summary는 `sourceRevision`, `updatedAt`, `language`, `summary`, `keywords`, `sourceIds`를 가져야 합니다
+- folder는 현재 frontend-local 상태라 backend 요약 저장 대상이 되기 전에 first-class persistence 여부부터 결정해야 합니다
+
+RAG 판단:
+
+- 1차에는 사용하지 않습니다
+- 필요 조건은 cross-episode 검색, 수백 개 이상 노드, 사용자가 “과거 장면과 연결”을 기대하는 기능입니다
+- 도입 시에는 summary chunk를 embedding하고 top-k만 structured context의 `relatedSummaries`로 넣는 방식이 적절합니다
+
+fine-tuning 판단:
+
+- 1차에는 사용하지 않습니다
+- 작품별 최신 맥락 주입에는 fine-tuning보다 structured prompt/context가 맞습니다
+- fine-tuning은 장기적으로 “ARIAD식 keyword phrase 품질/형식”을 안정화하는 용도라면 검토할 수 있지만, 사용자 작품별 사실 기억 용도는 아닙니다
+
+### 37.3 Frontend
+
+변경 목표:
+
+- `createKeywordRecommendationRequest(...)`가 flat `StorySnapshot`만 만들지 않고 structured context를 조립합니다
+- current node, direct connections, major lane flow, episode metadata, attached objects, selected keywords, language, node level, maxSuggestions를 포함합니다
+- major lane flow는 major nodes를 `canvasY` 기준으로 정렬합니다
+- selected keyword 수만큼 Gemini 요청 개수를 줄입니다
+
+구현 방향:
+
+1. `frontend/src/recommendation/request.ts`에 structured context builder를 추가합니다
+2. current node는 text/keywords를 최대한 보존합니다
+3. direct connections는 parent node와 child nodes를 우선 포함합니다
+4. major node일 경우 이전/다음 major node를 `canvasY` 기준 neighbor로 포함합니다
+5. major lane flow는 current episode의 major nodes 전체를 `canvasY`, fallback `orderIndex` 기준으로 정렬해 압축합니다
+6. object context는 current node의 attached object를 우선 포함하고, 필요하면 active episode scope의 관련 object만 제한적으로 포함합니다
+7. language는 current node text에서 간단히 감지하고, 불명확하면 app/request 기본값을 사용합니다
+8. keyword cloud open slot은 현재 UI slot 수에서 selected keywords 수를 뺀 값으로 계산합니다
+
+파일 후보:
+
+- `frontend/src/recommendation/request.ts`
+- `frontend/src/routes/WorkspaceShell.tsx`
+- `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`
+- `frontend/src/recommendation/client.ts`
+- `frontend/src/recommendation/standaloneClient.ts`
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+
+검증:
+
+- current node text가 structured context에 들어갑니다
+- parent/child context가 role과 함께 들어갑니다
+- major lane flow가 `canvasY` 순서로 정렬됩니다
+- selected keywords가 request에 포함되고 `maxSuggestions`를 감소시킵니다
+- empty current node는 direct context/episode context로 fallback합니다
+
+### 37.4 Recommendation Package
+
+변경 목표:
+
+- `RecommendationContext`를 structured context 중심으로 확장합니다
+- 기존 provider 인터페이스 `requestKeywords(context)`는 유지하되, context 내부 shape를 개선합니다
+- Gemini prompt는 source/priority가 보이는 structured section을 사용합니다
+- heuristic fallback은 structured context를 읽되 기존 안정성을 유지합니다
+
+구현 방향:
+
+1. `recommendation/src/contracts/index.ts`에 `StructuredRecommendationContext`, `RecommendationNodeContext`, `RecommendationFlowItem`, `RecommendationEpisodeContext`, `RecommendationObjectContext` 타입을 추가합니다
+2. 기존 `StorySnapshot`/flat fields는 migration window 동안 compatibility layer로 둘지, 한 번에 교체할지 결정합니다
+3. `recommendation/src/context/index.ts`는 request body를 provider용 structured context로 변환합니다
+4. `recommendation/src/provider/gemini.ts`의 prompt를 PRD 기준으로 재작성합니다
+5. Gemini output validation에 phrase length, duplicate/near-duplicate, selected keyword duplicate, sentence-like label 필터를 추가합니다
+6. `recommendation/src/provider/heuristic.ts`는 current node/direct context/major flow에서 fallback anchor를 뽑도록 바꿉니다
+7. `recommendation/src/provider/factory.ts`는 기존 provider 선택 흐름을 유지합니다
+
+파일 후보:
+
+- `recommendation/src/contracts/index.ts`
+- `recommendation/src/context/index.ts`
+- `recommendation/src/provider/types.ts`
+- `recommendation/src/provider/gemini.ts`
+- `recommendation/src/provider/heuristic.ts`
+- `recommendation/src/provider/factory.test.ts`
+- `recommendation/src/orchestration/index.test.ts`
+
+검증:
+
+- Gemini success with structured context
+- invalid JSON fallback
+- empty/invalid suggestions fallback
+- timeout fallback
+- selected keyword duplicate prevention
+- phrase/sentence boundary filter
+- language behavior for English/Korean/Japanese smoke
+- major lane context appears in prompt payload
+
+### 37.5 Backend
+
+변경 목표:
+
+- recommendation route가 structured request를 받아 기존 provider service로 넘깁니다
+- maxSuggestions/open slot 정책을 backend config와 request 값 사이에서 안전하게 clamp합니다
+- cache key가 structured context와 selected keywords/maxSuggestions를 반영합니다
+- provider wiring은 Gemini-first와 heuristic fallback을 유지합니다
+
+구현 방향:
+
+1. `backend/src/recommendation/routes.ts` request validation을 structured context shape에 맞춥니다
+2. `maxSuggestions`는 request 값과 server config 상한 중 작은 값으로 사용합니다
+3. keyword cache key에 structured context stable JSON, provider, model, maxSuggestions를 포함합니다
+4. Gemini timeout/error 시 fallback metric과 응답 shape를 유지합니다
+5. real API key 없이 fake client 기반 통합 테스트를 유지합니다
+
+파일 후보:
+
+- `backend/src/recommendation/routes.ts`
+- `backend/src/recommendation/routes.integration.test.ts`
+- `backend/src/app.ts`
+- `backend/src/app.test.ts`
+
+검증:
+
+- `/api/recommendation/keywords`가 structured request를 처리합니다
+- malformed structured context는 400을 반환합니다
+- provider timeout은 fallback enabled일 때 heuristic 응답을 반환합니다
+- cache hit/miss가 structured context 변경에 따라 분리됩니다
+
+### 37.6 Summary/RAG 후속안
+
+요약 저장을 할 경우의 권장 방향:
+
+- 직접 원문 전체를 저장하는 것이 아니라 scope별 materialized summary를 저장합니다
+- `episodeSummary`: episode objective/endpoint + major lane flow 압축
+- `nodeSubtreeSummary`: parent-child branch 압축
+- `objectSummary`: object가 등장한 노드/키워드 압축
+- `projectSummary`: episode summaries를 다시 압축
+
+저장 조건:
+
+- episode 노드 수가 일정 기준을 넘거나, cross-episode 추천이 제품 요구로 확정될 때 시작합니다
+- source revision 기반 invalidation 없이는 저장하지 않습니다
+- summary가 stale하면 추천 품질이 나빠지므로 자동 재생성/부분 갱신 정책이 필요합니다
+
+RAG로 전환할 조건:
+
+- 단일 structured context prompt에 넣기 어려운 장기 기억이 필요할 때
+- folder/cross-episode 검색이 실제 UX 요구가 될 때
+- summary chunk와 metadata 기반 top-k 검색을 backend에서 안정적으로 운영할 수 있을 때
+
+### 37.7 실행 순서
+
+1. Contract/type 확장
+2. Frontend structured request builder 추가
+3. Recommendation context transformer 변경
+4. Gemini prompt/validation 개선
+5. Heuristic fallback compatibility 수정
+6. Backend route/cache validation 조정
+7. Unit/integration tests 보강
+8. 기존 frontend recommendation flow regression 확인
+
+### 37.8 결정
+
+채택합니다.
+
+1차는 저장형 summary/RAG/fine-tuning 없이 structured context를 request-time에 조립합니다.
+요약 저장은 episode/folder/cross-episode context가 first-class 요구가 된 뒤 별도 backend schema 항목으로 분리합니다.
+
+### 37.9 구현 결과
+
+구현했습니다.
+
+- frontend 추천 요청은 current node, parent/child/direct context, major lane flow, episode metadata, attached object, selected keywords, language, maxSuggestions를 `structuredContext`로 함께 전송합니다
+- major lane flow는 `canvasY` 기준으로 정렬하고, major neighbor가 없는 끝 노드에서도 요청 생성이 실패하지 않게 처리했습니다
+- keyword cloud는 선택된 keyword 수를 기준으로 open slot만큼 `maxSuggestions`를 줄여 요청합니다
+- recommendation package는 legacy flat story를 structured context로 변환하는 compatibility layer를 유지하고, provider 입력에서 structured/ranked context를 압축합니다
+- Gemini provider는 current node와 priority/source/role metadata를 포함한 structured prompt를 사용하고, selected keyword 중복, 문장형 label, 순수 감정/범주 label을 필터링합니다
+- heuristic fallback은 structured context anchor를 읽되 기존 seed keyword cloud 순서를 유지합니다
+- backend recommendation route는 structured context 최소 shape를 검증하고, request maxSuggestions와 서버 상한을 함께 clamp하며, cache key에 structuredContext/selectedKeywords/maxSuggestions를 반영합니다
+- malformed structured context와 open slot 0 처리를 backend route 테스트로 보강했습니다
+
+검증 결과:
+
+- recommendation/frontend/backend typecheck 통과
+- recommendation/frontend/backend changed-file lint 통과
+- frontend `WorkspaceShell.test.tsx` + recommendation request test 통과
+- recommendation provider/context 관련 Vitest 통과
+- backend recommendation route integration/structured tests 통과
+- recommendation/backend/frontend build smoke 통과
+- `git diff --check` 통과
+
+## detail-038 / Structured Context 중요도 랭킹 및 압축 계획
+
+이 섹션은 `detail-037`의 Structured Context를 단순 snapshot 추출이 아니라 중요도 기반 입력 데이터로 만드는 계획입니다.
+
+핵심 결정:
+
+- snapshot은 원본 상태 묶음일 뿐이고, Gemini에 들어갈 context는 중요도 점수와 source metadata를 가진 별도 구조여야 합니다
+- current node가 항상 최상위 신호입니다
+- parent/child/direct edge, same-lane neighbor, major lane flow, object, episode metadata는 각각 다른 priority를 가집니다
+- token budget이 부족하면 priority가 낮은 항목부터 자릅니다
+- RAG나 요약 저장 전에 먼저 deterministic scoring + compression을 구현합니다
+
+### 38.1 Frontend
+
+목표:
+
+- `frontend/src/recommendation/request.ts`에서 snapshot을 바로 flat story로 바꾸지 않고, ranking 대상 context item으로 변환합니다
+- 각 context item에는 `source`, `role`, `priorityScore`, `distance`, `text`, `keywords`, `objectIds`, `canvasY`, `orderIndex`를 가능한 범위에서 포함합니다
+- 최종 request는 priority 순으로 정렬된 structured context를 포함합니다
+
+권장 context item shape:
+
+```ts
+interface RankedRecommendationContextItem {
+  id: string;
+  source: "node" | "object" | "episode" | "flow";
+  role:
+    | "current"
+    | "parent"
+    | "child"
+    | "same-lane-before"
+    | "same-lane-after"
+    | "major-flow"
+    | "attached-object"
+    | "episode-objective"
+    | "episode-endpoint";
+  priorityScore: number;
+  distance?: number;
+  level?: "major" | "minor" | "detail";
+  text: string;
+  keywords: string[];
+  canvasY?: number;
+  orderIndex?: number;
+}
+```
+
+초기 priority 기준:
+
+- current node text/keywords: `1.0`
+- selected keywords: `0.98`
+- attached objects: `0.9`
+- parent node: `0.88`
+- direct child nodes: `0.78`
+- same-lane nearest before/after: `0.72`
+- major lane flow near current node: `0.68`
+- episode endpoint: `0.62`
+- episode objective: `0.58`
+- far major lane flow: `0.45`
+
+세부 규칙:
+
+- current node text는 압축하지 않습니다
+- parent/child node는 headline 또는 짧은 summary로 압축합니다
+- major lane flow는 전체를 보내되, 긴 텍스트는 짧게 자르고 current node 주변 major node에 가중치를 더 줍니다
+- object는 current node에 붙은 object만 1차에 포함합니다
+- 같은 episode의 모든 object를 보내지 않습니다
+- empty current node에서는 parent/child/episode endpoint priority를 상대적으로 올립니다
+
+검증:
+
+- current node는 항상 context 1순위입니다
+- parent/child는 same-lane far node보다 높은 priority입니다
+- attached object는 unrelated object보다 높은 priority입니다
+- major lane flow는 `canvasY` 순서를 유지합니다
+- token budget 초과 시 낮은 priority item부터 제거됩니다
+
+### 38.2 Recommendation Package
+
+목표:
+
+- `RecommendationContext`가 ranked structured items를 보존합니다
+- Gemini prompt는 단순 문자열 anchors 대신 priority별 섹션을 사용합니다
+- Gemini에게 “높은 priority를 먼저 반영하고, 낮은 priority는 배경으로만 참고하라”고 명시합니다
+
+Prompt 구조:
+
+1. Task and output rules
+2. Current node
+3. High priority context
+4. Medium priority context
+5. Major lane flow
+6. Episode background
+7. Selected keywords / do-not-duplicate list
+8. JSON output contract
+
+검증:
+
+- provider test에서 prompt payload에 priority/source/role이 포함되는지 확인합니다
+- selected keyword duplicate는 validation에서 제거합니다
+- sentence-like label과 pure emotion label은 validation 또는 prompt rule로 차단합니다
+
+### 38.3 Backend
+
+목표:
+
+- backend는 ranked structured context를 신뢰하되, max size와 malformed item을 검증합니다
+- cache key에는 ranked context의 stable subset을 포함합니다
+- DB schema 변경은 하지 않습니다
+
+검증:
+
+- priorityScore가 없는 item은 reject 또는 기본값 보정 중 하나로 정책을 고정합니다
+- 너무 긴 context text는 route 또는 recommendation context builder에서 잘립니다
+- cache key는 item 순서/priority/source/role/text/key fields를 반영합니다
+
+### 38.4 Summary/RAG와의 관계
+
+이 작업은 RAG의 대체가 아니라 RAG 이전 단계입니다.
+
+- 지금 필요한 것은 “현재 화면 맥락의 우선순위 반영”입니다
+- RAG는 “현재 prompt에 직접 넣을 수 없는 과거 장면 검색”이 필요해질 때 도입합니다
+- summary 저장은 priority item의 source가 너무 커질 때 materialized summary로 확장합니다
+- fine-tuning은 context ranking 문제를 해결하지 못하므로 여기서는 사용하지 않습니다
+
+### 38.5 결정
+
+채택합니다.
+
+`detail-037`은 request-time structured context 도입이고, `detail-038`은 그 context에 priority/ranking/compression 정책을 부여하는 항목입니다.
+이 순서로 가야 snapshot이 단순 데이터 덤프가 아니라 추천 품질을 좌우하는 입력 구조가 됩니다.
+
+## detail-039 / detail-029 2차 Lane Layout Persistence 검토 계획
+
+이 섹션은 `detail-029`의 2차 검토 항목을 별도 추적하기 위한 계획입니다.
+
+현재 상태:
+
+- `detail-029` 1차는 구현되었습니다
+- lane을 `node` / `spacer` block 배열로 계산하는 frontend 내부 모델이 들어갔습니다
+- `CanvasLaneSpacer`와 lane layout helper가 추가되었습니다
+- 저장 모델은 기존 `canvasX`, `canvasY`, `orderIndex`, `parentId`를 유지했습니다
+- `detail-030`에서 node size인 `canvasWidth`, `canvasHeight` 저장은 별도 DB 항목으로 구현되었습니다
+- 하지만 lane array 자체 또는 spacer block 자체를 canonical persistence에 저장하는 2차는 아직 하지 않았습니다
+
+### 39.1 2차의 정확한 의미
+
+`detail-029`의 2차는 다음 중 하나를 결정하는 작업입니다.
+
+1. lane array/spacer는 계속 frontend 계산 모델로 유지합니다
+2. lane layout state를 canonical persistence에 저장합니다
+3. spacer 자체는 저장하지 않고, 계산에 필요한 추가 힌트만 저장합니다
+
+현재까지의 실제 구현은 1번에 가깝습니다.
+`detail-030`은 3번의 일부인 node size 저장만 해결했습니다.
+
+### 39.2 Frontend
+
+검토할 항목:
+
+- 현재 lane array helper가 node 사이 빈공간을 충분히 안정적으로 복원하는지 확인합니다
+- node drag/drop 이후 `canvasY`와 spacer 계산이 새로고침 후에도 동일한지 확인합니다
+- node size DB 저장 이후 spacer height 계산이 충분히 일관적인지 확인합니다
+- 같은 lane 내 node reorder와 cross-lane move가 layout-only spacer를 망가뜨리지 않는지 확인합니다
+
+가능한 2차 frontend 작업:
+
+- lane layout debug snapshot helper 추가
+- lane layout 계산 결과를 테스트에서 더 직접 검증
+- drop 후 `node + spacer + node` 구조가 의도대로 유지되는 regression 추가
+- spacer height가 너무 작거나 큰 경우의 clamp 정책 정리
+
+### 39.3 Backend
+
+현재 결정:
+
+- 바로 schema를 바꾸지 않습니다
+- lane array/spacer 자체 저장은 아직 보류합니다
+
+저장 구조를 바꾸려면 필요한 것:
+
+- shared type 변경
+- backend persistence schema/API 변경
+- MySQL migration 또는 bootstrap/backfill
+- file persistence compatibility
+- frontend old snapshot compatibility
+- Version Control gate
+- human approval
+
+저장 후보:
+
+1. `cloud_nodes`에 `lane_slot_index`, `lane_gap_after` 같은 최소 힌트 추가
+2. episode-level layout table 또는 JSON column에 lane layout snapshot 저장
+3. spacer를 entity로 저장하지 않고 node size + canvasY만 계속 사용
+
+권장:
+
+- 지금 당장 1번/2번으로 가지 않습니다
+- 먼저 현재 `detail-029 + detail-030` 조합으로도 순간이동/끌려옴 문제가 남는지 재현 케이스를 모읍니다
+- 문제가 계속되면 `lane_gap_after` 같은 최소 힌트 방식부터 검토합니다
+
+### 39.4 판단 기준
+
+2차 저장 구조 변경을 시작할 조건:
+
+- 새로고침/계정 전환/다른 브라우저에서 같은 node 배치가 반복적으로 달라집니다
+- node size 저장 후에도 spacer 계산이 흔들립니다
+- drag/drop 직후와 reload 후의 lane block 구조가 다릅니다
+- 기존 `canvasY` 기반 모델로는 sibling 보존을 안정화할 수 없습니다
+
+보류할 조건:
+
+- 현재 node size 저장 이후 reload 배치가 안정적입니다
+- drag/drop regression에서 node/spacer 구조가 유지됩니다
+- 사용자 체감 오류가 frontend 계산 보정으로 해결됩니다
+
+### 39.5 결정
+
+현재는 보류합니다.
+
+`detail-029` 2차는 미구현 상태가 맞습니다.
+다만 `detail-030`으로 node size 저장은 이미 분리 구현되었으므로, 다음 판단은 lane array/spacer 자체 저장이 정말 필요한지 검증한 뒤 진행합니다.

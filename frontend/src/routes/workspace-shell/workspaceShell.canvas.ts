@@ -159,6 +159,30 @@ export function computeCanvasAutoScrollVelocity(params: {
 
   return Math.ceil(maxVelocity * bottomRatio);
 }
+
+// 이 함수는 브라우저에서 실제로 보이는 캔버스 스크롤 기준선을 계산합니다.
+export function resolveVisibleCanvasAutoScrollBounds(params: {
+  browserViewportBottom: number;
+  browserViewportTop?: number;
+  viewportBottom: number;
+  viewportTop: number;
+}) {
+  const browserViewportTop = params.browserViewportTop ?? 0;
+  const visibleTop = Math.max(params.viewportTop, browserViewportTop);
+  const visibleBottom = Math.min(params.viewportBottom, params.browserViewportBottom);
+
+  if (visibleBottom <= visibleTop) {
+    return {
+      viewportBottom: visibleTop,
+      viewportTop: visibleTop
+    };
+  }
+
+  return {
+    viewportBottom: visibleBottom,
+    viewportTop: visibleTop
+  };
+}
 export function rectanglesOverlap(
   leftPlacement: { x: number; y: number },
   leftSize: NodeSize,

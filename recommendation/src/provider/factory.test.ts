@@ -23,6 +23,122 @@ function createContext(overrides: Partial<RecommendationContext> = {}): Recommen
   };
 }
 
+// Gemini structured context 테스트용 컨텍스트를 생성합니다.
+function createStructuredContext(overrides: Partial<RecommendationContext> = {}) {
+  return createContext({
+    maxSuggestions: 4,
+    nodeText: "Mother notices the hesitation",
+    selectedKeywords: ["already chosen"],
+    structuredContext: {
+      currentNode: {
+        canvasY: 180,
+        id: "minor-current",
+        keywords: ["pressure"],
+        level: "minor",
+        orderIndex: 2,
+        role: "current",
+        text: "Mother notices the hesitation"
+      },
+      directConnections: [
+        {
+          canvasY: 100,
+          id: "major-parent",
+          keywords: ["meeting"],
+          level: "major",
+          orderIndex: 1,
+          role: "parent",
+          text: "Cafe meeting"
+        }
+      ],
+      episodeContext: {
+        endpoint: "Mother asks the lead to leave.",
+        objective: "Bridge the cafe meeting to the rejection endpoint.",
+        title: "Episode 7"
+      },
+      language: "en",
+      majorLaneFlow: [
+        {
+          canvasY: 100,
+          id: "major-parent",
+          keywords: ["meeting"],
+          text: "Cafe meeting"
+        },
+        {
+          canvasY: 420,
+          id: "major-end",
+          keywords: ["refusal"],
+          text: "Doorway refusal"
+        }
+      ],
+      maxSuggestions: 4,
+      nodeLevel: "minor",
+      objectContext: [
+        {
+          category: "person",
+          id: "object-mother",
+          name: "Mother",
+          summary: "Authority pressure in the cafe."
+        }
+      ],
+      rankedItems: [
+        {
+          canvasY: 180,
+          id: "current:minor-current",
+          keywords: ["pressure"],
+          level: "minor",
+          orderIndex: 2,
+          priorityScore: 1,
+          role: "current",
+          source: "node",
+          text: "Mother notices the hesitation"
+        },
+        {
+          canvasY: 100,
+          distance: 80,
+          id: "parent:major-parent",
+          keywords: ["meeting"],
+          level: "major",
+          orderIndex: 1,
+          priorityScore: 0.88,
+          role: "parent",
+          source: "node",
+          text: "Cafe meeting"
+        },
+        {
+          id: "attached-object:object-mother",
+          keywords: ["Mother"],
+          objectIds: ["object-mother"],
+          priorityScore: 0.9,
+          role: "attached-object",
+          source: "object",
+          text: "Mother: Authority pressure in the cafe."
+        },
+        {
+          canvasY: 420,
+          distance: 240,
+          id: "major-flow:major-end",
+          keywords: ["refusal"],
+          level: "major",
+          priorityScore: 0.68,
+          role: "major-flow",
+          source: "flow",
+          text: "Doorway refusal"
+        },
+        {
+          id: "episode-endpoint:episode-7",
+          keywords: [],
+          priorityScore: 0.62,
+          role: "episode-endpoint",
+          source: "episode",
+          text: "Mother asks the lead to leave."
+        }
+      ],
+      selectedKeywords: ["already chosen"]
+    },
+    ...overrides
+  });
+}
+
 describe("recommendation provider factory", () => {
   it("returns heuristic provider for heuristic option", async () => {
     const provider = createRecommendationProvider({ provider: "heuristic" });
@@ -290,6 +406,65 @@ describe("gemini provider", () => {
     await expect(provider.requestKeywords(createContext())).resolves.toEqual([
       { label: "cue one", reason: "one" },
       { label: "cue two", reason: "two" }
+    ]);
+  });
+
+  it("sends structured context sections and open slot count to Gemini", async () => {
+    const generateContent = vi.fn(async () => ({
+      text: JSON.stringify({
+        suggestions: [
+          { label: "doorway refusal", reason: "Connects the scene to the endpoint." }
+        ]
+      })
+    }));
+    const provider = createGeminiRecommendationProvider({
+      apiKey: "gemini-key",
+      client: {
+        models: {
+          generateContent
+        }
+      },
+      maxSuggestions: 9,
+      model: "gemini-2.5-flash"
+    });
+
+    await provider.requestKeywords(createStructuredContext());
+
+    const request = generateContent.mock.calls.at(0)?.at(0) as
+      | { contents?: string }
+      | undefined;
+
+    expect(request?.contents).toContain("Current node - strongest signal");
+    expect(request?.contents).toContain("priority=1.00, source=node, role=current");
+    expect(request?.contents).toContain("priority=0.90, source=object, role=attached-object");
+    expect(request?.contents).toContain("Mother notices the hesitation");
+    expect(request?.contents).toContain("Major lane flow - keep canvasY order");
+    expect(request?.contents).toContain("Doorway refusal");
+    expect(request?.contents).toContain("Provide up to 4 suggestions");
+  });
+
+  it("filters selected keyword duplicates and sentence-like labels from Gemini output", async () => {
+    const provider = createGeminiRecommendationProvider({
+      apiKey: "gemini-key",
+      client: {
+        models: {
+          generateContent: vi.fn(async () => ({
+            text: JSON.stringify({
+              suggestions: [
+                { label: "already chosen", reason: "Duplicate selected keyword." },
+                { label: "The stranger appears and changes everything.", reason: "Sentence." },
+                { label: "doorway refusal", reason: "Connects the scene to the endpoint." }
+              ]
+            })
+          }))
+        }
+      },
+      maxSuggestions: 4,
+      model: "gemini-2.5-flash"
+    });
+
+    await expect(provider.requestKeywords(createStructuredContext())).resolves.toEqual([
+      { label: "doorway refusal", reason: "Connects the scene to the endpoint." }
     ]);
   });
 

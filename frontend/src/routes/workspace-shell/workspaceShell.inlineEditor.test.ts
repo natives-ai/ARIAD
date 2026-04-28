@@ -137,6 +137,9 @@ describe("workspaceShell.inlineEditor getObjectMentionCreateCandidate", () => {
 
   it("hides the candidate for blank, long, or exact existing names", () => {
     expect(getObjectMentionCreateCandidate("   ", [])).toBeNull();
+    expect(getObjectMentionCreateCandidate("hero", [
+      { name: "Hero" }
+    ])).toBeNull();
     expect(getObjectMentionCreateCandidate("Heroine's Mother", [
       { name: "heroine's mother" }
     ])).toBeNull();

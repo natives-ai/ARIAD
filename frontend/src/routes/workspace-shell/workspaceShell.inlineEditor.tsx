@@ -83,6 +83,14 @@ export function extractDisplayText(value: string) {
   return stripInlineFormattingMarkers(value).trim();
 }
 
+// 오브젝트 이름 비교용 정규화 키를 만듭니다.
+export function normalizeObjectMentionMatchName(value: string) {
+  return stripInlineFormattingMarkers(value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 export function extractObjectMentionNames(value: string) {
   const matches = value.matchAll(
     new RegExp(
@@ -100,7 +108,7 @@ export function extractObjectMentionNames(value: string) {
       continue;
     }
 
-    const normalized = nextName.toLowerCase();
+    const normalized = normalizeObjectMentionMatchName(nextName);
 
     if (uniqueNames.has(normalized)) {
       continue;
@@ -171,9 +179,9 @@ export function getObjectMentionCreateCandidate(
     return null;
   }
 
-  const normalizedName = name.toLowerCase();
+  const normalizedName = normalizeObjectMentionMatchName(name);
   const hasExactObject = objects.some(
-    (object) => object.name.trim().toLowerCase() === normalizedName
+    (object) => normalizeObjectMentionMatchName(object.name) === normalizedName
   );
 
   if (hasExactObject) {
@@ -209,10 +217,10 @@ export function getClosedObjectWordQuery(
   const match = [...objects]
     .sort((left, right) => right.name.length - left.name.length)
     .find((object) => {
-      const objectName = object.name.toLowerCase();
+      const objectNameForMatch = normalizeObjectMentionMatchName(object.name);
       const lowerBefore = comparisonBefore.toLowerCase();
 
-      if (!lowerBefore.endsWith(objectName)) {
+      if (!lowerBefore.endsWith(objectNameForMatch)) {
         return false;
       }
 
@@ -480,7 +488,7 @@ export function removeInlineSelectionWithTokenBoundaries(
 
 export function getObjectMentionSignature(value: string) {
   return extractObjectMentionNames(value)
-    .map((name) => name.toLowerCase())
+    .map(normalizeObjectMentionMatchName)
     .sort()
     .join("\u0001");
 }

@@ -2888,3 +2888,93 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Dragging a node or rewire line near the visible canvas top/bottom now scrolls the canvas vertically and keeps the live preview in sync.
 - Warnings / blockers: Windows sandbox still blocks some Vite config loads with `spawn EPERM`; affected build/focused Vitest commands were rerun outside sandbox. Horizontal auto-scroll remains out of scope per `detail-034`.
 - Approval needed: `none`
+
+### 2026-04-28 / loop-194
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-036`. Added a shared object mention match-name normalizer and applied it to inline object creation candidate checks, mention signatures, existing-object lookup during node sync, and suggestion filtering. The node editor now treats `Hero` and `hero` as the same object for `@` mention search/create behavior, so casing-only differences cannot produce a new create option.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint (pass); focused object mention Vitest run (sandbox `spawn EPERM`, rerun outside sandbox pass, 3 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 72 tests).
+- Result: `@hero` resolves against existing `Hero` instead of offering duplicate object creation.
+- Warnings / blockers: Backend uniqueness was not changed; this patch covers the node text editor mention path only.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-195
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Revised the `detail-034` auto-scroll edge policy after the user's clarification. Auto-scroll now clips the canvas viewport rect to the browser-visible viewport before computing top/bottom edge velocity, so a drag near the browser screen bottom can scroll the canvas even when the canvas element itself continues below the visible screen. The patch keeps scrolling scoped to the canvas viewport and does not move document/window scroll.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (pass, 8 tests); focused `WorkspaceShell.test.tsx` browser-bottom auto-scroll regression (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 63 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Node/rewire drag auto-scroll now responds to the visible browser top/bottom boundary, not only the raw canvas viewport boundary.
+- Warnings / blockers: Horizontal auto-scroll remains out of scope. Existing dirty inline-editor files are unrelated `detail-036` work and were not touched by this correction.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-196
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`, read-only review of `C:\Users\rladu\Downloads\GEMINI_PROVIDER_RECOMMENDATION_PRD.md`, `recommendation/src/contracts/index.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/heuristic.ts`, `frontend/src/recommendation/request.ts`, `backend/src/recommendation/routes.ts`
+- What changed: Planned `detail-037 / Gemini Provider Structured Context 추천 품질 개선 계획` from the handoff PRD. The plan keeps the `KeywordSuggestion { label, reason }` response shape, moves the recommendation request path from flat anchors toward structured current/direct/flow/episode/object context, and chooses request-time structured context assembly for the first implementation instead of persistent summaries, RAG, or fine-tuning.
+- Tests run: planning update and read-only code inspection only
+- Result: Gemini recommendation work is scoped as a contract/context/provider migration with frontend request assembly and backend route/cache adjustments, while summary storage/RAG remain deferred until cross-episode or large-project context becomes first-class.
+- Warnings / blockers: Any contract change must update frontend, backend, recommendation package, standalone client, and tests together. Folder context remains deferred because sidebar folders are currently frontend-local rather than shared/backend persistence.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-197
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Corrected the `detail-034` browser-edge auto-scroll behavior after the user's follow-up. The auto-scroll loop now computes separate canvas and window vertical velocities. When a node or rewire drag reaches the browser viewport top/bottom, document/window scroll advances; when the pointer is also near the visible canvas edge, the canvas viewport scrollTop advances as before. Preview recomputation still runs after both scroll updates using the current stage rect.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (pass, 8 tests); focused `WorkspaceShell.test.tsx` browser-bottom auto-scroll regression (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 63 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Dragging near the browser screen edge now moves the page window and keeps canvas auto-scroll/preview sync intact.
+- Warnings / blockers: Horizontal auto-scroll remains out of scope. Existing dirty inline-editor/detail-037 files are unrelated to this correction and were not modified.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-198
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Clarified the user's question about `detail-029` phase 2. Moved the lane-layout follow-up to `detail-039 / detail-029 2차 Lane Layout Persistence 검토 계획` to explicitly track that phase 1 lane-array/spacer rendering was implemented, `detail-030` separately implemented node size persistence, but lane array/spacer canonical persistence itself remains unimplemented and intentionally deferred.
+- Tests run: planning update and read-only code inspection only
+- Result: The remaining `detail-029` phase 2 decision is now visible as a separate follow-up gate: continue frontend-calculated lane layout unless reload/cross-device drag stability proves that additional layout persistence is necessary.
+- Warnings / blockers: Persisting lane arrays or spacer state would require shared contract/schema/API changes, compatibility work, Version Control gate review, and human approval.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-199
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Added `detail-038 / Structured Context 중요도 랭킹 및 압축 계획` after the user clarified that snapshot-derived context is too flat without importance. The new plan defines ranked context items with `source`, `role`, `priorityScore`, `distance`, and compression policy so Gemini receives prioritized current-node, direct-connection, same-lane, major-flow, object, and episode context instead of a simple snapshot dump.
+- Tests run: planning update only
+- Result: `detail-037` now covers request-time structured context, while `detail-038` covers ranking, token-budget trimming, and prompt priority semantics.
+- Warnings / blockers: This remains contract/context work; implementation must update frontend request assembly, recommendation context types, provider prompts, backend validation/cache, and tests together.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-200
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `frontend/src/recommendation/request.ts`, `frontend/src/recommendation/request.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `recommendation/src/contracts/index.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/heuristic.ts`, `recommendation/src/provider/factory.test.ts`, `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-037`. Frontend keyword/sentence recommendation requests now send request-time structured context with current node, direct links, major lane flow sorted by canvasY, episode/object context, language, selected keywords, open-slot `maxSuggestions`, and ranked priority items. Recommendation context conversion preserves legacy story compatibility, Gemini now receives structured priority/source sections and filters selected duplicates, sentence-like labels, and pure emotion/category labels, while heuristic fallback reads structured anchors but keeps the existing seed keyword order. Backend route handling validates the structured shape, clamps request max suggestions against server config, and includes structured context, selected keywords, and max suggestions in keyword cache keys.
+- Tests run: `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/backend typecheck` (pass); recommendation lint (pass); changed-file frontend ESLint (pass); changed-file backend ESLint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx src/recommendation/request.test.ts` (outside sandbox pass, 65 tests); `corepack yarn --cwd recommendation run -T vitest run src/provider/factory.test.ts src/orchestration/index.test.ts src/config/env.test.ts` (outside sandbox pass, 30 tests); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts src/recommendation/routes.integration.test.ts` (outside sandbox pass, 13 tests); recommendation/backend/frontend build smoke (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Keyword recommendation requests now carry enough structured current-screen context for Gemini without adding summary storage, RAG, fine-tuning, schema changes, or changing the public `KeywordSuggestion { label, reason }` response shape.
+- Warnings / blockers: Frontend and recommendation runtime tests needed outside-sandbox execution because Windows worker spawning still fails with `spawn EPERM`. Existing unrelated dirty canvas/inline-editor files remain in the worktree and were not reverted.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-201
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `recommendation/src/contracts/index.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/heuristic.ts`, `recommendation/src/provider/factory.test.ts`, `frontend/src/recommendation/request.ts`, `frontend/src/recommendation/request.test.ts`, `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `PLANS.md`
+- What changed: Implemented `detail-038`. Added ranked structured context items to the shared contract, frontend request assembly, recommendation context normalization, Gemini prompt sections, provider cache key material, heuristic anchors, and backend route validation. Ranking now preserves current-node priority, selected keyword priority metadata, direct/object/episode/major-flow roles, distance/canvas metadata, and low-priority compression before provider execution.
+- Tests run: `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); `corepack yarn workspace @scenaairo/backend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn --cwd frontend run -T vitest run src/recommendation/request.test.ts` (outside sandbox pass, 1 test); `corepack yarn workspace @scenaairo/recommendation test` (sandbox `spawn EPERM`, rerun outside sandbox pass, 24 tests); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.integration.test.ts` (outside sandbox pass, 10 tests); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 3 tests); `corepack yarn workspace @scenaairo/backend test` (outside sandbox pass, 19 tests); changed-file ESLint for frontend recommendation files, recommendation package lint, and backend recommendation route files (pass); `corepack yarn build` (sandbox `spawn EPERM`, rerun outside sandbox pass)
+- Result: Gemini and heuristic recommendation flows now receive prioritized ranked context instead of treating snapshot-derived context as a flat dump. Backend rejects malformed ranked items, including non-object array entries, and no DB schema changes were needed.
+- Warnings / blockers: Windows sandbox still blocks some Vite/Vitest child process spawning with `spawn EPERM`; affected validation was rerun outside sandbox. Existing unrelated dirty files from earlier detail work remain in the worktree and were not reverted.
+- Approval needed: `none`
+
+### 2026-04-28 / loop-202
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `PLANS.md`
+- What changed: Changed node delete behavior before the next phase. The canvas delete action now computes each direct child's replacement parent with the same visual Y-nearest upper-lane rule used for creation, then calls a new persistence controller path that deletes only the selected node and rewires direct children instead of deleting the whole subtree. The controller validates replacement parents against project, episode, level, and cycle rules, and nulls temporary-drawer source references when the deleted node was the source.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts -t "deletes only the selected parent|reconnects same-lane"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 2 tests); `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (outside sandbox pass, 29 tests); `corepack yarn --cwd frontend run -T eslint src/persistence/controller.ts src/persistence/controller.test.ts src/routes/WorkspaceShell.tsx` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass).
+- Result: Deleting a parent no longer removes its child chain. Direct children remain on canvas and reconnect to the nearest valid upper-lane node; descendants below those children keep their existing parent links.
+- Warnings / blockers: No DB/schema change was made. Existing dirty recommendation, auto-scroll, and inline-editor files are unrelated to this deletion fix and were not reverted.
+- Approval needed: `none`

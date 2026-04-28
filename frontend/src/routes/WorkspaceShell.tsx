@@ -31,6 +31,7 @@ import {
 import { LocalPersistenceStore } from "../persistence/localStore";
 import { StandaloneCloudPersistenceClient } from "../persistence/standaloneCloudClient";
 import {
+  collectDescendantIds,
   collectSubtreeNodes,
   isDescendant,
   sortNodesByOrder
@@ -81,7 +82,8 @@ import {
   snapMajorNodePlacementToTimelineAnchors,
   resolveNearestParentIdByY,
   buildNodeConnectionPath,
-  computeCanvasAutoScrollVelocity
+  computeCanvasAutoScrollVelocity,
+  resolveVisibleCanvasAutoScrollBounds
 } from "./workspace-shell/workspaceShell.canvas";
 import {
   extractInlineKeywords,
@@ -94,9 +96,11 @@ import {
   getClosedObjectWordQuery,
   buildDisplayedKeywordSuggestions,
   getObjectMentionCreateCandidate,
+  normalizeObjectMentionMatchName,
   toggleInlineKeywordToken,
   getObjectMentionSignature,
-  deriveNodeContentMode
+  deriveNodeContentMode,
+  keywordCloudSlotCount
 } from "./workspace-shell/workspaceShell.inlineEditor";
 import { cloneCopiedNodes } from "./workspace-shell/workspaceShell.node";
 import {
@@ -1060,6 +1064,83 @@ export function WorkspaceShell() {
       };
     }
 
+    function getVisibleCanvasAutoScrollBounds(viewport: HTMLElement) {
+      const viewportRect = viewport.getBoundingClientRect();
+
+      return resolveVisibleCanvasAutoScrollBounds({
+        browserViewportBottom:
+          window.innerHeight || document.documentElement.clientHeight || viewportRect.bottom,
+        viewportBottom: viewportRect.bottom,
+        viewportTop: viewportRect.top
+      });
+    }
+
+    function getBrowserAutoScrollBottom(viewport: HTMLElement) {
+      return window.innerHeight || document.documentElement.clientHeight || viewport.getBoundingClientRect().bottom;
+    }
+
+    function getCanvasAutoScrollVelocity(
+      viewport: HTMLElement,
+      pointerClientY: number
+    ) {
+      const autoScrollBounds = getVisibleCanvasAutoScrollBounds(viewport);
+
+      return computeCanvasAutoScrollVelocity({
+        pointerClientY,
+        viewportBottom: autoScrollBounds.viewportBottom,
+        viewportTop: autoScrollBounds.viewportTop
+      });
+    }
+
+    function getWindowAutoScrollVelocity(
+      viewport: HTMLElement,
+      pointerClientY: number
+    ) {
+      return computeCanvasAutoScrollVelocity({
+        pointerClientY,
+        viewportBottom: getBrowserAutoScrollBottom(viewport),
+        viewportTop: 0
+      });
+    }
+
+    function scrollWindowByVelocity(scrollVelocity: number) {
+      if (scrollVelocity === 0) {
+        return;
+      }
+
+      const scrollingElement =
+        document.scrollingElement ?? document.documentElement ?? document.body;
+
+      if (!scrollingElement) {
+        return;
+      }
+
+      const currentTop = window.scrollY || scrollingElement.scrollTop || 0;
+      const browserHeight =
+        window.innerHeight ||
+        document.documentElement.clientHeight ||
+        scrollingElement.clientHeight ||
+        0;
+      const scrollHeight = Math.max(
+        scrollingElement.scrollHeight,
+        document.documentElement.scrollHeight,
+        document.body?.scrollHeight ?? 0
+      );
+      const maxScrollTop = Math.max(0, scrollHeight - browserHeight);
+      const nextTop = Math.max(0, Math.min(currentTop + scrollVelocity, maxScrollTop));
+
+      if (nextTop === currentTop) {
+        return;
+      }
+
+      scrollingElement.scrollTop = nextTop;
+      document.documentElement.scrollTop = nextTop;
+
+      if (document.body) {
+        document.body.scrollTop = nextTop;
+      }
+    }
+
     function runCanvasAutoScrollFrame() {
       const autoScrollState = canvasAutoScrollStateRef.current;
       const viewport = canvasViewportRef.current;
@@ -1075,22 +1156,26 @@ export function WorkspaceShell() {
         return;
       }
 
-      const viewportRect = viewport.getBoundingClientRect();
-      const scrollVelocity = computeCanvasAutoScrollVelocity({
-        pointerClientY: autoScrollState.pointerClientY,
-        viewportBottom: viewportRect.bottom,
-        viewportTop: viewportRect.top
-      });
+      const canvasScrollVelocity = getCanvasAutoScrollVelocity(
+        viewport,
+        autoScrollState.pointerClientY
+      );
+      const windowScrollVelocity = getWindowAutoScrollVelocity(
+        viewport,
+        autoScrollState.pointerClientY
+      );
 
-      if (scrollVelocity === 0) {
+      if (canvasScrollVelocity === 0 && windowScrollVelocity === 0) {
         stopCanvasAutoScroll();
         return;
       }
 
+      scrollWindowByVelocity(windowScrollVelocity);
+
       const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
       viewport.scrollTop = Math.max(
         0,
-        Math.min(viewport.scrollTop + scrollVelocity, maxScrollTop)
+        Math.min(viewport.scrollTop + canvasScrollVelocity, maxScrollTop)
       );
 
       const pointer = {
@@ -1127,12 +1212,8 @@ export function WorkspaceShell() {
         return;
       }
 
-      const viewportRect = viewport.getBoundingClientRect();
-      const scrollVelocity = computeCanvasAutoScrollVelocity({
-        pointerClientY: pointer.clientY,
-        viewportBottom: viewportRect.bottom,
-        viewportTop: viewportRect.top
-      });
+      const canvasScrollVelocity = getCanvasAutoScrollVelocity(viewport, pointer.clientY);
+      const windowScrollVelocity = getWindowAutoScrollVelocity(viewport, pointer.clientY);
 
       canvasAutoScrollStateRef.current = {
         ...canvasAutoScrollStateRef.current,
@@ -1141,7 +1222,7 @@ export function WorkspaceShell() {
         pointerClientY: pointer.clientY
       };
 
-      if (scrollVelocity === 0) {
+      if (canvasScrollVelocity === 0 && windowScrollVelocity === 0) {
         stopCanvasAutoScroll();
         return;
       }
@@ -2841,12 +2922,12 @@ export function WorkspaceShell() {
     const existingObjectIdsByName = new Map(
       liveSnapshot.objects
         .filter((object) => scopeEpisodeIds.has(object.episodeId))
-        .map((object) => [object.name.toLowerCase(), object.id])
+        .map((object) => [normalizeObjectMentionMatchName(object.name), object.id])
     );
     const nextObjectIds: string[] = [];
 
     for (const mentionName of mentionNames) {
-      const normalizedName = mentionName.toLowerCase();
+      const normalizedName = normalizeObjectMentionMatchName(mentionName);
       let objectId = existingObjectIdsByName.get(normalizedName) ?? null;
 
       if (!objectId) {
@@ -3247,13 +3328,52 @@ export function WorkspaceShell() {
     setDragPayload(null);
   }
 
+  // 이 함수는 삭제될 노드의 직접 자식을 가장 가까운 상위 레인 부모로 연결합니다.
+  function getChildReconnectParentIdsForDelete(nodeId: string) {
+    const remainingNodes = orderedNodes.filter((node) => node.id !== nodeId);
+    const remainingNodesById = new Map(remainingNodes.map((node) => [node.id, node]));
+    const remainingVisibleNodes = remainingNodes.filter(
+      (node) => !hasCollapsedAncestor(node, remainingNodesById)
+    );
+    const childParentIds = new Map<string, string | null>();
+
+    for (const childNode of orderedNodes.filter((node) => node.parentId === nodeId)) {
+      const childSize = getNodeSize(effectiveNodeSizes, childNode.id);
+      const childPlacement =
+        nodePlacements.get(childNode.id) ??
+        getFallbackNodePlacementWithinBounds(
+          childNode,
+          orderedNodes,
+          laneCanvasBounds,
+          childSize
+        );
+      const excludedNodeIds = collectDescendantIds(orderedNodes, childNode.id);
+
+      excludedNodeIds.add(nodeId);
+      childParentIds.set(
+        childNode.id,
+        resolveNearestParentIdByY({
+          excludedNodeIds,
+          level: childNode.level,
+          nodePlacements,
+          nodes: remainingVisibleNodes,
+          nodeSizes: effectiveNodeSizes,
+          targetCenterY: childPlacement.y + childSize.height / 2
+        })
+      );
+    }
+
+    return childParentIds;
+  }
+
   // 이 함수는 노드 삭제 후 남은 major 기준으로 타임라인을 자연스럽게 줄입니다.
-  async function deleteNodeTreeAndAdjustCanvas(nodeId: string) {
-    const subtreeIds = new Set(collectSubtreeNodes(orderedNodes, nodeId).map((node) => node.id));
+  async function deleteNodeAndAdjustCanvas(nodeId: string) {
+    const deletedNodeIds = new Set([nodeId]);
+    const childParentIds = getChildReconnectParentIdsForDelete(nodeId);
 
-    await controller.deleteNodeTree(nodeId);
+    await controller.deleteNodeAndReconnectChildren(nodeId, childParentIds);
 
-    const remainingNodes = orderedNodes.filter((node) => !subtreeIds.has(node.id));
+    const remainingNodes = orderedNodes.filter((node) => !deletedNodeIds.has(node.id));
     const remainingNodesById = new Map(remainingNodes.map((node) => [node.id, node]));
     const remainingVisibleNodes = remainingNodes.filter(
       (node) => !hasCollapsedAncestor(node, remainingNodesById)
@@ -3379,7 +3499,10 @@ export function WorkspaceShell() {
 
     try {
       const response = await recommendationClient.getKeywordSuggestions(
-        createKeywordRecommendationRequest(snapshot, node, parentNode)
+        createKeywordRecommendationRequest(snapshot, node, parentNode, {
+          maxSuggestions: Math.max(0, keywordCloudSlotCount - nextSelectedKeywords.length),
+          selectedKeywords: nextSelectedKeywords
+        })
       );
 
       setKeywordSuggestions(response.suggestions);
@@ -3478,11 +3601,12 @@ export function WorkspaceShell() {
       : activeEpisodeObjects
           .filter((object) =>
             objectMentionQuery.mode === "word"
-              ? object.name.toLowerCase() === objectMentionQuery.query.trim().toLowerCase()
-              : objectMentionQuery.query.trim()
-                ? object.name
-                    .toLowerCase()
-                    .startsWith(objectMentionQuery.query.trim().toLowerCase())
+              ? normalizeObjectMentionMatchName(object.name) ===
+                normalizeObjectMentionMatchName(objectMentionQuery.query)
+              : normalizeObjectMentionMatchName(objectMentionQuery.query)
+                ? normalizeObjectMentionMatchName(object.name).startsWith(
+                    normalizeObjectMentionMatchName(objectMentionQuery.query)
+                  )
                 : true
           )
           .sort((left, right) => left.name.localeCompare(right.name))
@@ -5399,7 +5523,7 @@ export function WorkspaceShell() {
               </button>
               <button
                 onClick={() => {
-                  void deleteNodeTreeAndAdjustCanvas(deleteTarget.id);
+                  void deleteNodeAndAdjustCanvas(deleteTarget.id);
                   setDeleteTargetId(null);
                   setSelectedNodeId(null);
                   setRewireNodeId(null);

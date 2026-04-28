@@ -1239,6 +1239,84 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("deletes only the selected parent and reconnects direct children", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    await controller.createEpisode();
+    const majorAId = (await controller.createNode("major", 0))!;
+    const minorId = (await controller.createNode("minor", 1))!;
+    const detailId = (await controller.createNode("detail", 2))!;
+    const majorBId = (await controller.createNode("major", 3))!;
+
+    await controller.deleteNodeAndReconnectChildren(
+      majorAId,
+      new Map([[minorId, majorBId]])
+    );
+
+    const state = controller.getState()!;
+
+    expect(state.snapshot.nodes.map((node) => node.id)).toEqual([
+      minorId,
+      detailId,
+      majorBId
+    ]);
+    expect(state.snapshot.nodes.find((node) => node.id === majorAId)).toBeUndefined();
+    expect(state.snapshot.nodes.find((node) => node.id === minorId)?.parentId).toBe(
+      majorBId
+    );
+    expect(state.snapshot.nodes.find((node) => node.id === detailId)?.parentId).toBe(
+      minorId
+    );
+
+    controller.dispose();
+  });
+
+  it("reconnects same-lane direct children to a valid upper-lane parent on delete", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    await controller.createEpisode();
+    const majorAId = (await controller.createNode("major", 0))!;
+    const majorBId = (await controller.createNode("major", 1))!;
+    const minorAId = (await controller.createNode("minor", 1))!;
+    const minorBId = (await controller.createNode("minor", 3))!;
+
+    await controller.rewireNode(minorBId, minorAId);
+    await controller.deleteNodeAndReconnectChildren(
+      minorAId,
+      new Map([[minorBId, majorBId]])
+    );
+
+    const state = controller.getState()!;
+
+    expect(state.snapshot.nodes.find((node) => node.id === minorAId)).toBeUndefined();
+    expect(state.snapshot.nodes.find((node) => node.id === minorBId)?.parentId).toBe(
+      majorBId
+    );
+    expect(state.snapshot.nodes.find((node) => node.id === majorAId)?.parentId).toBeNull();
+
+    controller.dispose();
+  });
+
   it("keeps a rewired parent when the node is moved with preserved parent intent", async () => {
     const now = createClock();
     const storage = new MemoryStorage();

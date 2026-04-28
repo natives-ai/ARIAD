@@ -7,7 +7,8 @@ import {
   buildConnectionLines,
   computeCanvasAutoScrollVelocity,
   resolveNearestParentIdByY,
-  resolveNodeOverlapPlacement
+  resolveNodeOverlapPlacement,
+  resolveVisibleCanvasAutoScrollBounds
 } from "./workspaceShell.canvas";
 
 // 테스트용 노드 객체를 생성합니다.
@@ -68,6 +69,26 @@ describe("workspace shell canvas placement", () => {
         viewportTop: 0
       })
     ).toBe(24);
+  });
+
+  it("clips auto-scroll bounds to the visible browser viewport", () => {
+    const bounds = resolveVisibleCanvasAutoScrollBounds({
+      browserViewportBottom: 600,
+      viewportBottom: 1200,
+      viewportTop: 80
+    });
+
+    expect(bounds).toEqual({
+      viewportBottom: 600,
+      viewportTop: 80
+    });
+    expect(
+      computeCanvasAutoScrollVelocity({
+        pointerClientY: 592,
+        viewportBottom: bounds.viewportBottom,
+        viewportTop: bounds.viewportTop
+      })
+    ).toBe(22);
   });
 
   it("keeps overlap-resolved placement within the canvas bottom limit", () => {
