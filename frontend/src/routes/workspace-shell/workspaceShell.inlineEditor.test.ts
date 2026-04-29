@@ -4,21 +4,25 @@ import { describe, expect, it } from "vitest";
 import {
   buildDisplayedKeywordSuggestions,
   expandSelectionToObjectTokenBoundaries,
+  extractInlineKeywords,
   getInlineObjectTokenRanges,
   getObjectMentionCreateCandidate,
   getInlineKeywordToken,
+  getKeywordTokenUnwrapCandidate,
   getObjectToken,
   getObjectTokenDeleteSelection,
+  getProtectedKeywordMarkerCaret,
   getSnappedObjectTokenCaret,
   hasObjectTokenInternalMutation,
   keywordCloudSlotCount,
+  normalizeInlineKeywordTokens,
   removeAdjacentInlineToken,
-  removeAdjacentKeywordTokenAtBoundary,
-  removeInlineSelectionWithTokenBoundaries
+  removeInlineSelectionWithTokenBoundaries,
+  toggleInlineKeywordToken
 } from "./workspaceShell.inlineEditor";
 
 describe("workspaceShell.inlineEditor removeAdjacentInlineToken", () => {
-  it("removes a whole keyword token when backspace is pressed inside the token", () => {
+  it("does not remove a keyword token when backspace is pressed inside the token", () => {
     const token = getInlineKeywordToken("pressure");
     const value = `start ${token} end`;
     const tokenStart = value.indexOf(token);
@@ -26,11 +30,10 @@ describe("workspaceShell.inlineEditor removeAdjacentInlineToken", () => {
 
     const next = removeAdjacentInlineToken(value, caretInsideToken, "backward");
 
-    expect(next).not.toBeNull();
-    expect(next?.nextText).toBe("start end");
+    expect(next).toBeNull();
   });
 
-  it("removes a whole keyword token when delete is pressed inside the token", () => {
+  it("does not remove a keyword token when delete is pressed inside the token", () => {
     const token = getInlineKeywordToken("hesitation");
     const value = `start ${token} end`;
     const tokenStart = value.indexOf(token);
@@ -38,8 +41,7 @@ describe("workspaceShell.inlineEditor removeAdjacentInlineToken", () => {
 
     const next = removeAdjacentInlineToken(value, caretInsideToken, "forward");
 
-    expect(next).not.toBeNull();
-    expect(next?.nextText).toBe("start end");
+    expect(next).toBeNull();
   });
 
   it("removes a whole object token when delete is pressed inside the token", () => {
@@ -74,6 +76,19 @@ describe("workspaceShell.inlineEditor removeAdjacentInlineToken", () => {
   it("returns null when range delete does not intersect any token", () => {
     const value = "plain text only";
     const next = removeInlineSelectionWithTokenBoundaries(value, 0, 5);
+
+    expect(next).toBeNull();
+  });
+
+  it("leaves keyword range deletion to normal text editing", () => {
+    const keywordToken = getInlineKeywordToken("pressure");
+    const value = `beat ${keywordToken} closes`;
+    const tokenStart = value.indexOf(keywordToken);
+    const next = removeInlineSelectionWithTokenBoundaries(
+      value,
+      tokenStart + 2,
+      tokenStart + 8
+    );
 
     expect(next).toBeNull();
   });
@@ -211,7 +226,6 @@ describe("workspaceShell.inlineEditor object token atomic editing", () => {
 
   it("detects object token label or marker damage but allows keyword label edits", () => {
     const objectToken = getObjectToken("Heroine's Mother");
-    const keywordToken = getInlineKeywordToken("pressure");
 
     expect(
       hasObjectTokenInternalMutation(
@@ -225,12 +239,84 @@ describe("workspaceShell.inlineEditor object token atomic editing", () => {
         "beat Heroine's Mother"
       )
     ).toBe(true);
+    expect(hasObjectTokenInternalMutation("beat", "beat")).toBe(false);
+  });
+});
+
+describe("workspaceShell.inlineEditor keyword token editing", () => {
+  it("unwraps keyword markers at the boundary while preserving the label", () => {
+    const keywordToken = getInlineKeywordToken("pressure");
+    const value = `beat ${keywordToken} closes`;
+    const tokenStart = value.indexOf(keywordToken);
+    const candidate = getKeywordTokenUnwrapCandidate(
+      value,
+      tokenStart + keywordToken.length
+    );
+
+    expect(candidate).toMatchObject({
+      nextCaret: tokenStart + "pressure".length,
+      nextText: "beat pressure closes",
+      tokenEnd: tokenStart + keywordToken.length,
+      tokenStart
+    });
+  });
+
+  it("protects keyword marker deletion while allowing label-edge typing", () => {
+    const keywordToken = getInlineKeywordToken("pressure");
+    const value = `beat ${keywordToken} closes`;
+    const tokenStart = value.indexOf(keywordToken);
+
+    expect(getProtectedKeywordMarkerCaret(value, tokenStart, "forward")).toBe(
+      tokenStart + 1
+    );
     expect(
-      removeAdjacentKeywordTokenAtBoundary(
-        `beat ${keywordToken}`,
-        `beat ${keywordToken}`.length - 1,
-        "backward"
+      getProtectedKeywordMarkerCaret(
+        value,
+        tokenStart + keywordToken.length - 1,
+        "forward"
       )
-    ).toBeNull();
+    ).toBe(tokenStart + keywordToken.length - 1);
+  });
+
+  it("removes empty keyword tokens and de-duplicates edited labels case-insensitively", () => {
+    const emptyToken = getInlineKeywordToken(" ");
+    const value = `${getInlineKeywordToken("student")} ${getInlineKeywordToken("Student")} ${emptyToken}`;
+
+    expect(normalizeInlineKeywordTokens(value)).toBe(
+      `${getInlineKeywordToken("student")} ${getInlineKeywordToken("Student")} `
+    );
+    expect(
+      normalizeInlineKeywordTokens(value)
+        .match(/\u2063/g)
+        ?.length
+    ).toBe(2);
+    expect(extractInlineKeywords(normalizeInlineKeywordTokens(value))).toEqual([
+      "student"
+    ]);
+  });
+
+  it("inserts a cloud keyword outside the currently edited keyword token", () => {
+    const editedToken = getInlineKeywordToken("pressure spik");
+    const value = `beat ${editedToken} closes`;
+    const tokenStart = value.indexOf(editedToken);
+    const caretInsideLabel = tokenStart + editedToken.length - 2;
+    const next = toggleInlineKeywordToken(
+      value,
+      "pressure spike",
+      caretInsideLabel,
+      caretInsideLabel
+    );
+
+    expect(next.nextText).toBe(
+      `beat ${editedToken} ${getInlineKeywordToken("pressure spike")} closes`
+    );
+  });
+
+  it("does not add a trailing space after a keyword inserted at the end", () => {
+    const token = getInlineKeywordToken("pressure spike");
+    const next = toggleInlineKeywordToken("", "pressure spike", 0, 0);
+
+    expect(next.nextText).toBe(token);
+    expect(next.nextCaret).toBe(next.nextText.length);
   });
 });

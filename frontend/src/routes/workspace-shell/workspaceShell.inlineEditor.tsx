@@ -19,7 +19,7 @@ export function escapeRegExp(value: string) {
 
 export function getKeywordTokenPattern() {
   return new RegExp(
-    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}`,
+    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]*?)${escapeRegExp(keywordTokenEnd)}`,
     "g"
   );
 }
@@ -55,16 +55,24 @@ export function extractInlineKeywords(value: string) {
 
   for (const match of matches) {
     const nextKeyword = match[1]?.trim();
+    const normalizedKeyword = nextKeyword?.toLowerCase() ?? "";
 
-    if (!nextKeyword || seenKeywords.has(nextKeyword)) {
+    if (!nextKeyword || seenKeywords.has(normalizedKeyword)) {
       continue;
     }
 
-    seenKeywords.add(nextKeyword);
+    seenKeywords.add(normalizedKeyword);
     keywords.push(nextKeyword);
   }
 
   return keywords;
+}
+
+// 빈 키워드 토큰은 저장/표시 대상에서 제거합니다.
+export function normalizeInlineKeywordTokens(value: string) {
+  return value.replace(getKeywordTokenPattern(), (token, keyword: string) =>
+    keyword.trim() ? token : ""
+  );
 }
 
 export function buildInlineEditorText(text: string, keywords: string[]) {
@@ -455,6 +463,67 @@ export function removeAdjacentKeywordTokenAtBoundary(
   return null;
 }
 
+export type KeywordTokenUnwrapCandidate = {
+  boundary: "end" | "start";
+  nextCaret: number;
+  nextText: string;
+  tokenEnd: number;
+  tokenStart: number;
+};
+
+// 키워드 경계 Backspace에서 marker만 제거하고 label은 일반 텍스트로 남깁니다.
+export function getKeywordTokenUnwrapCandidate(value: string, caretIndex: number) {
+  for (const range of getInlineKeywordTokenRanges(value)) {
+    const labelStart = range.start + 1;
+    const labelEnd = range.end - 1;
+    const boundary =
+      caretIndex === range.end ? "end" : caretIndex === labelStart ? "start" : null;
+
+    if (boundary === null) {
+      continue;
+    }
+
+    const label = value.slice(labelStart, labelEnd);
+    const nextText = `${value.slice(0, range.start)}${label}${value.slice(range.end)}`;
+
+    return {
+      boundary,
+      nextCaret: boundary === "end" ? range.start + label.length : range.start,
+      nextText,
+      tokenEnd: range.end,
+      tokenStart: range.start
+    } satisfies KeywordTokenUnwrapCandidate;
+  }
+
+  return null;
+}
+
+// Delete가 키워드 marker만 지우는 위치는 label 경계로 보정합니다.
+export function getProtectedKeywordMarkerCaret(
+  value: string,
+  caretIndex: number,
+  direction: "backward" | "forward"
+) {
+  for (const range of getInlineKeywordTokenRanges(value)) {
+    const labelStart = range.start + 1;
+    const labelEnd = range.end - 1;
+
+    if (direction === "forward" && caretIndex === range.start) {
+      return labelStart;
+    }
+
+    if (direction === "forward" && caretIndex === labelEnd) {
+      return labelEnd;
+    }
+
+    if (direction === "backward" && caretIndex === labelStart) {
+      return labelStart;
+    }
+  }
+
+  return null;
+}
+
 export function normalizeInlineObjectMentions(value: string) {
   return value.replace(/@([^@\n]+?)@/g, (_, name: string) => getObjectToken(name.trim()));
 }
@@ -504,7 +573,33 @@ export function getClosedObjectWordQuery(
   };
 }
 
-export function renderTextWithObjectMentions(value: string) {
+type InlineTokenRenderOptions = {
+  activeKeywordTokenStart?: number | null;
+  pendingKeywordUnwrapTokenStart?: number | null;
+};
+
+// 이 함수는 인라인 토큰 표시 상태에 맞는 class 이름을 만듭니다.
+function getInlineKeywordClassName(
+  tokenStart: number,
+  options: InlineTokenRenderOptions
+) {
+  const classNames = ["node-inline-keyword"];
+
+  if (options.activeKeywordTokenStart === tokenStart) {
+    classNames.push("is-keyword-editing");
+  }
+
+  if (options.pendingKeywordUnwrapTokenStart === tokenStart) {
+    classNames.push("is-keyword-unwrap-pending");
+  }
+
+  return classNames.join(" ");
+}
+
+export function renderTextWithObjectMentions(
+  value: string,
+  options: InlineTokenRenderOptions = {}
+) {
   const segments: ReactNode[] = [];
   const inlineTokenPattern = new RegExp(
     `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}|${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
@@ -523,7 +618,10 @@ export function renderTextWithObjectMentions(value: string) {
 
     if (match[1]) {
       segments.push(
-        <span className="node-inline-keyword" key={`keyword-${matchIndex}`}>
+        <span
+          className={getInlineKeywordClassName(matchIndex, options)}
+          key={`keyword-${matchIndex}`}
+        >
           {match[1]}
         </span>
       );
@@ -644,8 +742,15 @@ export function toggleInlineKeywordToken(
     };
   }
 
-  const prefix = value.slice(0, selectionStart);
-  const suffix = value.slice(selectionEnd);
+  const insertionSelection = getInlineKeywordTokenRanges(value).find(
+    (range) =>
+      (selectionStart > range.start && selectionStart < range.end) ||
+      (selectionEnd > range.start && selectionEnd < range.end)
+  );
+  const insertionStart = insertionSelection ? insertionSelection.end : selectionStart;
+  const insertionEnd = insertionSelection ? insertionSelection.end : selectionEnd;
+  const prefix = value.slice(0, insertionStart);
+  const suffix = value.slice(insertionEnd);
   const needsLeadingSpace = prefix.length > 0 && !/[\s\n]$/.test(prefix);
   const needsTrailingSpace = suffix.length > 0 && !/^[\s\n]/.test(suffix);
   const insertion = `${needsLeadingSpace ? " " : ""}${token}${needsTrailingSpace ? " " : ""}`;
@@ -662,7 +767,7 @@ export function removeAdjacentInlineToken(
   direction: "backward" | "forward"
 ) {
   const tokenPattern = new RegExp(
-    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}|${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
+    `${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
     "g"
   );
 
@@ -710,7 +815,7 @@ export function removeInlineSelectionWithTokenBoundaries(
   }
 
   const tokenPattern = new RegExp(
-    `${escapeRegExp(keywordTokenStart)}([^${escapeRegExp(keywordTokenEnd)}\\n]+?)${escapeRegExp(keywordTokenEnd)}|${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
+    `${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
     "g"
   );
   let removeStart = rangeStart;

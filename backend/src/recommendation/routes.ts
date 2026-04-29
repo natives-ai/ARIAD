@@ -49,6 +49,12 @@ const recommendationRouteMetrics: RecommendationRouteMetrics = {
   fallback: 0,
   timeout: 0
 };
+const defaultKeywordBatchMaxSuggestions = 18;
+const keywordProviderTotalAttempts = 4;
+const keywordRouteTimeoutBufferMs = 1000;
+const maxRefreshNonceLength = 128;
+const maxExcludedSuggestionLabelCount = 24;
+const maxExcludedSuggestionLabelLength = 80;
 
 // 선택 숫자 필드가 비어 있거나 유한한 숫자인지 확인합니다.
 function isOptionalFiniteNumber(value: unknown) {
@@ -89,7 +95,7 @@ function toRecommendationErrorMessage(error: unknown) {
 // 키워드 추천 개수를 유효 범위(1~25)로 정규화합니다.
 function resolveMaxSuggestions(value: number) {
   if (!Number.isInteger(value) || value <= 0) {
-    return 9;
+    return defaultKeywordBatchMaxSuggestions;
   }
 
   return Math.min(value, 25);
@@ -200,6 +206,38 @@ function hasValidCacheBypass(body: KeywordRecommendationRequest) {
   return body.cacheBypass === undefined || typeof body.cacheBypass === "boolean";
 }
 
+// refresh nonce 값이 optional string 제한을 지키는지 확인합니다.
+function hasValidRefreshNonce(body: KeywordRecommendationRequest) {
+  return (
+    body.refreshNonce === undefined ||
+    (typeof body.refreshNonce === "string" &&
+      body.refreshNonce.length <= maxRefreshNonceLength)
+  );
+}
+
+// 제외 추천어 목록이 optional string array 제한을 지키는지 확인합니다.
+function hasValidExcludedSuggestionLabels(body: KeywordRecommendationRequest) {
+  return (
+    body.excludedSuggestionLabels === undefined ||
+    (Array.isArray(body.excludedSuggestionLabels) &&
+      body.excludedSuggestionLabels.length <= maxExcludedSuggestionLabelCount &&
+      body.excludedSuggestionLabels.every(
+        (label) =>
+          typeof label === "string" &&
+          label.length <= maxExcludedSuggestionLabelLength
+      ))
+  );
+}
+
+// 캐시 키에 사용할 제외 추천어 목록을 안정적으로 정규화합니다.
+function normalizeExcludedSuggestionLabelsForCache(labels: string[] | undefined) {
+  return [...new Set(
+    (labels ?? [])
+      .map((label) => label.trim().toLowerCase())
+      .filter(Boolean)
+  )].sort();
+}
+
 // 요청/모델 기준으로 키워드 캐시 키를 생성합니다.
 function buildKeywordCacheKey(
   body: KeywordRecommendationRequest,
@@ -207,9 +245,13 @@ function buildKeywordCacheKey(
   maxSuggestions: number
 ) {
   return JSON.stringify({
+    excludedSuggestionLabels: normalizeExcludedSuggestionLabelsForCache(
+      body.excludedSuggestionLabels
+    ),
     maxSuggestions,
     model: options.recommendationConfig.model,
     provider: options.recommendationConfig.provider,
+    refreshNonce: body.refreshNonce ?? null,
     selectedKeywords: body.selectedKeywords ?? [],
     story: body.story,
     structuredContext: body.structuredContext ?? null
@@ -267,6 +309,15 @@ async function runWithTimeout<T>(operation: Promise<T>, timeoutMs: number): Prom
   });
 }
 
+// 키워드 route timeout이 provider 내부 재시도를 먼저 끊지 않도록 총 시도 시간을 반영합니다.
+function resolveKeywordRouteTimeoutMs(timeoutMs: number) {
+  if (timeoutMs <= 0) {
+    return timeoutMs;
+  }
+
+  return timeoutMs * keywordProviderTotalAttempts + keywordRouteTimeoutBufferMs;
+}
+
 // 추천 경로에서 관측성 로그를 일관된 형식으로 남깁니다.
 function logRecommendationEvent(
   logger: BackendLogger,
@@ -280,7 +331,10 @@ function logRecommendationEvent(
 }
 
 // recommendation 설정을 바탕으로 provider를 생성합니다.
-function createRecommendationServiceAccessor(options: RegisterRecommendationRoutesOptions) {
+function createRecommendationServiceAccessor(
+  options: RegisterRecommendationRoutesOptions,
+  runtimeOverrides: Partial<RecommendationRuntimeConfig> = {}
+) {
   let service: ReturnType<typeof createRecommendationService> | null = null;
   let initErrorMessage: string | null = null;
 
@@ -297,10 +351,12 @@ function createRecommendationServiceAccessor(options: RegisterRecommendationRout
       const provider = createRecommendationProvider({
         apiKey: options.recommendationApiKey,
         cacheTtlMs: options.recommendationConfig.cacheTtlMs,
-        fallbackToHeuristicOnError: options.recommendationConfig.fallbackToHeuristicOnError,
+        fallbackToHeuristicOnError:
+          runtimeOverrides.fallbackToHeuristicOnError ??
+          options.recommendationConfig.fallbackToHeuristicOnError,
         maxSuggestions: options.recommendationConfig.maxSuggestions,
-        model: options.recommendationConfig.model,
-        provider: options.recommendationConfig.provider,
+        model: runtimeOverrides.model ?? options.recommendationConfig.model,
+        provider: runtimeOverrides.provider ?? options.recommendationConfig.provider,
         timeoutMs: options.recommendationConfig.timeoutMs
       });
 
@@ -341,6 +397,9 @@ export async function registerRecommendationRoutes(
     scope: "recommendation"
   });
   const getRecommendationService = createRecommendationServiceAccessor(options);
+  const getStrictRecommendationService = createRecommendationServiceAccessor(options, {
+    fallbackToHeuristicOnError: false
+  });
   const getHeuristicRecommendationService = createHeuristicRecommendationServiceAccessor(
     resolveMaxSuggestions(options.recommendationConfig.maxSuggestions)
   );
@@ -358,6 +417,18 @@ export async function registerRecommendationRoutes(
     if (!hasValidCacheBypass(body)) {
       return reply.status(400).send({
         message: "cache_bypass_invalid"
+      });
+    }
+
+    if (!hasValidRefreshNonce(body)) {
+      return reply.status(400).send({
+        message: "refresh_nonce_invalid"
+      });
+    }
+
+    if (!hasValidExcludedSuggestionLabels(body)) {
+      return reply.status(400).send({
+        message: "excluded_suggestion_labels_invalid"
       });
     }
 
@@ -396,10 +467,12 @@ export async function registerRecommendationRoutes(
     }
 
     try {
-      const service = getRecommendationService();
+      const service = shouldBypassCache
+        ? getStrictRecommendationService()
+        : getRecommendationService();
       const response = await runWithTimeout(
         service.getKeywordSuggestions(body),
-        options.recommendationConfig.timeoutMs
+        resolveKeywordRouteTimeoutMs(options.recommendationConfig.timeoutMs)
       );
       const trimmedResponse = trimKeywordSuggestions(response, maxSuggestions);
 
@@ -417,7 +490,8 @@ export async function registerRecommendationRoutes(
 
       if (
         message === "recommendation_timeout" &&
-        options.recommendationConfig.fallbackToHeuristicOnError
+        options.recommendationConfig.fallbackToHeuristicOnError &&
+        !shouldBypassCache
       ) {
         recommendationRouteMetrics.timeout += 1;
         recommendationRouteMetrics.fallback += 1;

@@ -10,10 +10,14 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent
 } from "react";
-import type { KeywordSuggestion } from "@scenaairo/recommendation";
+import type {
+  KeywordRecommendationRequest,
+  KeywordSuggestion
+} from "@scenaairo/recommendation";
 import type {
   StoryEpisode,
   StoryNode,
+  StoryNodeContentMode,
   StoryNodeLevel
 } from "@scenaairo/shared";
 
@@ -98,6 +102,7 @@ import {
   buildDisplayedKeywordSuggestions,
   getObjectMentionCreateCandidate,
   normalizeObjectMentionMatchName,
+  normalizeInlineKeywordTokens,
   toggleInlineKeywordToken,
   getObjectMentionSignature,
   deriveNodeContentMode,
@@ -136,6 +141,154 @@ import type {
 } from "./workspace-shell/workspaceShell.types";
 
 type WorkspaceInteractionScope = "canvas" | "modal" | "none" | "object-panel" | "sidebar";
+
+type KeywordSuggestionPool = {
+  consumedLabels: string[];
+  contextSignature: string;
+  createdAt: number;
+  unusedSuggestions: KeywordSuggestion[];
+};
+
+type InlineDraftFlushResult = "changed" | "unchanged";
+
+const keywordSuggestionBatchPageCount = 2;
+
+// 인라인 draft를 저장 가능한 노드 content 값으로 정리합니다.
+function resolveInlineNodeContent(
+  nextText: string,
+  nextKeywords: string[]
+): {
+  contentMode: StoryNodeContentMode;
+  keywords: string[];
+  text: string;
+} {
+  const resolvedText = normalizeInlineKeywordTokens(
+    normalizeInlineObjectMentions(nextText)
+  ).trim();
+  const extractedKeywords = extractInlineKeywords(resolvedText);
+  const resolvedKeywords = extractedKeywords.length ? extractedKeywords : nextKeywords;
+
+  return {
+    contentMode: deriveNodeContentMode(resolvedText, resolvedKeywords),
+    keywords: resolvedKeywords,
+    text: resolvedText
+  };
+}
+
+// 키워드 배열이 저장된 값과 달라졌는지 확인합니다.
+function haveKeywordListsChanged(left: string[], right: string[]) {
+  return left.length !== right.length || left.some((keyword, index) => keyword !== right[index]);
+}
+
+// 키워드 추천 label을 비교 가능한 키로 정규화합니다.
+function getKeywordSuggestionLabelKey(label: string) {
+  return label.trim().toLowerCase();
+}
+
+// 키워드 추천 label 목록을 중복 없이 정리합니다.
+function cleanKeywordSuggestionLabels(labels: string[]) {
+  const cleanLabels: string[] = [];
+  const seenLabels = new Set<string>();
+
+  for (const label of labels) {
+    const cleanLabel = label.trim();
+    const labelKey = getKeywordSuggestionLabelKey(cleanLabel);
+
+    if (!cleanLabel || seenLabels.has(labelKey)) {
+      continue;
+    }
+
+    seenLabels.add(labelKey);
+    cleanLabels.push(cleanLabel);
+  }
+
+  return cleanLabels;
+}
+
+// 추천 후보에서 빈 label, 중복, 이미 표시한 label을 제거합니다.
+function cleanKeywordSuggestionBatch(
+  suggestions: KeywordSuggestion[],
+  blockedLabels: string[] = []
+) {
+  const seenLabels = new Set(blockedLabels.map(getKeywordSuggestionLabelKey));
+  const cleanSuggestions: KeywordSuggestion[] = [];
+
+  for (const suggestion of suggestions) {
+    const cleanLabel = suggestion.label.trim();
+    const labelKey = getKeywordSuggestionLabelKey(cleanLabel);
+
+    if (!cleanLabel || seenLabels.has(labelKey)) {
+      continue;
+    }
+
+    seenLabels.add(labelKey);
+    cleanSuggestions.push(
+      cleanLabel === suggestion.label
+        ? suggestion
+        : {
+            ...suggestion,
+            label: cleanLabel
+          }
+    );
+  }
+
+  return cleanSuggestions;
+}
+
+// 현재 빈 슬롯 기준으로 한 번에 요청할 추천 batch 크기를 계산합니다.
+function getKeywordSuggestionBatchSize(openSlotCount: number) {
+  return Math.max(0, openSlotCount * keywordSuggestionBatchPageCount);
+}
+
+// 추천 후보 queue에서 현재 cloud에 표시할 한 페이지를 꺼냅니다.
+function takeKeywordSuggestionPage(
+  suggestions: KeywordSuggestion[],
+  openSlotCount: number
+) {
+  return {
+    pageSuggestions: suggestions.slice(0, openSlotCount),
+    remainingSuggestions: suggestions.slice(openSlotCount)
+  };
+}
+
+// 추천 요청 payload에서 refresh nonce를 제외한 stable context signature를 만듭니다.
+function createKeywordSuggestionContextSignature(request: KeywordRecommendationRequest) {
+  return JSON.stringify({
+    maxSuggestions: request.maxSuggestions,
+    selectedKeywords: request.selectedKeywords,
+    story: request.story,
+    structuredContext: request.structuredContext
+  });
+}
+
+// 다음 LLM refresh에서 제외할 표시/소비 label 목록을 만듭니다.
+function createKeywordSuggestionExclusionLabels(
+  displayedSuggestions: KeywordSuggestion[],
+  pool: KeywordSuggestionPool | null
+) {
+  return cleanKeywordSuggestionLabels([
+    ...displayedSuggestions.map((suggestion) => suggestion.label),
+    ...(pool?.consumedLabels ?? [])
+  ]);
+}
+
+// 표시한 추천 page를 pool의 소비 이력에 반영합니다.
+function updateKeywordSuggestionPool(
+  contextSignature: string,
+  pool: KeywordSuggestionPool | null,
+  pageSuggestions: KeywordSuggestion[],
+  remainingSuggestions: KeywordSuggestion[]
+): KeywordSuggestionPool {
+  return {
+    consumedLabels: cleanKeywordSuggestionLabels([
+      ...(pool?.consumedLabels ?? []),
+      ...pageSuggestions.map((suggestion) => suggestion.label)
+    ]),
+    contextSignature,
+    createdAt: pool?.createdAt ?? Date.now(),
+    unusedSuggestions: remainingSuggestions
+  };
+}
 
 // 이벤트 대상을 워크스페이스 편집 영역으로 분류합니다.
 function resolveWorkspaceInteractionScope(
@@ -392,9 +545,13 @@ export function WorkspaceShell() {
   const effectiveFirstDividerXRef = useRef(initialLaneDividerXs.first);
   const rewireHoverTargetIdRef = useRef<string | null>(null);
   const inlineMentionSignatureRef = useRef<Record<string, string>>({});
-  const pendingMentionObjectIdsRef = useRef(new Map<string, Promise<string | null>>());
+  const inlineDraftDirtyRef = useRef(false);
   const explicitMentionCreateNamesRef = useRef<Set<string>>(new Set());
+  const inlineDraftFlushPromiseRef = useRef<Promise<InlineDraftFlushResult> | null>(null);
   const keywordRequestIdRef = useRef(0);
+  const keywordSuggestionPoolRef = useRef<KeywordSuggestionPool | null>(null);
+  const runRedoWithInlineDraftFlushRef = useRef<() => Promise<void>>(async () => {});
+  const runUndoWithInlineDraftFlushRef = useRef<() => Promise<void>>(async () => {});
   const nodePlacementsRef = useRef(new Map<string, { x: number; y: number }>());
   const visibleNodesRef = useRef<StoryNode[]>(emptyNodes);
   const laneCanvasBoundsRef = useRef<
@@ -1688,6 +1845,25 @@ export function WorkspaceShell() {
         state.syncStatus === "importing" ||
         state.syncStatus === "syncing";
   const canUseCanvasHistory = workspaceHistoryScope === "canvas" && !isBusy;
+  const hasSelectedNodeDirtyInlineDraft =
+    inlineDraftDirtyRef.current &&
+    selectedNode !== null &&
+    !selectedNode.isFixed &&
+    (() => {
+      const resolvedContent = resolveInlineNodeContent(
+        inlineNodeTextDraft,
+        selectedAiKeywords
+      );
+
+      return (
+        resolvedContent.text !== selectedNode.text.trim() ||
+        haveKeywordListsChanged(selectedNode.keywords, resolvedContent.keywords)
+      );
+    })();
+  const canUseCanvasUndo =
+    canUseCanvasHistory && ((state?.history.canUndo ?? false) || hasSelectedNodeDirtyInlineDraft);
+  const canUseCanvasRedo =
+    canUseCanvasHistory && !hasSelectedNodeDirtyInlineDraft && (state?.history.canRedo ?? false);
   const isAuthBusy = isBusy || isAuthSignInInProgress;
 
   const handleSignInWithGoogle = useCallback(() => {
@@ -1778,6 +1954,7 @@ export function WorkspaceShell() {
         nextInlineText
       );
       queueMicrotask(() => {
+        inlineDraftDirtyRef.current = false;
         setInlineNodeTextDraft(nextInlineText);
         setSelectedAiKeywords(extractInlineKeywords(nextInlineText));
         setIsNodeMoreMenuOpen(false);
@@ -1789,6 +1966,7 @@ export function WorkspaceShell() {
       });
     } else {
       queueMicrotask(() => {
+        inlineDraftDirtyRef.current = false;
         setInlineNodeTextDraft("");
         setSelectedAiKeywords([]);
         setIsNodeMoreMenuOpen(false);
@@ -2000,14 +2178,10 @@ export function WorkspaceShell() {
       const canUseNodeShortcutFromInlineEditor =
         isSelectedNodeInputTarget &&
         selectedNode !== null &&
-        !inlineEditorHasSelection &&
-        ((key === "c" && usesModifier) ||
-          (key === "v" && usesModifier && copiedNodeTreeRef.current !== null));
-
-      // 인라인 편집 포커스에서는 텍스트 전용 undo/redo를 브라우저 기본 동작으로 유지합니다.
-      if (isSelectedNodeInputTarget && usesModifier && (key === "z" || key === "y")) {
-        return;
-      }
+        usesModifier &&
+        ((key === "z" || key === "y") ||
+          (!inlineEditorHasSelection &&
+            (key === "c" || (key === "v" && copiedNodeTreeRef.current !== null))));
 
       if (
         usesModifier &&
@@ -2107,9 +2281,9 @@ export function WorkspaceShell() {
         event.preventDefault();
 
         if (event.shiftKey) {
-          void runRedo();
+          void runRedoWithInlineDraftFlushRef.current();
         } else {
-          void runUndo();
+          void runUndoWithInlineDraftFlushRef.current();
         }
 
         return;
@@ -2117,7 +2291,7 @@ export function WorkspaceShell() {
 
       if (usesModifier && key === "y") {
         event.preventDefault();
-        void runRedo();
+        void runRedoWithInlineDraftFlushRef.current();
         return;
       }
 
@@ -2207,8 +2381,6 @@ export function WorkspaceShell() {
     renamingFolderId,
     renamingEpisodeId,
     rewireNodeId,
-    runRedo,
-    runUndo,
     selectedNode,
     selectedObject,
     state,
@@ -3059,13 +3231,26 @@ export function WorkspaceShell() {
     };
   }
 
-  async function syncObjectMentionsForNode(nodeId: string, rawText: string) {
+  // 인라인 오브젝트 mention을 저장용 objectId draft로 변환합니다.
+  function createInlineObjectBindingDraft(nodeId: string, rawText: string) {
     const mentionNames = extractObjectMentionNames(rawText);
     const liveSnapshot = controller.getState()?.snapshot ?? snapshot;
     const currentNode =
       liveSnapshot.nodes.find((node) => node.id === nodeId) ??
       nodesById.get(nodeId) ??
       null;
+
+    if (mentionNames.length === 0) {
+      return {
+        consumedCreateNames: [],
+        objectIds:
+          currentNode && extractObjectMentionNames(currentNode.text).length === 0
+            ? currentNode.objectIds
+            : [],
+        objectsToCreate: []
+      };
+    }
+
     const targetEpisodeId = currentNode?.episodeId ?? liveSnapshot.project.activeEpisodeId;
     const scopeEpisodeIds = new Set(
       targetEpisodeId
@@ -3084,36 +3269,16 @@ export function WorkspaceShell() {
 
     for (const mentionName of mentionNames) {
       const normalizedName = normalizeObjectMentionMatchName(mentionName);
-      let objectId = existingObjectIdsByName.get(normalizedName) ?? null;
+      const objectId = existingObjectIdsByName.get(normalizedName) ?? null;
 
       if (!objectId) {
-        const pendingObjectPromise = pendingMentionObjectIdsRef.current.get(normalizedName);
-
-        if (pendingObjectPromise) {
-          objectId = await pendingObjectPromise;
-        } else {
-          if (!explicitMentionCreateNamesRef.current.has(normalizedName)) {
-            continue;
-          }
-
-          const createObjectPromise = controller
-            .createObject({
-              category: "thing",
-              name: mentionName,
-              summary: ""
-            })
-            .finally(() => {
-              pendingMentionObjectIdsRef.current.delete(normalizedName);
-              explicitMentionCreateNamesRef.current.delete(normalizedName);
-            });
-
-          pendingMentionObjectIdsRef.current.set(normalizedName, createObjectPromise);
-          objectId = await createObjectPromise;
+        if (!explicitMentionCreateNamesRef.current.has(normalizedName)) {
+          continue;
         }
 
-        if (objectId) {
-          existingObjectIdsByName.set(normalizedName, objectId);
-        }
+        nextObjectIds.push(`__create__:${normalizedName}`);
+        existingObjectIdsByName.set(normalizedName, `__create__:${normalizedName}`);
+        continue;
       }
 
       if (objectId && !nextObjectIds.includes(objectId)) {
@@ -3121,30 +3286,46 @@ export function WorkspaceShell() {
       }
     }
 
-    const currentObjectIds = currentNode?.objectIds ?? [];
-
-    for (const objectId of currentObjectIds) {
-      if (!nextObjectIds.includes(objectId)) {
-        await controller.detachObjectFromNode(nodeId, objectId);
+    const objectsToCreate: StoryObjectDraft[] = [];
+    const consumedCreateNames: string[] = [];
+    const resolvedObjectIds = nextObjectIds.filter((objectId) => {
+      if (!objectId.startsWith("__create__:")) {
+        return true;
       }
-    }
 
-    for (const objectId of nextObjectIds) {
-      if (!currentObjectIds.includes(objectId)) {
-        await controller.attachObjectToNode(nodeId, objectId);
+      const normalizedName = objectId.slice("__create__:".length);
+      const mentionName =
+        mentionNames.find(
+          (name) => normalizeObjectMentionMatchName(name) === normalizedName
+        ) ?? "";
+
+      if (!mentionName) {
+        return false;
       }
-    }
+
+      objectsToCreate.push({
+        category: "thing",
+        name: mentionName,
+        summary: ""
+      });
+      consumedCreateNames.push(normalizedName);
+      return false;
+    });
+
+    return {
+      consumedCreateNames,
+      objectIds: resolvedObjectIds,
+      objectsToCreate
+    };
   }
 
   function syncInlineObjectMentions(nodeId: string, rawText: string) {
-    const nextSignature = getObjectMentionSignature(rawText);
+    inlineMentionSignatureRef.current[nodeId] = getObjectMentionSignature(rawText);
+  }
 
-    if (inlineMentionSignatureRef.current[nodeId] === nextSignature) {
-      return;
-    }
-
-    inlineMentionSignatureRef.current[nodeId] = nextSignature;
-    void syncObjectMentionsForNode(nodeId, rawText);
+  // 현재 인라인 draft가 사용자 입력으로 변경됐음을 표시합니다.
+  function markInlineNodeDraftDirty() {
+    inlineDraftDirtyRef.current = true;
   }
 
   function updateObjectMentionQueryFromInput(
@@ -3256,11 +3437,17 @@ export function WorkspaceShell() {
       explicitMentionCreateNamesRef.current.add(normalizedObjectName);
     }
 
+    markInlineNodeDraftDirty();
     setInlineNodeTextDraft(nextText);
     setObjectMentionQuery(null);
     setObjectMentionMenuPosition(null);
     setActiveObjectMentionIndex(0);
     syncInlineObjectMentions(selectedNode.id, nextText);
+    void persistInlineNodeContent(
+      selectedNode,
+      nextText,
+      extractInlineKeywords(nextText)
+    );
 
     window.requestAnimationFrame(() => {
       selectedNodeInputRef.current?.focus();
@@ -3565,11 +3752,9 @@ export function WorkspaceShell() {
       skipLocalStateSync?: boolean;
     } = {}
   ) {
-    const resolvedText = normalizeInlineObjectMentions(nextText).trim();
-    const resolvedKeywords = extractInlineKeywords(resolvedText).length
-      ? extractInlineKeywords(resolvedText)
-      : nextKeywords;
+    const resolvedContent = resolveInlineNodeContent(nextText, nextKeywords);
     const currentNode = nodesById.get(node.id) ?? node;
+    const objectBindingDraft = createInlineObjectBindingDraft(node.id, resolvedContent.text);
     const canSyncLocalState = () =>
       options.skipLocalStateSync !== true && selectedNodeIdRef.current === node.id;
 
@@ -3579,36 +3764,57 @@ export function WorkspaceShell() {
 
         setInlineNodeTextDraft(currentInlineText);
         setSelectedAiKeywords(currentNode.keywords);
+        inlineDraftDirtyRef.current = false;
       }
-      return;
+      return false;
     }
 
-    const hasKeywordChange =
-      currentNode.keywords.length !== resolvedKeywords.length ||
-      currentNode.keywords.some((keyword, index) => keyword !== resolvedKeywords[index]);
+    const hasKeywordChange = haveKeywordListsChanged(
+      currentNode.keywords,
+      resolvedContent.keywords
+    );
+    const hasObjectBindingChange =
+      currentNode.objectIds.length !== objectBindingDraft.objectIds.length ||
+      currentNode.objectIds.some(
+        (objectId, index) => objectId !== objectBindingDraft.objectIds[index]
+      ) ||
+      objectBindingDraft.objectsToCreate.length > 0;
 
-    if (resolvedText === currentNode.text.trim() && !hasKeywordChange) {
+    if (
+      resolvedContent.text === currentNode.text.trim() &&
+      !hasKeywordChange &&
+      !hasObjectBindingChange
+    ) {
       if (canSyncLocalState()) {
-        setInlineNodeTextDraft(resolvedText);
-        setSelectedAiKeywords(resolvedKeywords);
+        setInlineNodeTextDraft(resolvedContent.text);
+        setSelectedAiKeywords(resolvedContent.keywords);
+        inlineDraftDirtyRef.current = false;
       }
-      return;
+      return false;
     }
 
-    await controller.updateNodeContent(node.id, {
-      contentMode: deriveNodeContentMode(resolvedText, resolvedKeywords),
-      keywords: resolvedKeywords,
-      text: resolvedText
+    const didMutate = await controller.updateNodeContentAndObjectBindings(node.id, {
+      contentMode: resolvedContent.contentMode,
+      keywords: resolvedContent.keywords,
+      objectIds: objectBindingDraft.objectIds,
+      objectsToCreate: objectBindingDraft.objectsToCreate,
+      text: resolvedContent.text
     });
-    await syncObjectMentionsForNode(node.id, resolvedText);
+
+    for (const normalizedName of objectBindingDraft.consumedCreateNames) {
+      explicitMentionCreateNamesRef.current.delete(normalizedName);
+    }
 
     if (canSyncLocalState()) {
-      setInlineNodeTextDraft(resolvedText);
-      setSelectedAiKeywords(resolvedKeywords);
+      setInlineNodeTextDraft(resolvedContent.text);
+      setSelectedAiKeywords(resolvedContent.keywords);
       setObjectMentionQuery(null);
       setObjectMentionMenuPosition(null);
       setActiveObjectMentionIndex(0);
+      inlineDraftDirtyRef.current = false;
     }
+
+    return didMutate;
   }
 
   // 이 함수는 노드 선택 전환 직전에 현재 인라인 draft를 안전하게 저장합니다.
@@ -3617,15 +3823,124 @@ export function WorkspaceShell() {
       return;
     }
 
-    void persistInlineNodeContent(
+    void flushSelectedNodeDraftBeforeHistoryAction();
+  }
+
+  // history 실행 직전 현재 선택 노드의 draft 저장을 단일 promise로 공유합니다.
+  async function flushSelectedNodeDraftBeforeHistoryAction() {
+    if (inlineDraftFlushPromiseRef.current) {
+      return inlineDraftFlushPromiseRef.current;
+    }
+
+    if (!selectedNode || selectedNode.isFixed) {
+      return "unchanged" satisfies InlineDraftFlushResult;
+    }
+
+    if (!inlineDraftDirtyRef.current) {
+      return "unchanged" satisfies InlineDraftFlushResult;
+    }
+
+    const flushPromise = persistInlineNodeContent(
       selectedNode,
       inlineNodeTextDraft,
-      selectedAiKeywords,
-      {
-        skipLocalStateSync: true
-      }
-    );
+      selectedAiKeywords
+    )
+      .then((didMutate) =>
+        didMutate
+          ? ("changed" satisfies InlineDraftFlushResult)
+          : ("unchanged" satisfies InlineDraftFlushResult)
+      )
+      .finally(() => {
+        inlineDraftFlushPromiseRef.current = null;
+      });
+
+    inlineDraftFlushPromiseRef.current = flushPromise;
+    return flushPromise;
   }
+
+  // history 적용 후 선택 노드 draft와 keyword cloud 상태를 최신 snapshot에 맞춥니다.
+  function syncSelectedNodeAfterHistoryAction() {
+    const historySnapshot = controller.getState()?.snapshot;
+
+    if (!historySnapshot) {
+      return;
+    }
+
+    const activeHistoryEpisodeId = historySnapshot.project.activeEpisodeId;
+    const activeHistoryNodes = sortNodesByOrder(
+      historySnapshot.nodes.filter((node) => node.episodeId === activeHistoryEpisodeId)
+    );
+    const selectedHistoryNode =
+      (selectedNodeIdRef.current
+        ? activeHistoryNodes.find((node) => node.id === selectedNodeIdRef.current)
+        : null) ??
+      (selectedNode
+        ? activeHistoryNodes.find((node) => node.id === selectedNode.id)
+        : null) ??
+      activeHistoryNodes[0] ??
+      null;
+
+    keywordSuggestionPoolRef.current = null;
+    inlineDraftDirtyRef.current = false;
+
+    if (!selectedHistoryNode) {
+      setSelectedNodeId(null);
+      setInlineNodeTextDraft("");
+      setSelectedAiKeywords([]);
+      setAiPanelNodeId(null);
+      setRecommendationError(null);
+      setObjectMentionQuery(null);
+      setObjectMentionMenuPosition(null);
+      setActiveObjectMentionIndex(0);
+      return;
+    }
+
+    const nextInlineText = buildInlineEditorText(
+      selectedHistoryNode.text,
+      selectedHistoryNode.keywords
+    );
+
+    inlineMentionSignatureRef.current[selectedHistoryNode.id] =
+      getObjectMentionSignature(nextInlineText);
+    setSelectedNodeId(selectedHistoryNode.id);
+    setInlineNodeTextDraft(nextInlineText);
+    setSelectedAiKeywords(selectedHistoryNode.keywords);
+    setRecommendationError(null);
+    setObjectMentionQuery(null);
+    setObjectMentionMenuPosition(null);
+    setActiveObjectMentionIndex(0);
+
+    if (aiPanelNodeId !== null && aiPanelNodeId !== selectedHistoryNode.id) {
+      setAiPanelNodeId(null);
+    }
+
+    window.requestAnimationFrame(() => {
+      syncSelectedNodeInputHeight(selectedHistoryNode.id, selectedNodeInputRef.current);
+    });
+  }
+
+  // undo는 dirty draft를 먼저 history에 넣은 뒤 이전 snapshot으로 되돌립니다.
+  async function runUndoWithInlineDraftFlush() {
+    await flushSelectedNodeDraftBeforeHistoryAction();
+    await runUndo();
+    syncSelectedNodeAfterHistoryAction();
+  }
+
+  // redo는 dirty draft가 새 history를 만들면 오래된 redo를 실행하지 않습니다.
+  async function runRedoWithInlineDraftFlush() {
+    const flushResult = await flushSelectedNodeDraftBeforeHistoryAction();
+
+    if (flushResult === "changed") {
+      syncSelectedNodeAfterHistoryAction();
+      return;
+    }
+
+    await runRedo();
+    syncSelectedNodeAfterHistoryAction();
+  }
+
+  runUndoWithInlineDraftFlushRef.current = runUndoWithInlineDraftFlush;
+  runRedoWithInlineDraftFlushRef.current = runRedoWithInlineDraftFlush;
 
   async function openKeywordSuggestions(
     node: StoryNode,
@@ -3638,26 +3953,100 @@ export function WorkspaceShell() {
     }
 
     const parentNode = node.parentId ? nodesById.get(node.parentId) ?? null : null;
-    const inlineDraft = buildInlineEditorText(node.text, node.keywords);
+    const inlineDraft =
+      selectedNode?.id === node.id
+        ? inlineNodeTextDraft
+        : buildInlineEditorText(node.text, node.keywords);
     const nextSelectedKeywords = extractInlineKeywords(inlineDraft);
+    const requestNode = {
+      ...node,
+      keywords: nextSelectedKeywords,
+      text: inlineDraft
+    };
     const requestId = keywordRequestIdRef.current + 1;
+    const isRefreshRequest = options?.refresh === true;
+    const openSlotCount = Math.max(0, keywordCloudSlotCount - nextSelectedKeywords.length);
+    const maxSuggestions = getKeywordSuggestionBatchSize(openSlotCount);
+    const signatureRequest = createKeywordRecommendationRequest(snapshot, requestNode, parentNode, {
+      maxSuggestions,
+      selectedKeywords: nextSelectedKeywords
+    });
+    const contextSignature = createKeywordSuggestionContextSignature(signatureRequest);
+    const matchingPool =
+      keywordSuggestionPoolRef.current?.contextSignature === contextSignature
+        ? keywordSuggestionPoolRef.current
+        : null;
+    const displayedSuggestionsForRefresh = isRefreshRequest
+      ? buildDisplayedKeywordSuggestions(
+          nextSelectedKeywords,
+          keywordSuggestions,
+          keywordRefreshCycle
+        )
+      : [];
+    const excludedSuggestionLabels = isRefreshRequest
+      ? createKeywordSuggestionExclusionLabels(displayedSuggestionsForRefresh, matchingPool)
+      : [];
+    const refreshNonce = isRefreshRequest ? `${node.id}:${requestId}:${Date.now()}` : undefined;
+    const pooledSuggestions = matchingPool
+      ? cleanKeywordSuggestionBatch(matchingPool.unusedSuggestions, [
+          ...nextSelectedKeywords,
+          ...displayedSuggestionsForRefresh.map((suggestion) => suggestion.label)
+        ])
+      : [];
+    const pooledPage =
+      isRefreshRequest && openSlotCount > 0 && pooledSuggestions.length >= openSlotCount
+        ? takeKeywordSuggestionPage(pooledSuggestions, openSlotCount)
+        : null;
+    const fallbackPooledPage =
+      isRefreshRequest && openSlotCount > 0 && pooledSuggestions.length > 0
+        ? takeKeywordSuggestionPage(pooledSuggestions, openSlotCount)
+        : null;
 
     keywordRequestIdRef.current = requestId;
+    if (!matchingPool) {
+      keywordSuggestionPoolRef.current = null;
+    }
+
     setAiPanelNodeId(node.id);
-    setKeywordSuggestions([]);
     setSelectedAiKeywords(nextSelectedKeywords);
-    setKeywordRefreshCycle((current) => (options?.refresh ? current + 1 : 0));
     setRecommendationError(null);
-    setIsLoadingKeywords(true);
     window.requestAnimationFrame(() => {
       centerCanvasViewportOnNode(node.id, "smooth", 240);
     });
 
+    if (openSlotCount <= 0) {
+      setKeywordSuggestions([]);
+      setKeywordRefreshCycle(0);
+      setIsLoadingKeywords(false);
+      return;
+    }
+
+    if (pooledPage && matchingPool) {
+      keywordSuggestionPoolRef.current = updateKeywordSuggestionPool(
+        contextSignature,
+        matchingPool,
+        pooledPage.pageSuggestions,
+        pooledPage.remainingSuggestions
+      );
+      setKeywordSuggestions(pooledPage.pageSuggestions);
+      setKeywordRefreshCycle(0);
+      setIsLoadingKeywords(false);
+      return;
+    }
+
+    if (!isRefreshRequest) {
+      setKeywordSuggestions([]);
+    }
+
+    setIsLoadingKeywords(true);
+
     try {
       const response = await recommendationClient.getKeywordSuggestions(
-        createKeywordRecommendationRequest(snapshot, node, parentNode, {
-          cacheBypass: options?.refresh === true,
-          maxSuggestions: Math.max(0, keywordCloudSlotCount - nextSelectedKeywords.length),
+        createKeywordRecommendationRequest(snapshot, requestNode, parentNode, {
+          cacheBypass: isRefreshRequest,
+          excludedSuggestionLabels,
+          maxSuggestions,
+          ...(refreshNonce ? { refreshNonce } : {}),
           selectedKeywords: nextSelectedKeywords
         })
       );
@@ -3666,10 +4055,37 @@ export function WorkspaceShell() {
         return;
       }
 
-      setKeywordSuggestions(response.suggestions);
+      const cleanSuggestions = cleanKeywordSuggestionBatch(
+        response.suggestions,
+        nextSelectedKeywords
+      );
+      const { pageSuggestions, remainingSuggestions } = takeKeywordSuggestionPage(
+        cleanSuggestions,
+        openSlotCount
+      );
+
+      keywordSuggestionPoolRef.current = updateKeywordSuggestionPool(
+        contextSignature,
+        matchingPool,
+        pageSuggestions,
+        remainingSuggestions
+      );
+      setKeywordSuggestions(pageSuggestions);
+      setKeywordRefreshCycle((current) => (isRefreshRequest ? current + 1 : 0));
     } catch (error) {
       if (keywordRequestIdRef.current !== requestId) {
         return;
+      }
+
+      if (fallbackPooledPage && matchingPool) {
+        keywordSuggestionPoolRef.current = updateKeywordSuggestionPool(
+          contextSignature,
+          matchingPool,
+          fallbackPooledPage.pageSuggestions,
+          fallbackPooledPage.remainingSuggestions
+        );
+        setKeywordSuggestions(fallbackPooledPage.pageSuggestions);
+        setKeywordRefreshCycle(0);
       }
 
       setRecommendationError(toMessage(error));
@@ -3699,12 +4115,15 @@ export function WorkspaceShell() {
     );
     const nextKeywords = extractInlineKeywords(nextText);
 
+    markInlineNodeDraftDirty();
     setInlineNodeTextDraft(nextText);
     setSelectedAiKeywords(nextKeywords);
     setRecommendationError(null);
     await persistInlineNodeContent(node, nextText, nextKeywords);
 
     if (selectedNode?.id === node.id) {
+      setInlineNodeTextDraft(nextText);
+      setSelectedAiKeywords(nextKeywords);
       window.requestAnimationFrame(() => {
         selectedNodeInputRef.current?.focus();
         selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
@@ -3843,6 +4262,7 @@ export function WorkspaceShell() {
         displayBodyText={displayBodyText}
         displayedKeywordSuggestions={displayedKeywordSuggestions}
         displayText={displayText}
+        flushSelectedNodeDraft={flushSelectedNodeDraftBeforeHistoryAction}
         getViewportMenuPosition={getViewportMenuPosition}
         hasVisibleKeywords={hasVisibleKeywords}
         inlineNodeTextDraft={inlineNodeTextDraft}
@@ -3857,6 +4277,7 @@ export function WorkspaceShell() {
         isSelected={isSelected}
         isStartMajorNode={isStartMajorNode}
         key={node.id}
+        markInlineNodeDraftDirty={markInlineNodeDraftDirty}
         node={node}
         nodeCardRefs={nodeCardRefs}
         nodeMenuButtonRefs={nodeMenuButtonRefs}
@@ -3872,7 +4293,6 @@ export function WorkspaceShell() {
           controller.rewireNode(sourceNodeId, targetNodeId)
         }
         openKeywordSuggestions={openKeywordSuggestions}
-        persistInlineNodeContent={persistInlineNodeContent}
         placement={placement}
         recommendationError={recommendationError}
         rewireNode={rewireNode}
@@ -5752,13 +6172,13 @@ export function WorkspaceShell() {
           <button
             className="button-secondary history-control-button history-control-button-undo"
             aria-label={copy.persistence.undo}
-            disabled={!state.history.canUndo || !canUseCanvasHistory}
+            disabled={!canUseCanvasUndo}
             onClick={() => {
-              if (!canUseCanvasHistory) {
+              if (!canUseCanvasUndo) {
                 return;
               }
 
-              void runUndo();
+              void runUndoWithInlineDraftFlush();
             }}
             type="button"
           >
@@ -5773,13 +6193,13 @@ export function WorkspaceShell() {
           <button
             className="button-secondary history-control-button history-control-button-redo"
             aria-label={copy.persistence.redo}
-            disabled={!state.history.canRedo || !canUseCanvasHistory}
+            disabled={!canUseCanvasRedo}
             onClick={() => {
-              if (!canUseCanvasHistory) {
+              if (!canUseCanvasRedo) {
                 return;
               }
 
-              void runRedo();
+              void runRedoWithInlineDraftFlush();
             }}
             type="button"
           >

@@ -116,7 +116,9 @@ export interface StructuredRecommendationContext {
 
 export interface KeywordRecommendationRequest {
   cacheBypass?: boolean;
+  excludedSuggestionLabels?: string[];
   maxSuggestions?: number;
+  refreshNonce?: string;
   selectedKeywords?: string[];
   story: StorySnapshot;
   structuredContext?: StructuredRecommendationContext;

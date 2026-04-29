@@ -3108,3 +3108,143 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Creating the first major node no longer produces an oversized card, while the main-event lane arrow remains long enough to leave room for adding additional major nodes.
 - Warnings / blockers: The timeline end can still extend when major nodes are deliberately moved below the current minimum; no persistence schema/API change was made.
 - Approval needed: `none`
+
+### 2026-04-29 / loop-214
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`, read-only review of `frontend/src/recommendation/request.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `backend/src/recommendation/routes.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`
+- What changed: Investigated the keyword cloud refresh and empty-node language issue, then added `detail-046 / 키워드 추천 refresh·언어 추론·LLM 재시도 안정화 계획`. Current code already sends `cacheBypass: true` from refresh and skips backend/Gemini keyword caches, but it does not send a refresh nonce or excluded current suggestion labels, so a fresh LLM call can still produce the same labels. The language bug is explained by frontend request assembly: `structuredContext.language` is detected only from the current node text, so an empty current node defaults to `en` even when parent/same-lane/flow context is Korean. Gemini keyword calls currently attempt once, then may fallback or error; the new plan requires 3 total LLM attempts and a visible error if all fail.
+- Tests run: planning update and read-only code inspection only
+- Result: The fix is now split by ownership: frontend must strengthen refresh payloads and context-based language detection, backend must validate new refresh fields and avoid hiding refresh LLM failures with heuristic fallback, and recommendation must add Gemini retry plus prompt/output filtering for excluded labels.
+- Warnings / blockers: Refresh cache bypass alone is not enough to guarantee visibly new words; the prompt also needs previous-suggestion exclusion or a refresh nonce. The empty-node Korean case should be treated as a confirmed frontend language-inference gap.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-215
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `recommendation/src/contracts/index.ts`, `PLANS.md`
+- What changed: Implemented the backend slice of `detail-046`. Keyword requests now accept optional `refreshNonce` and `excludedSuggestionLabels`, validate nonce length and excluded-label count/length, include both fields in the backend keyword cache key, and route `cacheBypass: true` refresh calls through a no-heuristic-fallback provider accessor so refresh LLM/provider failures are returned as errors instead of being hidden by heuristic suggestions.
+- Tests run: `corepack yarn workspace @scenaairo/backend typecheck` (pass); `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); changed-file backend recommendation ESLint (pass); `corepack yarn workspace @scenaairo/recommendation lint` (pass); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 9 tests); `corepack yarn workspace @scenaairo/backend test` (pass, 20 tests); `corepack yarn workspace @scenaairo/recommendation build` (pass); `corepack yarn workspace @scenaairo/backend build` (rerun after recommendation dist refresh pass); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.integration.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 10 tests)
+- Result: Backend route behavior now distinguishes refresh metadata in cache semantics and preserves refresh as a real provider-call path that surfaces provider errors.
+- Warnings / blockers: Frontend still needs to send `refreshNonce` and current suggestion labels, and recommendation provider still needs retry/prompt/output-filter work for full `detail-046` completion. No DB schema change was made.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-216
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/recommendation/request.ts`, `frontend/src/recommendation/request.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented the frontend slice of `detail-046`. Keyword refresh now sends a fresh nonce and the currently displayed keyword labels as `excludedSuggestionLabels` while keeping `cacheBypass: true`. Recommendation request assembly now infers `structuredContext.language` from current node text/keywords first, then ranked/direct/major-flow/episode/object context by priority score and distance, so empty nodes can inherit Korean or Japanese context instead of defaulting to English.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/recommendation/request.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "cache bypass|keyword cloud error"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 2 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for request and WorkspaceShell files (pass); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 75 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Refresh requests now carry enough frontend metadata for backend/provider layers to request alternate keyword sets, and empty current nodes can request keywords in the language implied by nearby high-priority context.
+- Warnings / blockers: Recommendation provider retry, prompt use of excluded labels, and provider-side output filtering remain outside this frontend patch. Existing backend/recommendation dirty files from the backend slice were not reverted.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-217
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Added `detail-047 / 오브젝트 atomic 토큰과 키워드 editable 토큰 분리 계획` after the user clarified the inline editor policy. The new plan keeps object mentions as fully atomic tokens that cannot be entered or partially edited, while keyword tokens become editable styled text. Keyword label edits must update node keywords and keyword cloud state, and keyword style removal is defined as a double-Backspace unwrap that preserves the label as plain text.
+- Tests run: planning update only
+- Result: Ownership is now explicit: Frontend owns token taxonomy, object-only caret snapping, keyword internal editing, double-Backspace keyword unwrap, and keyword cloud sync from the inline draft. Backend has no schema/API work and only needs to preserve the normalized text/keywords/objectIds it receives.
+- Warnings / blockers: Implementation must be reconciled with the existing `detail-042` object-token atomic edit code because current helpers/tests may still treat adjacent keyword tokens as whole-token deletion targets.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-218
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-047`. Object tokens remain atomic, while keyword tokens are now editable styled text. Common token deletion helpers no longer remove keyword tokens wholesale, keyword label edits update `selectedAiKeywords`, keyword cloud slots, and refresh request `selectedKeywords`, and keyword boundary Backspace now uses a two-step unwrap that preserves the label as plain text. Empty keyword tokens are stripped, keyword extraction de-duplicates case-insensitively, and cloud insertion avoids nesting a new keyword marker inside an edited keyword token.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 18 tests); focused `WorkspaceShell.test.tsx` token tests (outside sandbox pass, 4 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for inline editor, CanvasNodeCard, WorkspaceShell files (pass); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 77 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Users can edit keyword labels directly without deleting the whole token, unwrap keyword styling with double Backspace, and keep the keyword cloud/recommendation request state aligned with the edited label. Object mention tokens still reject internal edits and two-step delete as before.
+- Warnings / blockers: Textarea overlay caret placement should still be browser-smoke-tested for visual precision. Existing backend/recommendation dirty files from earlier slices were not reverted.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-219
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`, read-only review of `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.constants.ts`, `frontend/src/styles.css`
+- What changed: Investigated the awkward caret placement around inline object/keyword tokens and added `detail-048 / 인라인 토큰 caret 위치 불일치 개선 계획`. The root cause is the current frontend editing model: a transparent textarea owns the browser caret while a separate absolute preview renders tokenized text, and the saved value contains invisible marker characters that do not exist visually in the preview. Object caret snapping and keyword marker protection make this mismatch more visible.
+- Tests run: planning update and read-only code inspection only
+- Result: The recommended fix is frontend-only: replace the transparent textarea/preview overlay with a token-aware inline editor where displayed token DOM and caret DOM are the same editing surface, while preserving the existing marker-string serialization for persistence.
+- Warnings / blockers: A small CSS/index patch can reduce confusion but cannot fully solve the structural mismatch. Contenteditable/token DOM work needs careful IME, paste, selection restore, and canvas undo/redo regression coverage.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-220
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/styles.css`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented the frontend correction for `detail-048`. The inline editor now toggles a focused `is-editing` state; while editing, the token preview layer is hidden and the real textarea text is visible, so the visible text and browser caret use the same raw input surface. On blur, the styled preview returns. Existing object atomic behavior and keyword editable/double-Backspace behavior remain unchanged.
+- Tests run: focused `WorkspaceShell.test.tsx` input-surface/token tests (outside sandbox pass, 4 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for `CanvasNodeCard.tsx` and `WorkspaceShell.test.tsx` (pass); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 78 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: During actual editing, caret placement is no longer competing with the separate styled preview layer, reducing the object/keyword marker mismatch while preserving existing persistence and token behavior.
+- Warnings / blockers: This is a focused textarea-surface correction, not the full contenteditable/token-DOM rewrite described as the long-term 048 direction. Existing backend/recommendation dirty files from earlier slices were not reverted.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-220-fix
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/styles.css`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Corrected the 048 visual regression called out by the user. Focused inline editing no longer hides the styled token preview or exposes plain raw textarea text; keyword/object preview typography remains visible while `is-editing` only tracks focus state. The regression test now asserts that a focused keyword token still renders through `.node-inline-keyword` and is not hidden with opacity.
+- Tests run: focused `WorkspaceShell.test.tsx -t "styled keyword preview"` (outside sandbox pass, 1 test); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for `WorkspaceShell.test.tsx` and `CanvasNodeCard.tsx` (pass; CSS is not covered by this ESLint config); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 78 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Keyword/object visual styling is preserved during editing, while the 048 focus state remains available for future caret affordance work.
+- Warnings / blockers: The full caret mismatch still requires the longer-term token-DOM/contenteditable work; this patch intentionally restores the token visual language instead of hiding it.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-221
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`, read-only review of `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/recommendation/request.ts`, `backend/src/recommendation/routes.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/contracts/index.ts`
+- What changed: Investigated the user's keyword cloud refresh follow-up and added `detail-049 / 키워드 클라우드 batch pool과 Gemini retry 보강 계획`. Current code still calls Gemini once per provider request, request context does not yet forward `refreshNonce` or `excludedSuggestionLabels` into `RecommendationContext`, frontend still requests only the current open slot count, and server/provider defaults still cap maxSuggestions at 9. The new plan combines the remaining `detail-046` Recommendation retry work with a frontend keyword suggestion queue/pool that fetches roughly two cloud pages per LLM call and consumes unused suggestions on the next same-context refresh.
+- Tests run: planning update and read-only code inspection only
+- Result: Recommended policy is pool-first refresh: if the current node/context signature has unused suggestions, refresh consumes them without an API call; if the pool is empty or context changed, frontend calls LLM for `openSlots * 2` suggestions. Gemini failures should use one initial attempt plus three retries before surfacing an error.
+- Warnings / blockers: Raising frontend batch requests to 18 will not work until backend/provider `maxSuggestions` defaults or env are raised from 9. Backend route outer timeout also needs adjustment so it does not cancel provider-level retries before all attempts finish.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-222
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: `backend/.env.example`, `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `PLANS.md`
+- What changed: Implemented the backend slice of `detail-049`. The backend env example now sets `RECOMMENDATION_MAX_SUGGESTIONS=18` for two keyword-cloud pages, the route fallback max now defaults to the same 18-item batch size, keyword route timeout now allows four provider attempts plus a buffer before the backend wrapper aborts, and route regression coverage verifies that an 18-suggestion batch request passes through.
+- Tests run: `corepack yarn workspace @scenaairo/backend typecheck` (pass); changed-file backend recommendation ESLint (pass); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 10 tests); `corepack yarn workspace @scenaairo/backend test` (pass, 20 tests); focused 18-item batch Vitest (outside sandbox pass, 1 test); `corepack yarn workspace @scenaairo/backend build` (pass)
+- Result: Backend can now support the frontend keyword batch-pool policy at 18 suggestions and no longer has a route-level timeout that preempts the planned provider retry window.
+- Warnings / blockers: Recommendation provider retry and provider-side excluded-label filtering are still pending for full `detail-049` completion. No DB schema/API endpoint change was made.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-223
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`, read-only review of `frontend/src/persistence/controller.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/useEpisodeCanvasState.ts`
+- What changed: Investigated node text undo/redo behavior and added `detail-050 / 노드 텍스트 undo-redo 히스토리 연동 계획`. Current controller snapshots already include saved node text/keywords after `updateNodeContent()`, but inline editing is only committed on blur/explicit content save and Ctrl+Z/Y inside the textarea is intentionally left to browser-native text undo. The plan adds a required async draft flush before canvas undo/redo, removes blur/history-button race conditions, synchronizes selected-node draft state after history apply, and groups node text/keyword/object mention changes into one history action where possible.
+- Tests run: planning update and read-only code inspection only
+- Result: Frontend owns the fix. Backend persistence schema/API should not change; backend only receives the resulting node/object sync operations.
+- Warnings / blockers: Inline mention sync currently calls `attachObjectToNode()` / `detachObjectFromNode()` as separate mutations, so objectIds may become separate undo entries unless the content save path is grouped into one controller mutation.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-224
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Implemented the frontend slice of `detail-049`. Keyword suggestions now request a two-page batch sized as `openSlots * 2`, store unused candidates in an in-memory queue keyed by a stable recommendation context signature, consume same-context pool candidates on refresh without another API call, and invalidate the pool when selected keywords or surrounding request context changes. Refresh API calls now include both currently displayed and already consumed labels in `excludedSuggestionLabels`; unsaved inline draft text/keywords are reflected in the request signature and payload.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 80 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for `WorkspaceShell.tsx` and `WorkspaceShell.test.tsx` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass)
+- Result: The keyword cloud shows the first nine suggestions from an 18-item default batch, refreshes from the local pool first for the same context, then calls the API again only after the pool is exhausted or invalidated.
+- Warnings / blockers: Full frontend lint still fails in pre-existing `frontend/src/routes/AuthCallbackPage.tsx` at `react-hooks/set-state-in-effect`; this patch did not touch that file. Recommendation provider retry and provider-side excluded-label filtering remain pending for full `detail-049` completion.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-225
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Implemented the user's keyword caret correction and the frontend `detail-050` patch. Keyword insertion no longer adds an artificial trailing space at the end, and keyword preview font metrics now match the textarea text metrics while retaining the distinct color/weight styling, reducing the marker/preview caret mismatch. Canvas undo/redo now shares an inline draft flush path with blur, waits for dirty node text before applying history, skips stale redo after a dirty flush, and re-syncs selected node draft/keywords/keyword pool after history apply. Inline object mention bindings are saved with node content through a single controller mutation, so text/keywords/objectIds undo and redo together.
+- Tests run: focused inline/controller Vitest for keyword caret and object binding history (outside sandbox pass, 3 tests); focused WorkspaceShell history/object/keyword regressions (outside sandbox pass); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 82 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for WorkspaceShell, CanvasNodeCard, inline editor, controller files (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Keyword insertion caret no longer carries a forced visible gap, unsaved node text is no longer skipped by canvas undo, Ctrl+Z/Y in the node textarea now uses canvas history, redo does not cross a new dirty text save, and object mention bindings stay coupled to the node text history action.
+- Warnings / blockers: Full frontend lint still has the unrelated pre-existing `frontend/src/routes/AuthCallbackPage.tsx` hook lint failure if run across all `src`; changed-file lint for this patch passes. Browser visual smoke is still useful for pixel-level caret feel because the editor remains a transparent textarea over a styled preview.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-226
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Added a distinct keyword edit-mode affordance for the inline editor. Keyword spans can now receive `is-keyword-editing` when the textarea selection is inside a keyword label, while the first Backspace at a keyword boundary marks the token with `is-keyword-unwrap-pending` before the second Backspace unwraps it to plain text. CSS adds non-layout-changing highlight/underline pulse states and preserves the existing keyword/object font styling.
+- Tests run: focused `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx -t "keyword edit mode|unwraps keyword styling"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 2 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 83 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint via root `eslint` for CanvasNodeCard, inline editor, and WorkspaceShell test files (pass; first `frontend exec eslint` attempt failed because `eslint` was not found in that workspace command context); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Users can visually tell when they are editing a keyword label versus preparing to convert that keyword to plain text, without removing the keyword-specific typography.
+- Warnings / blockers: Full frontend lint still has the unrelated pre-existing `frontend/src/routes/AuthCallbackPage.tsx` hook lint failure if run across all `src`. Browser visual smoke is still useful because the editor remains a transparent textarea over a styled preview.
+- Approval needed: `none`

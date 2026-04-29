@@ -116,6 +116,46 @@ describe("recommendation structured route validation", () => {
     });
   });
 
+  it("rejects invalid keyword refresh nonce values", async () => {
+    const app = buildApp();
+    appsToClose.push(app);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        refreshNonce: "x".repeat(129),
+        story: createStoryPayload()
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      message: "refresh_nonce_invalid"
+    });
+  });
+
+  it("rejects invalid excluded keyword suggestion labels", async () => {
+    const app = buildApp();
+    appsToClose.push(app);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        excludedSuggestionLabels: ["x".repeat(81)],
+        story: createStoryPayload()
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      message: "excluded_suggestion_labels_invalid"
+    });
+  });
+
   it("skips keyword route cache hits when cache bypass is true", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const app = buildApp({
@@ -168,6 +208,121 @@ describe("recommendation structured route validation", () => {
     expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_bypass"))).toBe(
       true
     );
+  });
+
+  it("keys keyword route cache by refresh nonce and excluded labels", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const app = buildApp({
+      recommendationConfig: {
+        cacheTtlMs: 60_000,
+        logLevel: "info",
+        provider: "heuristic"
+      }
+    });
+    const story = {
+      ...createStoryPayload(),
+      projectTitle: "Refresh Metadata Cache Key Test"
+    };
+    const createPayload = (
+      refreshNonce: string,
+      excludedSuggestionLabels: string[]
+    ) => ({
+      excludedSuggestionLabels,
+      refreshNonce,
+      story
+    });
+    appsToClose.push(app);
+    await app.ready();
+
+    await app.inject({
+      method: "POST",
+      payload: createPayload("refresh-a", ["already shown"]),
+      url: "/api/recommendation/keywords"
+    });
+    await app.inject({
+      method: "POST",
+      payload: createPayload("refresh-a", ["already shown"]),
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_hit"))).toBe(
+      true
+    );
+
+    logSpy.mockClear();
+
+    await app.inject({
+      method: "POST",
+      payload: createPayload("refresh-b", ["already shown"]),
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_hit"))).toBe(
+      false
+    );
+
+    logSpy.mockClear();
+
+    await app.inject({
+      method: "POST",
+      payload: createPayload("refresh-b", ["different shown"]),
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_hit"))).toBe(
+      false
+    );
+  });
+
+  it("does not hide refresh keyword provider errors behind heuristic fallback", async () => {
+    const app = buildApp({
+      recommendationApiKey: null,
+      recommendationConfig: {
+        fallbackToHeuristicOnError: true,
+        model: "gemini-2.5-flash",
+        provider: "gemini"
+      }
+    });
+    appsToClose.push(app);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        cacheBypass: true,
+        refreshNonce: "manual-refresh",
+        story: createStoryPayload()
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      message: "missing_api_key"
+    });
+  });
+
+  it("allows eighteen keyword suggestions for batch pool requests", async () => {
+    const app = buildApp({
+      recommendationConfig: {
+        maxSuggestions: 18,
+        provider: "heuristic"
+      }
+    });
+    appsToClose.push(app);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        maxSuggestions: 18,
+        story: createStoryPayload()
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().suggestions).toHaveLength(18);
   });
 
   it("allows zero keyword suggestions when all cloud slots are filled", async () => {

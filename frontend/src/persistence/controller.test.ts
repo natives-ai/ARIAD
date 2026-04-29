@@ -1760,6 +1760,62 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("restores node content and object bindings together with undo and redo", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    await controller.createEpisode();
+    const nodeId = (await controller.createNode("major", 0))!;
+    const objectId = (await controller.createObject({
+      category: "thing",
+      name: "Glass shard",
+      summary: "A small visual pressure point."
+    }))!;
+
+    await controller.updateNodeContentAndObjectBindings(nodeId, {
+      contentMode: "text",
+      keywords: ["sharp clue"],
+      objectIds: [objectId],
+      text: "Glass shard catches the light."
+    });
+
+    let state = controller.getState()!;
+    let node = state.snapshot.nodes.find((entry) => entry.id === nodeId);
+
+    expect(node?.text).toBe("Glass shard catches the light.");
+    expect(node?.keywords).toEqual(["sharp clue"]);
+    expect(node?.objectIds).toEqual([objectId]);
+
+    await controller.undo();
+
+    state = controller.getState()!;
+    node = state.snapshot.nodes.find((entry) => entry.id === nodeId);
+
+    expect(node?.text).toBe("");
+    expect(node?.keywords).toEqual([]);
+    expect(node?.objectIds).toEqual([]);
+    expect(state.snapshot.objects.some((object) => object.id === objectId)).toBe(true);
+
+    await controller.redo();
+
+    state = controller.getState()!;
+    node = state.snapshot.nodes.find((entry) => entry.id === nodeId);
+
+    expect(node?.text).toBe("Glass shard catches the light.");
+    expect(node?.keywords).toEqual(["sharp clue"]);
+    expect(node?.objectIds).toEqual([objectId]);
+
+    controller.dispose();
+  });
+
   it("persists node fold and visual markers through local mutations and sync", async () => {
     const now = createClock();
     const storage = new MemoryStorage();

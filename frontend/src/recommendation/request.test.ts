@@ -181,16 +181,89 @@ describe("recommendation request structured context", () => {
     ]);
   });
 
-  it("marks refresh keyword requests as cache bypass", () => {
+  it("infers Korean output language from surrounding context when current node is empty", () => {
+    const snapshot = createSnapshot();
+
+    snapshot.nodes = snapshot.nodes.map((node) => {
+      if (node.id === "minor-current") {
+        return {
+          ...node,
+          keywords: [],
+          text: ""
+        };
+      }
+
+      if (node.id === "major-top") {
+        return {
+          ...node,
+          keywords: ["갈등"],
+          text: "카페에서 엄마가 주인공을 압박한다"
+        };
+      }
+
+      return node;
+    });
+
+    const currentNode = snapshot.nodes.find((node) => node.id === "minor-current")!;
+    const parentNode = snapshot.nodes.find((node) => node.id === "major-top")!;
+    const request = createKeywordRecommendationRequest(snapshot, currentNode, parentNode, {
+      selectedKeywords: []
+    });
+
+    expect(request.structuredContext?.language).toBe("ko");
+  });
+
+  it("keeps current node English language ahead of Korean surrounding context", () => {
+    const snapshot = createSnapshot();
+
+    snapshot.nodes = snapshot.nodes.map((node) => {
+      if (node.id === "minor-current") {
+        return {
+          ...node,
+          keywords: [],
+          text: "A quiet apology lands"
+        };
+      }
+
+      if (node.id === "major-top") {
+        return {
+          ...node,
+          keywords: ["갈등"],
+          text: "카페에서 엄마가 주인공을 압박한다"
+        };
+      }
+
+      return node;
+    });
+
+    const currentNode = snapshot.nodes.find((node) => node.id === "minor-current")!;
+    const parentNode = snapshot.nodes.find((node) => node.id === "major-top")!;
+    const request = createKeywordRecommendationRequest(snapshot, currentNode, parentNode, {
+      selectedKeywords: []
+    });
+
+    expect(request.structuredContext?.language).toBe("en");
+  });
+
+  it("marks refresh keyword requests with bypass, nonce, and excluded labels", () => {
     const snapshot = createSnapshot();
     const currentNode = snapshot.nodes.find((node) => node.id === "minor-current")!;
     const parentNode = snapshot.nodes.find((node) => node.id === "major-top")!;
     const normalRequest = createKeywordRecommendationRequest(snapshot, currentNode, parentNode);
     const refreshRequest = createKeywordRecommendationRequest(snapshot, currentNode, parentNode, {
-      cacheBypass: true
+      cacheBypass: true,
+      excludedSuggestionLabels: [" renewed pressure ", "Renewed Pressure", "hard choice"],
+      refreshNonce: " refresh-1 "
     });
 
     expect(normalRequest.cacheBypass).toBeUndefined();
+    expect(normalRequest.excludedSuggestionLabels).toBeUndefined();
+    expect(normalRequest.refreshNonce).toBeUndefined();
     expect(refreshRequest.cacheBypass).toBe(true);
+    expect(refreshRequest.excludedSuggestionLabels).toEqual([
+      "renewed pressure",
+      "hard choice"
+    ]);
+    expect(refreshRequest.refreshNonce).toBe("refresh-1");
   });
 });

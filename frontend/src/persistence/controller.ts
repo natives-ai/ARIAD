@@ -108,6 +108,11 @@ export interface NodeContentDraft {
   text: string;
 }
 
+export interface NodeContentObjectBindingDraft extends NodeContentDraft {
+  objectIds: string[];
+  objectsToCreate?: StoryObjectDraft[];
+}
+
 export interface NodeVisualStateDraft {
   isCollapsed?: boolean;
   isFixed?: boolean;
@@ -375,6 +380,11 @@ function sanitizeKeywords(keywords: string[]) {
 
 function sanitizeText(value: string) {
   return value.trim();
+}
+
+// 오브젝트 이름을 중복 비교용 키로 정규화합니다.
+function getObjectNameKey(value: string) {
+  return sanitizeText(value).replace(/\s+/g, " ").toLowerCase();
 }
 
 // 이 함수는 같은 레인의 기존 간격으로 노드 높이를 추정합니다.
@@ -1390,6 +1400,118 @@ export class WorkspacePersistenceController {
     ], {
       historyEpisodeId: currentNode.episodeId
     });
+  }
+
+  // 노드 본문과 오브젝트 연결을 하나의 history action으로 저장합니다.
+  async updateNodeContentAndObjectBindings(
+    nodeId: string,
+    draft: NodeContentObjectBindingDraft
+  ) {
+    const current = this.requireState();
+    const currentNode = current.snapshot.nodes.find((node) => node.id === nodeId);
+
+    if (!currentNode) {
+      return false;
+    }
+
+    const timestamp = this.now();
+    const nextObjects = [...current.snapshot.objects];
+    const resolvedObjectIds = sanitizeKeywords(draft.objectIds).filter((objectId) =>
+      nextObjects.some(
+        (object) => object.id === objectId && object.projectId === currentNode.projectId
+      )
+    );
+
+    for (const objectDraft of draft.objectsToCreate ?? []) {
+      const name = sanitizeText(objectDraft.name);
+      const summary = sanitizeText(objectDraft.summary);
+      const nameKey = getObjectNameKey(name);
+
+      if (!name || !nameKey) {
+        continue;
+      }
+
+      const existingObject = nextObjects.find(
+        (object) =>
+          object.projectId === currentNode.projectId &&
+          object.episodeId === currentNode.episodeId &&
+          getObjectNameKey(object.name) === nameKey
+      );
+
+      if (existingObject) {
+        resolvedObjectIds.push(existingObject.id);
+        continue;
+      }
+
+      const nextObject = {
+        category: objectDraft.category,
+        createdAt: timestamp,
+        episodeId: currentNode.episodeId,
+        id: this.createId("object"),
+        name,
+        projectId: currentNode.projectId,
+        summary,
+        updatedAt: timestamp
+      };
+
+      nextObjects.push(nextObject);
+      resolvedObjectIds.push(nextObject.id);
+    }
+
+    const nextNodeObjectIds = sanitizeKeywords(resolvedObjectIds);
+    const nextNodes = current.snapshot.nodes.map((node) => {
+      if (node.id !== nodeId) {
+        return node;
+      }
+
+      return {
+        ...node,
+        contentMode: draft.contentMode,
+        keywords: sanitizeKeywords(draft.keywords),
+        objectIds: nextNodeObjectIds,
+        text: draft.text.trim(),
+        updatedAt: timestamp
+      };
+    });
+    const updatedNode = nextNodes.find((node) => node.id === nodeId);
+
+    if (!updatedNode) {
+      return false;
+    }
+
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      currentNode.episodeId,
+      timestamp
+    );
+    const snapshot: StoryWorkspaceSnapshot = {
+      ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
+      nodes: nextNodes,
+      objects: nextObjects
+    };
+
+    if (snapshotsMatch(current.snapshot, snapshot)) {
+      return false;
+    }
+
+    this.applyLocalMutation(snapshot, [
+      ...createObjectOperations(
+        current.snapshot.objects,
+        nextObjects,
+        current.snapshot.project.id
+      ),
+      {
+        action: "upsert",
+        kind: "node",
+        payload: updatedNode
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: currentNode.episodeId
+    });
+
+    return true;
   }
 
   async updateNodePlacement(nodeId: string, draft: NodePlacementDraft) {

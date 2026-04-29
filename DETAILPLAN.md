@@ -7777,3 +7777,1136 @@ Backend:
 
 - `WorkspaceShell.test.tsx`: 첫 major 재생성 노드가 기본 높이 `102px`를 유지하고 timeline 최소 span이 유지되는 회귀를 추가/수정했습니다.
 - timeline end 관련 focused Vitest와 full `WorkspaceShell.test.tsx`를 통과했습니다.
+
+## detail-046 / 키워드 추천 refresh·언어 추론·LLM 재시도 안정화 계획
+
+### 46.1 배경
+
+사용자 요청:
+
+- 키워드 클라우드 refresh를 누르면 새로운 단어를 위해 LLM을 다시 호출해야 하는데, 실제로 그렇게 동작하는지 의심됩니다.
+- 추천 키워드에 가중치/structured context를 넣었지만, 빈 노드에서는 주변 노드를 참고하지 않는 것처럼 보입니다.
+- 근거: 주변 노드를 한글로 작성했는데, 빈 노드에서 추천을 호출하니 영어 추천이 나왔습니다.
+- LLM 호출 오류가 나면 총 3회 시도합니다. 최초 실패 후 2번 더 호출하고, 그래도 실패하면 오류를 띄웁니다.
+
+### 46.2 현재 확인 결과
+
+확인된 코드:
+
+- Frontend `WorkspaceShell.openKeywordSuggestions(..., { refresh: true })`
+  - `createKeywordRecommendationRequest(..., { cacheBypass: true })`를 보냅니다.
+- Frontend `createKeywordRecommendationRequest()`
+  - `cacheBypass?: true`를 request payload에 포함합니다.
+- Backend `/api/recommendation/keywords`
+  - `cacheBypass === true`이면 backend keyword cache read/write를 건너뜁니다.
+- Recommendation context
+  - request의 `cacheBypass`를 provider context로 전달합니다.
+- Gemini provider
+  - `context.cacheBypass === true`이면 provider 내부 keyword cache read/write를 건너뜁니다.
+
+판단:
+
+- refresh가 cache를 우회하는 경로는 코드상 존재합니다.
+- 다만 같은 context/prompt로 다시 호출하면 LLM이 같은 결과를 낼 수 있으므로, 사용자는 "새로 호출되지 않는다"고 체감할 수 있습니다.
+- 현재 request에는 refresh nonce 또는 "직전 추천어 제외" 정보가 없습니다.
+- 따라서 refresh는 "캐시 우회"뿐 아니라 "새 후보를 요구하는 신호"까지 포함해야 합니다.
+
+언어 문제 확인:
+
+- `createStructuredRecommendationContext()`의 `language`는 현재 `detectRecommendationLanguage(stripInlineFormattingMarkers(node.text))`로 결정됩니다.
+- 빈 노드면 current node text가 비어 있으므로 기본값 `en`이 됩니다.
+- parent/direct/same-lane/major-flow/episode/object context가 한글이어도 language가 `ko`로 바뀌지 않습니다.
+- Gemini prompt에는 `Output language: en`이 명시되므로, 주변 노드가 한글이어도 영어 추천이 나오는 것이 자연스러운 현재 동작입니다.
+
+LLM 오류 처리 확인:
+
+- Gemini provider는 현재 `generateContent()`를 1회 호출합니다.
+- 실패하면 fallback provider가 있으면 heuristic fallback을 반환하고, 없으면 error를 throw합니다.
+- Backend도 timeout일 때 fallback 설정이 켜져 있으면 heuristic fallback을 반환할 수 있습니다.
+- 사용자 요구는 "LLM을 2번 더 재호출하고, 그래도 안 되면 오류 표시"이므로 fallback이 오류를 숨기면 안 됩니다.
+
+### 46.3 Frontend 계획
+
+#### 46.3.1 refresh 요청 의미 강화
+
+작업:
+
+- keyword refresh 클릭 시 `cacheBypass: true`는 유지합니다.
+- request에 `refreshNonce` 또는 `refreshId`를 추가합니다.
+- 현재 화면에 표시 중인 추천 label을 `excludedSuggestionLabels`로 함께 보냅니다.
+- 선택된 keywords와 제외 keywords는 둘 다 case-insensitive 중복 방지 대상으로 취급합니다.
+- refresh 중에는 동일 노드에 대한 중복 refresh 클릭을 막거나, 마지막 request id만 반영하는 현재 정책을 유지합니다.
+
+의도:
+
+- backend/provider cache를 우회하는 것뿐 아니라, prompt에 "이전 후보와 다른 후보를 제안하라"는 명시 신호를 줍니다.
+- LLM이 같은 context를 받아도 이전 label을 반복하지 않도록 합니다.
+
+#### 46.3.2 빈 노드 언어 추론 개선
+
+작업:
+
+- `detectRecommendationLanguage()` 입력을 current node text 하나로 제한하지 않습니다.
+- `detectRecommendationLanguageFromContext()` helper를 추가합니다.
+- 언어 판정 입력 후보:
+  - current node text/keywords
+  - parent node text/keywords
+  - child/direct connection text/keywords
+  - same-lane before/after text/keywords
+  - nearest major flow items
+  - episode title/objective/endpoint
+  - attached object name/summary
+  - rankedItems의 high-priority text/keywords
+- 우선순위:
+  - current node에 언어 신호가 있으면 current node 우선
+  - current node가 비어 있으면 high-priority ranked/direct context 기준
+  - 한글/일본어/영어가 섞이면 가장 높은 priorityScore와 가까운 distance를 기준으로 결정
+  - 아무 신호도 없으면 기존처럼 `en`
+
+검증:
+
+- 빈 current node + 한글 parent/same-lane/major-flow가 있으면 `structuredContext.language === "ko"`
+- 빈 current node + 일본어 주변 context면 `ja`
+- current node가 영어로 명시되어 있으면 주변 한글보다 current node 영어를 우선합니다.
+
+#### 46.3.3 UI 오류 표시
+
+작업:
+
+- LLM retry가 최종 실패하면 keyword cloud에 명확한 error state를 표시합니다.
+- 기존 stale request guard는 유지합니다.
+- 실패 후 refresh 버튼은 다시 시도 가능해야 합니다.
+- fallback heuristic 결과를 조용히 보여주지 않습니다. LLM이 실패했으면 실패로 보여주는 것이 사용자의 기대와 맞습니다.
+
+### 46.4 Backend 계획
+
+#### 46.4.1 request contract 확장
+
+작업:
+
+- `KeywordRecommendationRequest`에 선택 필드를 추가합니다.
+  - `refreshNonce?: string`
+  - `excludedSuggestionLabels?: string[]`
+- validation:
+  - `refreshNonce`는 optional string, 최대 길이 제한
+  - `excludedSuggestionLabels`는 optional string array, 최대 개수/길이 제한
+- backend keyword cache key에는 refreshNonce/excluded labels를 포함합니다.
+- 단, `cacheBypass === true`이면 cache read/write는 계속 건너뜁니다.
+
+주의:
+
+- DB schema 변경 없음
+- API endpoint 변경 없음
+- sentence recommendation에는 이 필드를 적용하지 않습니다.
+
+#### 46.4.2 fallback 정책 정리
+
+작업:
+
+- keyword refresh 또는 Gemini provider LLM 실패에서는 heuristic fallback이 오류를 숨기지 않게 합니다.
+- 기존 `fallbackToHeuristicOnError` 설정은 non-refresh path에서만 유지할지, Gemini keyword path 전체에서 비활성화할지 결정합니다.
+
+추천 결정:
+
+- refresh 요청(`cacheBypass === true`)은 반드시 LLM fresh call 의미이므로 fallback을 사용하지 않습니다.
+- 일반 keyword 요청은 기존 fallback 설정을 유지하되, Gemini provider 내부에서 3회 시도 후 fallback 여부를 판단합니다.
+
+### 46.5 Recommendation 계획
+
+#### 46.5.1 Gemini provider retry
+
+작업:
+
+- Gemini keyword request에 retry helper를 추가합니다.
+- 총 3회 시도합니다.
+  - 1회 기본 호출
+  - 실패 시 2회 추가 재시도
+- retry 대상:
+  - timeout
+  - upstream connection error
+  - malformed/empty structured output
+  - transient provider error
+- retry하지 않을 대상:
+  - missing API key
+  - invalid local request/config
+  - maxSuggestions 0
+- 각 retry attempt는 같은 request context를 유지하되, provider prompt에 attempt/refresh nonce를 넣어 동일 응답 반복 가능성을 낮춥니다.
+- 모든 attempt 실패 시 normalized error를 throw합니다.
+
+#### 46.5.2 refresh prompt 강화
+
+작업:
+
+- `RecommendationContext`에 `refreshNonce`와 `excludedSuggestionLabels`를 전달합니다.
+- Gemini prompt에 아래 지시를 추가합니다.
+  - refresh 요청이면 "Generate a fresh alternate set."
+  - excluded labels는 반복하지 말 것
+  - selected keywords와 excluded labels 둘 다 duplicate 금지
+- `extractKeywordSuggestions()`에서도 excluded label을 case-insensitive로 제거합니다.
+
+#### 46.5.3 주변 context 기반 언어 유지
+
+작업:
+
+- Recommendation package는 frontend가 보낸 `structuredContext.language`를 그대로 존중합니다.
+- provider prompt의 `Output language`가 주변 context 기반으로 들어왔는지 테스트합니다.
+- heuristic fallback도 structured context language를 가능하면 따르도록 별도 점검합니다.
+
+### 46.6 테스트 계획
+
+Frontend:
+
+- `frontend/src/recommendation/request.test.ts`
+  - refresh request가 `cacheBypass: true`, `refreshNonce`, `excludedSuggestionLabels`를 포함
+  - 빈 current node + 한글 주변 node에서 language가 `ko`
+  - current node 영어가 있으면 영어 우선
+- `WorkspaceShell.test.tsx`
+  - refresh 클릭 시 현재 표시 suggestion labels가 excluded list로 전달됨
+  - LLM 최종 실패 응답이 keyword cloud error로 표시됨
+
+Backend:
+
+- `backend/src/recommendation/routes.structured.test.ts`
+  - `refreshNonce` validation
+  - `excludedSuggestionLabels` validation
+  - refresh/cacheBypass request가 cache hit를 사용하지 않음
+  - cache key가 refresh/excluded fields를 반영
+- route integration
+  - provider error after retries는 heuristic fallback으로 숨기지 않고 오류 응답
+
+Recommendation:
+
+- `recommendation/src/provider/factory.test.ts`
+  - Gemini keyword call이 실패하면 총 3회 `generateContent` 호출
+  - 2번째 또는 3번째 성공 시 성공 결과 반환
+  - 3회 모두 실패하면 error throw
+  - missing API key는 retry하지 않음
+  - refresh excluded labels가 prompt와 output filter에 반영됨
+  - `Output language: ko`가 prompt에 들어가는지 확인
+
+### 46.7 구현 순서
+
+1. Frontend language inference helper를 먼저 고칩니다.
+2. refresh request에 `refreshNonce`와 `excludedSuggestionLabels`를 추가합니다.
+3. Backend contract validation과 route cache/fallback 정책을 맞춥니다.
+4. Recommendation context/provider에 refresh/excluded/retry를 연결합니다.
+5. Retry 최종 실패 시 UI error가 보이는지 route-level로 검증합니다.
+
+### 46.8 완료 기준
+
+- refresh 클릭은 cache를 우회하고 실제 provider 호출을 발생시킵니다.
+- refresh는 이전 표시 keyword와 다른 후보를 우선 요청합니다.
+- 빈 노드라도 주변 한글 context가 강하면 한국어 keyword를 요청합니다.
+- LLM 호출 실패는 총 3회 시도 후에도 실패하면 사용자에게 오류로 표시됩니다.
+- heuristic fallback은 refresh LLM 실패를 조용히 숨기지 않습니다.
+
+### 46.9 Frontend 구현 결과
+
+적용일: 2026-04-29
+
+변경:
+
+- `createKeywordRecommendationRequest()`가 refresh 요청에서 `cacheBypass: true`, `refreshNonce`, `excludedSuggestionLabels`를 함께 보낼 수 있게 했습니다.
+- `excludedSuggestionLabels`는 현재 화면에 표시된 keyword label을 기준으로 전달되며, trim 및 case-insensitive 중복 제거를 거칩니다.
+- `structuredContext.language`는 현재 노드 text/keywords를 우선하고, current에 언어 신호가 없으면 ranked/direct/major-flow/episode/object context의 `priorityScore`와 `distance`로 추론합니다.
+- keyword 추천 요청 실패 시 기존 keyword cloud error state가 유지되며, 실패 후 refresh 버튼은 다시 시도 가능한 상태로 남습니다.
+
+검증:
+
+- `frontend/src/recommendation/request.test.ts`
+  - refresh request의 `cacheBypass`, `refreshNonce`, `excludedSuggestionLabels` 포함 검증
+  - 빈 current node + 한글 parent context의 `language === "ko"` 검증
+  - current node 영어가 주변 한글 context보다 우선하는지 검증
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+  - refresh 클릭 시 현재 표시 suggestion label이 excluded list로 전달되는지 검증
+  - keyword recommendation 실패 응답이 cloud error로 표시되는지 검증
+
+남은 범위:
+
+- Gemini provider의 3회 retry, prompt의 excluded label 반영, provider output filtering은 Recommendation slice에서 완료해야 합니다.
+
+## detail-047 / 오브젝트 atomic 토큰과 키워드 editable 토큰 분리 계획
+
+### 47.1 목적
+
+이 섹션은 인라인 노드 에디터에서 오브젝트와 키워드 토큰의 편집 규칙을 분리하기 위한 계획입니다.
+
+사용자 의도:
+
+- 오브젝트는 완전히 하나의 텍스트 덩어리처럼 동작해야 합니다.
+- 오브젝트 내부에는 마우스 클릭, 방향키, 입력, 삭제로 진입할 수 없어야 합니다.
+- 키워드는 오브젝트처럼 잠그면 안 됩니다.
+- 키워드 내부 텍스트는 사용자가 직접 수정할 수 있어야 합니다.
+- 키워드 스타일/효과만 해제하고 일반 텍스트로 풀고 싶을 때는 Backspace 두 번으로 처리합니다.
+- 수정된 키워드 label은 keyword cloud에도 반영되어야 합니다.
+
+핵심 결정:
+
+- object token은 atomic entity token입니다.
+- keyword token은 editable styled text입니다.
+- 두 토큰을 같은 "진입 불가 토큰"으로 처리하지 않습니다.
+
+### 47.2 현재 문제
+
+현재 또는 최근 구현 기준으로 object token 내부 진입 차단 로직이 keyword token까지 함께 막는 방향으로 확장될 위험이 있습니다.
+
+문제:
+
+- 키워드 label 마지막 글자를 고치고 싶은데 Backspace가 keyword 전체 삭제처럼 동작하면 수정 흐름이 깨집니다.
+- 방향키/마우스로 keyword label 내부에 들어갈 수 없으면 사용자가 추천 키워드를 자기 표현으로 다듬을 수 없습니다.
+- keyword label을 `student -> students`처럼 고쳤는데 node keywords나 keyword cloud가 이전 label을 계속 참조하면 추천 context가 틀어집니다.
+- 반대로 object token은 `student -> stuudent -> stuuudent`처럼 부분 수정되면 단계별로 중복 object가 생기는 문제가 재발합니다.
+
+### 47.3 Frontend 계획
+
+#### 47.3.1 token taxonomy 명시
+
+작업:
+
+- inline editor helper에서 token range를 object와 keyword로 분리해 반환합니다.
+- object token range에는 atomic 정책을 적용합니다.
+- keyword token range에는 editable label 정책을 적용합니다.
+- `removeAdjacentInlineToken(...)` 같은 공통 삭제 helper가 keyword를 object처럼 전체 삭제하지 않도록 역할을 분리합니다.
+
+결정:
+
+- object token: 내부 진입 불가, 부분 수정 불가, 전체 삭제만 가능
+- keyword token: 내부 진입 가능, label 부분 수정 가능, marker 손상만 방지
+
+#### 47.3.2 object token atomic 유지
+
+작업:
+
+- 마우스 클릭으로 object token 내부에 caret이 들어가면 token 앞/뒤 경계로 스냅합니다.
+- 방향키로 object token 내부에 들어가려 하면 token 앞/뒤 경계로 스냅합니다.
+- object token 내부 insert/delete/paste는 막습니다.
+- object token marker 또는 label 일부만 깨지는 변경은 이전 정상 값으로 복원합니다.
+- object token 삭제는 기존 2-step 정책을 유지합니다.
+  - 첫 Backspace/Delete: object token 전체 range 선택 또는 삭제 대기 상태
+  - 두 번째 Backspace/Delete: object token 전체 삭제
+
+검증 포인트:
+
+- object token 내부 클릭 후 caret이 내부에 머물지 않습니다.
+- 방향키로 object token 안에 들어갈 수 없습니다.
+- object token label 한 글자만 바꾸는 경로로 새 object가 생성되지 않습니다.
+
+#### 47.3.3 keyword token 내부 편집 허용
+
+작업:
+
+- 마우스 클릭으로 keyword label 내부에 caret을 둘 수 있게 합니다.
+- 방향키로 keyword label 내부를 이동할 수 있게 합니다.
+- keyword label 내부에서 일반 입력, Backspace, Delete, selection replace를 허용합니다.
+- 숨김 marker 위치에 caret이 걸리는 경우에는 label 안쪽 또는 token 바깥 정상 경계로만 보정합니다.
+- keyword marker 자체가 깨지는 변경은 막되, label 문자 변경은 막지 않습니다.
+
+예시:
+
+- `student` keyword의 끝에서 Backspace 1회 입력
+  - 기대: `studen`으로 label 마지막 글자 삭제
+  - 금지: keyword token 전체 삭제
+- `student` keyword 내부에서 `u` 추가
+  - 기대: `stuudent` keyword label로 수정
+  - 금지: object 생성 또는 token 전체 삭제
+
+#### 47.3.4 keyword 효과 해제 double Backspace
+
+작업:
+
+- keyword label 내부 문자 삭제와 keyword 효과 해제를 분리합니다.
+- caret이 keyword label 내부에 있으면 Backspace는 일반 텍스트 편집처럼 동작합니다.
+- caret이 keyword token의 바깥 경계에 있고 Backspace가 hidden marker만 지우게 되는 상황이면 2-step unwrap 상태로 처리합니다.
+  - 첫 Backspace: keyword unwrap 대기 상태만 설정하고 텍스트는 유지
+  - 두 번째 Backspace: keyword marker만 제거하고 label은 일반 텍스트로 남김
+- unwrap 대기 상태는 아래 상황에서 즉시 해제합니다.
+  - caret 이동
+  - 다른 입력
+  - 다른 노드 선택
+  - keyword label 변경
+  - blur
+
+결정:
+
+- keyword를 지우는 기능이 아니라 keyword 스타일/효과를 해제하는 기능입니다.
+- 두 번째 Backspace 후에도 label 문자열은 삭제하지 않습니다.
+- Delete는 우선 일반 문자/selection 삭제와 marker 보호만 담당하고, 효과 해제 주 동작은 Backspace 두 번으로 고정합니다.
+
+#### 47.3.5 keyword cloud 동기화
+
+작업:
+
+- inline draft가 바뀔 때 `extractInlineKeywords(inlineDraft)` 기준으로 현재 keyword label을 재계산합니다.
+- keyword cloud를 열거나 refresh할 때 stale `node.keywords`보다 현재 inline draft에서 추출한 keyword를 우선합니다.
+- 노드 저장 시 text와 keywords array가 같은 draft에서 파생되도록 정리합니다.
+- keyword label을 수정하면 selected keyword chip과 keyword cloud selected slot도 수정된 label을 표시합니다.
+- case-insensitive 중복 제거는 수정 후 label 기준으로 적용합니다.
+
+예시:
+
+- 기존 keyword: `student`
+- 사용자가 inline editor에서 `students`로 수정
+- 기대:
+  - 노드 저장 keywords: `["students"]`
+  - keyword cloud selected slot: `students`
+  - 추천 request의 `selectedKeywords`: `students`
+  - `student`와 `Students`는 중복으로 취급
+
+#### 47.3.6 empty keyword 처리
+
+작업:
+
+- keyword label이 빈 문자열이 되면 빈 keyword token을 저장하지 않습니다.
+- 사용자가 label 문자를 모두 지운 경우에는 marker도 제거하고 빈 keyword를 `node.keywords`에 넣지 않습니다.
+- keyword cloud에는 빈 selected slot을 만들지 않습니다.
+
+### 47.4 Backend 계획
+
+결정:
+
+- DB schema 변경 없음
+- API contract 변경 없음
+- 별도 migration 없음
+
+이유:
+
+- object/keyword 편집 가능 여부는 inline editor의 입력 정책 문제입니다.
+- 저장 모델은 기존 `node.text`, `node.keywords`, `node.objectIds`로 충분합니다.
+- Backend는 frontend가 정리해서 보낸 최신 text/keywords/objectIds를 그대로 저장하면 됩니다.
+
+확인할 것:
+
+- 저장 요청에서 빈 keyword가 넘어오면 기존 정규화 로직으로 제거되는지 확인합니다.
+- case-insensitive 중복 제거가 frontend에서 끝나지 않더라도 backend persistence가 깨지지 않는지 확인합니다.
+- objectIds는 object token에서만 갱신되고, keyword label 수정이 object 생성/연결로 이어지지 않아야 합니다.
+
+### 47.5 테스트 계획
+
+Frontend:
+
+- `workspaceShell.inlineEditor.test.ts`
+  - object token range와 keyword token range가 분리됨
+  - object token 내부 caret snap 유지
+  - keyword token 내부 caret 진입 허용
+  - keyword label 마지막 글자는 Backspace 1회로 삭제 가능
+  - keyword label 내부 typing/replace 허용
+  - keyword boundary에서 Backspace 1회는 unwrap 대기, 2회는 marker만 제거
+  - keyword unwrap 후 label은 plain text로 남음
+  - keyword marker 손상은 막되 label 수정은 허용
+- `WorkspaceShell.test.tsx`
+  - keyword label 수정 후 keyword cloud selected slot에 수정 label 표시
+  - keyword refresh request의 selectedKeywords가 수정 label 기준
+  - object token 부분 수정으로 새 object가 생성되지 않음
+  - inline editor 안 Backspace/Delete가 workspace delete confirm shortcut과 충돌하지 않음
+
+Backend:
+
+- 새 테스트는 필수 아님
+- 기존 persistence/update node 테스트로 text/keywords 저장 회귀만 확인
+
+### 47.6 구현 순서
+
+1. inline editor helper에서 object token helper와 keyword token helper 책임을 분리합니다.
+2. CanvasNodeCard keydown/click/selection 로직에서 object snap만 유지하고 keyword 내부 진입은 허용합니다.
+3. keyword boundary double Backspace unwrap 상태를 추가합니다.
+4. inline draft 변경 기준으로 selected keyword 상태와 keyword cloud 입력값을 동기화합니다.
+5. object creation sync가 keyword label 수정에는 반응하지 않는지 회귀 테스트를 추가합니다.
+6. frontend focused test와 build smoke를 실행합니다.
+
+### 47.7 완료 기준
+
+- object token은 마우스/방향키/입력/삭제로 내부 수정이 불가능합니다.
+- keyword token은 마우스/방향키로 내부 진입이 가능하고 일반 텍스트처럼 label 수정이 가능합니다.
+- keyword 마지막 글자는 Backspace 한 번으로 수정할 수 있습니다.
+- keyword 효과 해제는 Backspace 두 번으로 수행되며 label 문자열은 plain text로 남습니다.
+- 수정된 keyword label이 node keywords와 keyword cloud에 반영됩니다.
+- keyword 수정 과정에서 새 object가 생성되지 않습니다.
+
+## detail-048 / 인라인 토큰 caret 위치 불일치 개선 계획
+
+### 48.1 목적
+
+이 섹션은 노드 인라인 에디터에서 오브젝트/키워드가 포함될 때 caret 위치가 어색하게 보이고, 사용자가 어디부터 쓰거나 지우는지 헷갈리는 문제를 정리합니다.
+
+사용자 체감:
+
+- 오브젝트나 키워드 주변에서 caret이 눈에 보이는 글자 위치와 맞지 않습니다.
+- Backspace/Delete가 어느 글자 또는 어느 토큰에 적용되는지 예측하기 어렵습니다.
+- 마우스로 클릭한 위치와 실제 입력 시작 위치가 다르게 느껴집니다.
+
+핵심 결정:
+
+- 이 문제는 backend 저장 구조 문제가 아닙니다.
+- frontend inline editor의 표시 모델과 실제 입력 모델이 서로 다른 것이 주 원인입니다.
+- 단기 보정보다 token-aware editing 모델로 바꾸는 방향이 안전합니다.
+
+### 48.2 원인 분석
+
+현재 구조:
+
+- 실제 입력은 `textarea.node-inline-input`이 담당합니다.
+- 사용자가 보는 텍스트는 `div.node-inline-preview`가 별도로 렌더링합니다.
+- textarea는 `color: transparent`, `-webkit-text-fill-color: transparent`로 글자는 숨기고 caret만 보이게 합니다.
+- preview는 같은 문자열을 다시 파싱해서 keyword/object span으로 보여줍니다.
+- 저장 문자열에는 보이지 않는 marker가 들어갑니다.
+  - keyword start/end: `\u2063`, `\u2064`
+  - object start/end: `\u2065`, `\u2066`
+
+문제:
+
+- browser caret은 preview가 아니라 숨겨진 textarea의 raw string index 기준으로 배치됩니다.
+- raw string에는 invisible marker가 포함되지만 preview에는 marker가 보이지 않습니다.
+- preview의 keyword/object span은 font-weight, color, token rendering이 달라서 raw textarea의 문자 폭과 1:1로 맞지 않습니다.
+- object token은 atomic 처리를 위해 click/arrow/selection 이후 caret을 token 경계로 강제 snap합니다.
+- 따라서 사용자는 클릭한 위치와 caret이 머무는 위치가 다르게 느낍니다.
+- keyword도 marker 경계 보호/unwrap 정책이 들어가면서 marker 위치와 visible label 위치 사이에 눈에 안 보이는 편집 지점이 생길 수 있습니다.
+
+결론:
+
+- 현재 방식은 "보이는 텍스트"와 "실제 편집 텍스트"가 다릅니다.
+- token이 없을 때는 차이가 작지만, token이 생기면 marker와 span 렌더링 차이 때문에 caret 불일치가 커집니다.
+
+### 48.3 Frontend 계획
+
+#### 48.3.1 단기 진단/보정
+
+작업:
+
+- node inline editor에서 raw textarea value와 preview rendered text의 index 차이를 테스트로 고정합니다.
+- object/keyword token 앞뒤에서 caret이 marker 위치에 남는 케이스를 수집합니다.
+- object snap이 발생할 때 token 전체 선택 또는 boundary affordance를 보여줄지 검토합니다.
+- keyword marker 보호 로직이 caret을 보이지 않는 marker index에 남기지 않도록 보정합니다.
+
+한계:
+
+- 이 보정만으로는 preview span 폭과 textarea raw text 폭 차이를 완전히 없앨 수 없습니다.
+- 특히 object를 chip처럼 보이게 만들수록 caret 위치 mismatch는 구조적으로 재발합니다.
+
+#### 48.3.2 권장 방향: token-aware inline editor
+
+작업:
+
+- 투명 textarea + absolute preview 구조를 token-aware inline editor로 교체합니다.
+- 표시 DOM과 실제 caret DOM을 하나로 합칩니다.
+- 내부 모델은 기존 marker 문자열을 유지하되, 편집 중에는 아래 DOM 구조로 다룹니다.
+  - plain text: 일반 text node
+  - object token: `contenteditable="false"` atomic span
+  - keyword token: editable styled span
+- blur/save 시 DOM token model을 기존 inline marker string으로 serialize합니다.
+- node 저장은 기존 text/keywords/objectIds 구조를 그대로 사용합니다.
+
+효과:
+
+- 사용자가 보는 위치와 browser selection/caret 위치가 같은 DOM 위에서 동작합니다.
+- object는 DOM 레벨에서 내부 진입이 막힙니다.
+- keyword는 span 내부 텍스트를 직접 수정할 수 있습니다.
+- keyword double Backspace unwrap은 span만 제거하고 text node는 남기는 방식으로 직관적으로 처리할 수 있습니다.
+
+#### 48.3.3 object token UX
+
+작업:
+
+- object token span은 `contenteditable="false"`로 렌더링합니다.
+- 클릭하면 token 전체가 선택되거나 token 앞/뒤 경계가 명확히 표시됩니다.
+- Backspace/Delete 첫 입력은 object token 선택 상태를 만들고, 두 번째 입력은 삭제합니다.
+- 방향키 이동 시 object token 내부가 아니라 앞/뒤 경계로 이동합니다.
+
+완료 기준:
+
+- object token 안에 caret이 보이지 않습니다.
+- object token 삭제 대상이 시각적으로 명확합니다.
+
+#### 48.3.4 keyword token UX
+
+작업:
+
+- keyword token span 내부 label은 편집 가능하게 둡니다.
+- keyword 내부에서 caret, selection, Backspace/Delete가 일반 텍스트처럼 동작합니다.
+- keyword token 경계에서 Backspace 두 번이면 marker/span만 제거하고 label은 plain text로 남깁니다.
+- keyword label 변경 즉시 selected keyword state와 keyword cloud 기준 label을 갱신합니다.
+
+완료 기준:
+
+- keyword 마지막 글자를 지우는 위치가 눈에 보이는 caret과 일치합니다.
+- keyword 효과 해제와 keyword 글자 삭제가 시각적으로 구분됩니다.
+
+#### 48.3.5 mention menu와 paste/IME 처리
+
+작업:
+
+- `@` 입력은 현재 editable text segment 기준으로 mention query를 계산합니다.
+- object 선택/생성 시 현재 selection 위치에 object token DOM을 삽입합니다.
+- paste는 plain text로 sanitize하고, object token 내부에는 삽입되지 않게 합니다.
+- Korean IME composition 중에는 token snap/delete 보정을 지연합니다.
+
+주의:
+
+- contenteditable 전환 시 IME, undo/redo, selection restore가 가장 위험합니다.
+- 기존 canvas undo/redo와 충돌하지 않도록 editor 내부 입력 이벤트와 canvas history 기록 시점을 분리해야 합니다.
+
+### 48.4 Backend 계획
+
+결정:
+
+- DB schema 변경 없음
+- API contract 변경 없음
+- 저장 문자열 포맷 변경 없음
+
+이유:
+
+- 문제는 저장 모델이 아니라 편집 중 DOM/caret 모델입니다.
+- 기존 marker string은 serialization 포맷으로 계속 사용할 수 있습니다.
+- backend는 기존처럼 text/keywords/objectIds를 저장하면 됩니다.
+
+### 48.5 테스트 계획
+
+Frontend:
+
+- helper unit test
+  - marker string -> editor token model parse
+  - editor token model -> marker string serialize
+  - keyword unwrap 후 plain text 보존
+  - object token atomic deletion
+- interaction test
+  - object token 클릭 시 내부 caret 없음
+  - object token Backspace 두 번 삭제
+  - keyword 내부 클릭/방향키/Backspace가 label 문자 기준으로 동작
+  - keyword boundary double Backspace가 style만 해제
+  - 수정된 keyword label이 keyword cloud selected slot과 request에 반영
+- visual/manual smoke
+  - caret 위치가 preview와 어긋나지 않는지 token 앞/뒤/내부에서 확인
+  - 한글 IME 입력 중 caret jump가 없는지 확인
+
+Backend:
+
+- 새 테스트 필수 아님
+- 필요 시 node update 저장 roundtrip smoke만 확인
+
+### 48.6 구현 순서
+
+1. 현재 textarea/preview 구조에서 caret mismatch 재현 케이스를 테스트/메모로 고정합니다.
+2. marker string과 editor token model 간 parse/serialize helper를 만듭니다.
+3. inline editor UI를 contenteditable/token DOM 기반으로 분리 구현합니다.
+4. object atomic selection/delete를 구현합니다.
+5. keyword editable label과 double Backspace unwrap을 구현합니다.
+6. mention menu, paste, IME composition 처리를 이식합니다.
+7. keyword cloud sync와 object mention sync 회귀를 검증합니다.
+
+### 48.7 완료 기준
+
+- 오브젝트/키워드가 있어도 caret이 보이는 텍스트 위치와 일치합니다.
+- object token은 내부 진입이 불가능하고 삭제 대상이 명확합니다.
+- keyword token은 내부 편집이 가능하고 일반 텍스트처럼 수정됩니다.
+- keyword 효과 해제는 Backspace 두 번으로 명확하게 처리됩니다.
+- 기존 DB/API/schema를 바꾸지 않고 저장 결과가 유지됩니다.
+
+## detail-049 / 키워드 클라우드 batch pool과 Gemini retry 보강 계획
+
+### 49.1 목적
+
+이 섹션은 keyword cloud refresh의 API 호출 수를 줄이면서도 새 추천 체감을 유지하고, LLM 오류 시 재시도 정책을 실제 provider에 적용하기 위한 계획입니다.
+
+사용자 제안:
+
+- LLM 호출 오류가 나면 한 번 실패로 끝내지 말고 3번 더 호출합니다.
+- 한 번 LLM을 호출할 때 18개 정도를 받아옵니다.
+- keyword cloud는 9칸 UI이므로 첫 9개를 표시하고, 다음 refresh에서는 남은 후보를 먼저 씁니다.
+- 다른 노드나 주변 context가 바뀌면 남은 후보 stack/pool도 바뀌어야 합니다.
+
+판단:
+
+- 방향은 좋습니다.
+- 다만 자료구조는 stack보다 queue/pool이 맞습니다.
+  - 먼저 받은 순서대로 다음 후보를 소비해야 하므로 LIFO stack보다 FIFO queue가 자연스럽습니다.
+- refresh 의미는 아래처럼 정의합니다.
+  - 같은 context에 남은 후보 pool이 있으면 로컬 refresh
+  - pool이 없거나 context가 바뀌면 LLM refresh
+
+### 49.2 현재 확인 결과
+
+확인된 코드:
+
+- Frontend `openKeywordSuggestions()`는 refresh 때도 `maxSuggestions`를 `keywordCloudSlotCount - selectedKeywords.length`로 보냅니다.
+  - 즉 현재 UI 기준 최대 9개만 요청합니다.
+- Backend `.env.example`의 `RECOMMENDATION_MAX_SUGGESTIONS` 기본값은 9입니다.
+- Gemini provider의 `defaultGeminiMaxSuggestions`도 9입니다.
+- Gemini provider `requestKeywords()`는 현재 `generateContent()`를 1회 호출합니다.
+- `KeywordRecommendationRequest`에는 `refreshNonce`, `excludedSuggestionLabels`가 추가됐지만, `RecommendationContext`에는 아직 전달되지 않습니다.
+  - 따라서 Gemini prompt/output filter에서 excluded labels를 제대로 쓰는 작업이 남아 있습니다.
+
+결론:
+
+- 사용자가 말한 18개 batch는 현재 설정으로는 동작하지 않습니다.
+- retry도 아직 provider에 구현되지 않았습니다.
+- `detail-046`의 Recommendation slice를 완료하면서 batch pool 정책을 함께 넣는 것이 맞습니다.
+
+### 49.3 Frontend 계획
+
+#### 49.3.1 keyword suggestion pool 도입
+
+작업:
+
+- `keywordSuggestionPoolRef` 또는 equivalent 상태를 추가합니다.
+- pool key는 아래 값으로 구성합니다.
+  - nodeId
+  - contextSignature
+  - selected keyword signature
+  - language
+  - open slot count
+- pool value:
+  - `unusedSuggestions: KeywordSuggestion[]`
+  - `consumedLabels: string[]`
+  - `createdAt`
+
+정책:
+
+- keyword cloud UI는 계속 9칸 기준을 유지합니다.
+- selected keyword가 차지한 칸을 뺀 `openSlots`를 계산합니다.
+- LLM 요청 batch size는 `openSlots * 2`로 둡니다.
+  - selected keyword가 0개면 `9 * 2 = 18`
+  - selected keyword가 2개면 `7 * 2 = 14`
+- 응답 후보 중 앞 `openSlots`개는 즉시 표시합니다.
+- 나머지는 같은 context의 다음 refresh에 사용합니다.
+
+#### 49.3.2 refresh 동작 재정의
+
+작업:
+
+- refresh 클릭 시 먼저 현재 node/context에 맞는 pool을 찾습니다.
+- pool에 `openSlots` 이상 후보가 있으면 API를 호출하지 않고 다음 후보를 표시합니다.
+- pool에 후보가 부족하거나 없으면 LLM을 호출해 pool을 다시 채웁니다.
+- refresh마다 기존 stale request guard는 유지합니다.
+- 로컬 pool refresh는 loading skeleton을 띄우지 않거나 아주 짧은 local transition만 둡니다.
+
+표시 정책:
+
+- 로컬 pool에서 꺼낸 후보도 기존 추천과 동일하게 keyword cloud에 표시합니다.
+- local refresh도 selected keywords는 앞쪽에 고정합니다.
+- pool 후보가 부족해 LLM을 다시 호출할 때는 기존 표시 label과 consumed label을 모두 `excludedSuggestionLabels`로 보냅니다.
+
+#### 49.3.3 contextSignature invalidation
+
+작업:
+
+- `createKeywordRecommendationRequest()`가 만드는 structured context에서 refreshNonce를 제외한 안정 signature를 만듭니다.
+- signature 입력:
+  - current node text/keywords/level
+  - selected keywords
+  - parent/direct connection context
+  - same-lane/major-flow context
+  - episode title/objective/endpoint
+  - attached object name/summary
+  - language
+  - rankedItems id/text/keywords/priority
+- 아래 상황에서는 pool을 무효화합니다.
+  - 현재 노드 text/keywords 변경
+  - 주변 노드 text/keywords/placement/parent 변경
+  - episode/object context 변경
+  - selected keyword 변경
+  - language inference 결과 변경
+  - active node 변경
+
+결정:
+
+- DB에 저장하지 않습니다.
+- frontend 메모리 pool로 충분합니다.
+- 새로고침하면 pool은 사라져도 됩니다.
+
+#### 49.3.4 UX 오류 처리
+
+작업:
+
+- pool 후보가 있으면 LLM이 실패해도 기존 pool 후보를 먼저 사용할 수 있습니다.
+- pool이 없고 LLM이 모든 retry 후 실패하면 keyword cloud error를 표시합니다.
+- 실패 시 기존 표시 후보를 바로 비우지 말고, 오류 메시지를 함께 표시하는 방식을 우선 검토합니다.
+
+### 49.4 Backend 계획
+
+#### 49.4.1 maxSuggestions 상한 조정
+
+작업:
+
+- `RECOMMENDATION_MAX_SUGGESTIONS` 기본값을 18로 올릴지 결정합니다.
+- 최소한 keyword batch request가 18까지 통과하도록 backend/recommendation provider 상한을 맞춥니다.
+- 기존 route validation의 최대 25개 상한은 유지합니다.
+
+추천 결정:
+
+- `.env.example`의 기본값은 18로 바꾸는 것이 자연스럽습니다.
+- UI 9칸의 2회분을 기본 batch로 삼습니다.
+
+주의:
+
+- maxSuggestions를 올려도 DB schema 변경은 없습니다.
+- sentence recommendation에는 이 batch 정책을 적용하지 않습니다.
+
+#### 49.4.2 route timeout과 retry 충돌 방지
+
+현재 위험:
+
+- Backend route의 `runWithTimeout(service.getKeywordSuggestions(...), timeoutMs)`가 전체 provider 호출을 감쌉니다.
+- Gemini provider 내부에서 여러 번 retry해도 route outer timeout이 먼저 끊으면 retry가 끝까지 돌지 못합니다.
+
+작업:
+
+- retry를 provider가 담당하도록 하고, backend outer timeout은 총 retry 시간을 감안해 조정합니다.
+- 선택지:
+  - route timeout을 `timeoutMs * totalAttempts + buffer`로 계산
+  - 또는 provider per-attempt timeout만 사용하고 route outer timeout을 strict refresh path에서는 완화
+- refresh/cacheBypass strict path에서는 모든 retry 실패 전까지 heuristic fallback을 쓰지 않습니다.
+
+### 49.5 Recommendation 계획
+
+#### 49.5.1 request context 전달 보강
+
+작업:
+
+- `RecommendationContext`에 아래 필드를 추가합니다.
+  - `refreshNonce?: string`
+  - `excludedSuggestionLabels?: string[]`
+- `createRecommendationContext()`가 request의 두 필드를 provider context로 전달합니다.
+- Gemini cache key에는 excluded labels와 refresh nonce를 반영합니다.
+
+#### 49.5.2 Gemini retry 실제 구현
+
+작업:
+
+- Gemini keyword call에 retry helper를 추가합니다.
+- 사용자 요청 기준으로 총 4회 시도합니다.
+  - 1회 기본 호출
+  - 실패 시 3회 추가 재시도
+- retry 대상:
+  - timeout
+  - upstream connection error
+  - transient provider error
+  - malformed JSON
+  - filtering 후 suggestion이 0개인 structured output
+- retry하지 않을 대상:
+  - missing API key
+  - invalid API key / permission denied
+  - maxSuggestions 0
+  - local validation error
+- 각 attempt마다 로그 또는 테스트 가능한 attempt count를 남깁니다.
+- 모든 attempt 실패 시 normalized error를 throw합니다.
+
+#### 49.5.3 prompt와 output filtering 보강
+
+작업:
+
+- refresh 요청이면 prompt에 fresh alternate set을 명시합니다.
+- `excludedSuggestionLabels`를 prompt에 넣고 반복 금지를 명시합니다.
+- `parseKeywordSuggestions()`에서 selected keywords와 excluded labels를 모두 case-insensitive로 필터링합니다.
+- LLM이 18개보다 적게 줘도 유효 후보만 반환하되, 0개면 retry 대상 오류로 처리합니다.
+
+### 49.6 테스트 계획
+
+Frontend:
+
+- `WorkspaceShell.test.tsx`
+  - 첫 호출은 openSlots * 2개의 `maxSuggestions`를 요청
+  - 응답 18개 중 9개 표시, 9개 pool 저장
+  - 같은 context refresh는 API 호출 없이 pool 후보 표시
+  - contextSignature가 바뀌면 pool 폐기 후 API 재호출
+  - pool 재호출 시 displayed/consumed label이 excluded list에 포함
+- `frontend/src/recommendation/request.test.ts`
+  - batch maxSuggestions 값이 structuredContext.maxSuggestions와 일치
+  - refreshNonce 제외 context signature 안정성 검증
+
+Backend:
+
+- `backend/src/recommendation/routes.structured.test.ts`
+  - maxSuggestions 18 요청이 서버 상한 내에서 통과
+  - strict refresh path에서 outer timeout이 provider retry를 조기 차단하지 않음
+  - 모든 retry 실패 후 오류 응답
+
+Recommendation:
+
+- `recommendation/src/provider/factory.test.ts`
+  - Gemini generateContent 실패 시 총 4회 호출
+  - 2~4번째 성공 시 성공 반환
+  - missing/invalid API key는 retry하지 않음
+  - excluded labels가 prompt에 포함
+  - excluded labels가 output filter에서 제거
+  - 첫 attempt가 malformed/empty output이면 retry
+
+### 49.7 구현 순서
+
+1. RecommendationContext에 `refreshNonce`, `excludedSuggestionLabels`를 전달합니다.
+2. Gemini retry helper를 구현하고 prompt/output filter에 excluded labels를 반영합니다.
+3. backend timeout/maxSuggestions 설정을 batch 정책에 맞춥니다.
+4. frontend keyword suggestion pool과 contextSignature를 추가합니다.
+5. refresh 로직을 pool-first, API-second 방식으로 바꿉니다.
+6. focused tests를 돌린 뒤 frontend/backend/recommendation build smoke를 실행합니다.
+
+### 49.8 완료 기준
+
+- Gemini keyword request는 실패 시 3번 더 재시도합니다.
+- 모든 retry 실패 후에만 keyword cloud error가 표시됩니다.
+- 첫 LLM 호출은 기본적으로 9칸 UI의 2회분 후보를 받아옵니다.
+- 같은 context의 다음 refresh는 남은 pool 후보를 먼저 사용해 API 호출을 줄입니다.
+- 다른 노드나 주변 context가 바뀌면 pool이 무효화되고 새 LLM 호출을 합니다.
+- DB/API persistence schema는 변경하지 않습니다.
+
+## detail-050 / 노드 텍스트 undo-redo 히스토리 연동 계획
+
+### 50.1 목적
+
+이 섹션은 Ctrl+Z / Ctrl+Y 또는 하단 undo/redo 버튼을 사용할 때 노드 텍스트 변경도 캔버스 history 행동으로 안정적으로 복원되게 만드는 계획입니다.
+
+사용자 의도:
+
+- 노드 이동/생성/삭제뿐 아니라 노드 안에 작성한 텍스트도 undo/redo 대상이어야 합니다.
+- 키워드, 오브젝트 mention, objectIds 연결 같은 관련 상태도 텍스트와 함께 되돌아가야 합니다.
+- 사용자가 어디까지 되돌아가는지 예측 가능해야 합니다.
+
+핵심 결정:
+
+- 인라인 입력 중 문자 단위 Ctrl+Z/Y는 브라우저 textarea 기본 undo/redo를 우선 유지합니다.
+- 캔버스 undo/redo는 저장된 노드 content snapshot을 기준으로 동작합니다.
+- 캔버스 undo/redo 실행 직전에는 선택 노드의 미저장 inline draft를 먼저 flush합니다.
+- 텍스트 변경과 keyword/object mention 동기화는 가능하면 하나의 history action으로 묶습니다.
+
+### 50.2 현재 확인 결과
+
+확인된 코드:
+
+- `WorkspacePersistenceController.updateNodeContent()`는 snapshot history에 들어갑니다.
+  - 즉 저장된 노드 text/keywords는 이미 undo/redo snapshot 대상입니다.
+- `WorkspaceShell.persistInlineNodeContent()`는 현재 inline draft를 `controller.updateNodeContent()`로 저장합니다.
+- 인라인 textarea blur 시점에 `persistInlineNodeContent()`가 호출됩니다.
+- 전역 key handler는 inline editor에 focus가 있을 때 Ctrl+Z/Y를 브라우저 기본 동작으로 넘깁니다.
+  - 현재 주석: "인라인 편집 포커스에서는 텍스트 전용 undo/redo를 브라우저 기본 동작으로 유지합니다."
+- 하단 undo/redo 버튼은 `runUndo()` / `runRedo()`를 바로 호출합니다.
+- object mention 동기화는 `syncObjectMentionsForNode()`에서 `attachObjectToNode()` / `detachObjectFromNode()`를 별도 controller mutation으로 호출합니다.
+
+문제:
+
+- 사용자가 텍스트를 입력한 직후 blur/save가 끝나기 전에 undo를 누르면 최신 inline draft가 history에 들어가지 않을 수 있습니다.
+- undo/redo 버튼 클릭은 blur와 history action이 비동기로 겹칠 수 있습니다.
+- 텍스트 저장과 objectIds attach/detach가 별도 history action이면 undo 한 번에 "텍스트는 돌아갔는데 object 연결은 아직 남는" 식의 중간 상태가 생길 수 있습니다.
+- history apply 후 선택 노드의 `inlineNodeTextDraft`, `selectedAiKeywords`, keyword cloud 상태가 snapshot과 동기화되지 않으면 화면이 되돌아가지 않은 것처럼 보일 수 있습니다.
+
+### 50.3 Frontend 계획
+
+#### 50.3.1 history scope 정의
+
+정책:
+
+- textarea에 focus가 있고 사용자가 Ctrl+Z/Y를 누르면 문자 단위 편집은 브라우저 기본 동작을 사용합니다.
+- textarea focus 밖에서 Ctrl+Z/Y를 누르거나 하단 undo/redo 버튼을 누르면 canvas history를 사용합니다.
+- canvas history action은 node text, keywords, objectIds, placement, visual state를 snapshot 단위로 복원합니다.
+
+이유:
+
+- 입력 중 글자 하나씩 되돌리는 UX는 일반 텍스트 편집기와 같아야 합니다.
+- 캔버스 history는 구조 편집과 저장된 노드 내용 변경을 되돌리는 범위로 둡니다.
+
+#### 50.3.2 undo/redo 전 inline draft flush
+
+작업:
+
+- `flushSelectedNodeDraftBeforeHistoryAction()` 같은 async helper를 추가합니다.
+- 이 helper는 아래를 수행합니다.
+  - 선택 노드가 있고 fixed가 아니면 현재 `inlineNodeTextDraft`를 저장합니다.
+  - 저장할 변경이 없으면 no-op으로 끝냅니다.
+  - 저장 중인 promise가 있으면 중복 flush하지 않고 같은 promise를 await합니다.
+  - 저장 완료 전까지 undo/redo action을 실행하지 않습니다.
+- 하단 undo/redo 버튼과 canvas Ctrl+Z/Y handler는 모두 이 helper를 거칩니다.
+
+undo 정책:
+
+- dirty inline draft가 있으면 먼저 저장해 history에 현재 편집 상태를 넣습니다.
+- 그 다음 undo를 실행해 이전 text snapshot으로 돌아갑니다.
+
+redo 정책:
+
+- dirty inline draft가 있으면 이는 새로운 편집이므로 redo stack은 무효화됩니다.
+- dirty draft flush가 실제 mutation을 만들었다면 stale redo는 실행하지 않습니다.
+- dirty draft가 없을 때만 redo를 실행합니다.
+
+#### 50.3.3 blur와 history 버튼 race 제거
+
+작업:
+
+- textarea `onBlur`와 history action이 같은 flush helper를 공유합니다.
+- blur로 저장 중일 때 history 버튼을 누르면 저장 promise 완료 후 undo/redo를 이어서 실행합니다.
+- 저장 완료 후 selected node가 바뀌었는지 확인해 오래된 draft를 잘못 저장하지 않게 합니다.
+
+검증:
+
+- 텍스트 입력 직후 undo 버튼을 클릭해도 최신 텍스트가 한 번 history에 들어간 뒤 undo됩니다.
+- blur 저장과 undo 클릭이 겹쳐도 history entry가 중복으로 쌓이지 않습니다.
+
+#### 50.3.4 text/keyword/object mention 단일 history action
+
+작업:
+
+- 노드 content 저장과 object mention sync를 하나의 의도 단위로 묶습니다.
+- 권장 구현:
+  - inline text에서 다음 keywords와 mention objectIds를 먼저 계산합니다.
+  - 필요한 object 생성/재사용을 확정합니다.
+  - controller에 `updateNodeContentAndObjectBindings(...)` 또는 유사 메서드를 추가합니다.
+  - 이 메서드는 text, keywords, objectIds를 한 번의 `applyLocalMutation()`으로 저장합니다.
+- 기존 `attachObjectToNode()` / `detachObjectFromNode()`는 수동 object panel 조작에는 유지하되, inline text 저장 경로에서는 별도 history action을 만들지 않게 합니다.
+
+결정:
+
+- 키워드 token 수정, keyword unwrap, object mention 삽입/삭제는 노드 content edit action에 포함합니다.
+- object library에 새 object를 명시 생성한 경우에도 가능하면 "object 생성 + node text/objectIds 연결"을 하나의 undo action으로 묶습니다.
+
+주의:
+
+- 명시적 object 생성 자체를 undo할 때 object library에서 완전히 제거할지, 연결만 제거할지는 정책 확인이 필요합니다.
+- 권장 기본값은 inline mention으로 생성된 object가 다른 노드에서 아직 쓰이지 않으면 undo 시 제거하고, 이미 다른 노드가 참조하면 연결만 되돌리는 방식입니다.
+
+#### 50.3.5 history apply 후 UI 상태 동기화
+
+작업:
+
+- `controller.undo()` / `controller.redo()` 완료 후 selected node를 최신 snapshot에서 다시 읽습니다.
+- 선택 노드가 아직 존재하면:
+  - `inlineNodeTextDraft = buildInlineEditorText(node.text, node.keywords)`
+  - `selectedAiKeywords = node.keywords`
+  - object mention menu 닫기
+  - keyword cloud selected slot 갱신 또는 닫기
+  - textarea height 재계산
+- 선택 노드가 undo로 삭제되면 selectedNodeId를 null 또는 가장 가까운 복원 대상 정책으로 정리합니다.
+
+검증:
+
+- undo 후 화면의 textarea draft가 이전 text로 바뀝니다.
+- redo 후 화면의 textarea draft가 다시 이후 text로 바뀝니다.
+- keyword cloud가 열려 있으면 selected keyword 표시가 최신 snapshot과 맞습니다.
+
+#### 50.3.6 history action granularity
+
+정책:
+
+- 한 번의 focus 편집 session은 기본적으로 하나의 canvas history action입니다.
+- keyword cloud에서 keyword를 추가/해제하는 클릭은 각각 하나의 canvas history action으로 둡니다.
+- object mention 선택/생성은 하나의 canvas history action으로 둡니다.
+- 노드 이동/크기 조절/연결 변경은 기존 history action 정책을 유지합니다.
+
+향후 선택지:
+
+- 사용자가 원하면 debounce 기반 typing history를 추가할 수 있습니다.
+- 단, 지금은 글자마다 canvas snapshot을 쌓으면 undo가 너무 잘게 쪼개지므로 권장하지 않습니다.
+
+### 50.4 Backend 계획
+
+결정:
+
+- DB schema 변경 없음
+- API endpoint 변경 없음
+- cloud persistence contract 변경 없음
+
+이유:
+
+- undo/redo는 frontend controller의 snapshot history 문제입니다.
+- backend는 최종 sync operation을 기존처럼 node/object/episode upsert/delete로 받으면 됩니다.
+
+확인할 것:
+
+- inline mention object 생성까지 하나의 local mutation으로 묶어도 cloud sync operations가 기존 payload shape를 유지하는지 확인합니다.
+- undo/redo 후 생성/삭제되는 object operation 순서가 node operation과 dependency를 깨지 않는지 확인합니다.
+
+### 50.5 테스트 계획
+
+Frontend controller:
+
+- `updateNodeContent()` 후 undo/redo가 text와 keywords를 복원
+- content + objectIds 복합 mutation이 undo 한 번으로 같이 복원
+- redo stack은 새 dirty draft 저장 후 무효화
+- episode scoped history가 다른 episode text를 덮지 않음
+
+WorkspaceShell:
+
+- 노드 텍스트 입력 직후 undo 버튼 클릭 시 최신 draft가 먼저 저장되고 이전 text로 undo됨
+- undo 후 redo 버튼 클릭 시 수정 text가 복원됨
+- textarea blur 저장과 undo 버튼 클릭이 겹쳐도 history entry가 중복되지 않음
+- keyword token 수정 후 undo/redo가 text와 selected keywords를 함께 복원
+- object mention 삭제 후 undo/redo가 text와 objectIds를 함께 복원
+- inline editor focus 상태에서 Ctrl+Z/Y는 textarea 기본 undo/redo를 유지
+- editor 밖에서 Ctrl+Z/Y는 canvas history를 실행
+
+Backend:
+
+- 새 backend 테스트는 필수 아님
+- 필요 시 existing sync integration에서 node/object operation roundtrip만 확인
+
+### 50.6 구현 순서
+
+1. 현재 `updateNodeContent()` undo/redo controller 회귀 테스트를 먼저 보강합니다.
+2. WorkspaceShell에 async draft flush helper를 추가합니다.
+3. 하단 undo/redo 버튼과 canvas Ctrl+Z/Y handler가 flush helper를 거치게 합니다.
+4. blur 저장과 history action이 같은 flush promise를 공유하게 합니다.
+5. history apply 후 selected node inline draft/keywords/cloud state를 최신 snapshot으로 동기화합니다.
+6. object mention sync를 content edit history action과 묶는 controller API를 추가합니다.
+7. focused frontend tests와 build smoke를 실행합니다.
+
+### 50.7 완료 기준
+
+- 노드 텍스트 변경은 canvas undo/redo로 되돌릴 수 있습니다.
+- 텍스트 입력 직후 undo를 눌러도 최신 draft가 누락되지 않습니다.
+- undo/redo 후 selected node textarea와 keyword cloud 표시가 snapshot과 일치합니다.
+- keyword/object mention 관련 상태가 텍스트와 따로 놀지 않습니다.
+- DB/API/schema는 변경하지 않습니다.
+
+### 48.8 Frontend 구현 결과
+
+적용일: 2026-04-29
+
+변경:
+
+- 기존 textarea/preview overlay 구조는 유지하되, inline editor focus 상태를 `node-inline-input-shell.is-editing`으로 추적합니다.
+- keyword/object의 특유한 preview font/style은 focus 중에도 유지합니다.
+- 실제 textarea 글자는 계속 투명하게 두고, styled preview 위에서 caret만 동작하게 해 기존 token 시각 언어를 보존합니다.
+- focus/blur 상태 전환을 테스트로 고정해 이후 editing-state 보정이 token style을 숨기지 않게 했습니다.
+- 기존 object atomic 처리와 keyword editable/double Backspace unwrap 정책은 유지했습니다.
+
+검증:
+
+- `WorkspaceShell.test.tsx`
+  - focus 시 inline editor가 editing state로 전환되는지 검증
+  - focus 중에도 styled keyword preview가 유지되는지 검증
+  - blur 시 editing state가 해제되는지 검증
+  - 기존 keyword/object token 편집 회귀 유지
+
+남은 범위:
+
+- 완전한 contenteditable/token-DOM 전환은 아직 적용하지 않았습니다.
+- textarea raw caret과 styled preview 폭의 근본적 차이는 남아 있으므로, 추후 contenteditable/token-DOM 전환이 장기 해결책입니다.
+
+### 47.8 Frontend 구현 결과
+
+적용일: 2026-04-29
+
+변경:
+
+- inline editor helper에서 keyword token과 object token 삭제/선택 경계를 분리했습니다.
+- object token은 기존처럼 내부 caret snap, 부분 selection 확장, 2-step 삭제 정책을 유지합니다.
+- keyword token은 내부 label 편집을 일반 텍스트처럼 허용하고, 공통 token 삭제 helper가 keyword를 통째로 삭제하지 않게 했습니다.
+- keyword label 경계 Backspace는 첫 입력에서 unwrap 대기 상태만 만들고, 두 번째 Backspace에서 marker만 제거해 label을 plain text로 남깁니다.
+- Delete가 keyword marker만 지우는 위치는 marker를 손상시키지 않도록 label 경계로 보정합니다.
+- 빈 keyword token은 저장/표시 전에 제거하고, keyword 추출은 case-insensitive 중복 제거를 적용합니다.
+- keyword cloud open/refresh는 선택 노드의 최신 inline draft에서 추출한 keyword label을 우선 사용합니다.
+- keyword cloud에서 새 keyword를 추가할 때 caret이 기존 keyword token 내부에 있어도 nested keyword marker가 생기지 않도록 삽입 위치를 token 밖으로 보정했습니다.
+
+검증:
+
+- `workspaceShell.inlineEditor.test.ts`
+  - object/keyword token 삭제 책임 분리
+  - keyword boundary unwrap candidate
+  - keyword marker 보호
+  - empty keyword token 제거
+  - keyword label case-insensitive 중복 제거
+- `WorkspaceShell.test.tsx`
+  - keyword label 마지막 글자 Backspace 편집 및 저장
+  - 수정된 keyword label의 cloud selected slot 반영
+  - refresh request selectedKeywords가 수정 label 기준인지 검증
+  - keyword boundary double Backspace unwrap
+  - object token atomic edit/delete 회귀 유지
+
+남은 범위:
+
+- textarea 기반 overlay 구조상 실제 브라우저의 pixel-perfect caret 위치는 브라우저 QA로 한 번 더 확인하는 것이 좋습니다.

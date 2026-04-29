@@ -4,7 +4,9 @@ import {
   type Dispatch,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
-  type SetStateAction
+  type SetStateAction,
+  useRef,
+  useState
 } from "react";
 import type { KeywordSuggestion } from "@scenaairo/recommendation";
 import type { StoryNode } from "@scenaairo/shared";
@@ -15,12 +17,15 @@ import { isInteractiveTarget } from "./workspaceShell.canvas";
 import {
   extractInlineKeywords,
   expandSelectionToObjectTokenBoundaries,
+  getInlineKeywordTokenRanges,
+  getKeywordTokenUnwrapCandidate,
   getObjectTokenDeleteSelection,
+  getProtectedKeywordMarkerCaret,
   getSnappedObjectTokenCaret,
   hasObjectTokenInternalMutation,
   keywordCloudSlotCount,
+  normalizeInlineKeywordTokens,
   normalizeInlineObjectMentions,
-  removeAdjacentKeywordTokenAtBoundary,
   removeSelectedObjectToken,
   renderTextWithObjectMentions,
   type ObjectMentionCreateCandidate
@@ -39,6 +44,14 @@ type MenuPosition = {
 type ObjectMentionSuggestion = {
   id: string;
   name: string;
+};
+
+type PendingKeywordUnwrap = {
+  caretIndex: number;
+  nodeId: string;
+  text: string;
+  tokenEnd: number;
+  tokenStart: number;
 };
 
 type CanvasNodeCardProps = {
@@ -67,6 +80,7 @@ type CanvasNodeCardProps = {
     left: number;
     top: number;
   };
+  flushSelectedNodeDraft: () => Promise<unknown>;
   hasVisibleKeywords: boolean;
   inlineNodeTextDraft: string;
   isBusy: boolean;
@@ -83,6 +97,7 @@ type CanvasNodeCardProps = {
   nodeCardRefs: MutableRefObject<Map<string, HTMLElement>>;
   nodeMenuButtonRefs: MutableRefObject<Map<string, HTMLButtonElement>>;
   nodeSize: NodeSize;
+  markInlineNodeDraftDirty: () => void;
   objectMentionCreateCandidate: ObjectMentionCreateCandidate | null;
   objectMentionQuery: ObjectMentionQuery | null;
   objectMentionSuggestions: ObjectMentionSuggestion[];
@@ -90,11 +105,6 @@ type CanvasNodeCardProps = {
   onClearRewireHoverTarget: () => void;
   onRewireNode: (sourceNodeId: string, targetNodeId: string) => Promise<void>;
   openKeywordSuggestions: (node: StoryNode, options?: { refresh?: boolean }) => Promise<void>;
-  persistInlineNodeContent: (
-    node: StoryNode,
-    nextText: string,
-    nextKeywords: string[]
-  ) => Promise<void>;
   placement: {
     x: number;
     y: number;
@@ -146,6 +156,7 @@ export function CanvasNodeCard({
   displayedKeywordSuggestions,
   displayText,
   getViewportMenuPosition,
+  flushSelectedNodeDraft,
   hasVisibleKeywords,
   inlineNodeTextDraft,
   isBusy,
@@ -162,6 +173,7 @@ export function CanvasNodeCard({
   nodeCardRefs,
   nodeMenuButtonRefs,
   nodeSize,
+  markInlineNodeDraftDirty,
   objectMentionCreateCandidate,
   objectMentionQuery,
   objectMentionSuggestions,
@@ -169,7 +181,6 @@ export function CanvasNodeCard({
   onClearRewireHoverTarget,
   onRewireNode,
   openKeywordSuggestions,
-  persistInlineNodeContent,
   placement,
   recommendationError,
   rewireNode,
@@ -207,6 +218,61 @@ export function CanvasNodeCard({
     shouldShowPlaceholder || (isReadOnlySelectedNode && !displayBodyText && !hasVisibleKeywords);
   const objectMentionOptionCount =
     objectMentionSuggestions.length + (objectMentionCreateCandidate ? 1 : 0);
+  const pendingKeywordUnwrapRef = useRef<PendingKeywordUnwrap | null>(null);
+  const [isInlineEditing, setIsInlineEditing] = useState(false);
+  const [activeKeywordTokenStart, setActiveKeywordTokenStart] = useState<number | null>(
+    null
+  );
+  const [pendingKeywordUnwrapTokenStart, setPendingKeywordUnwrapTokenStart] =
+    useState<number | null>(null);
+
+  // 키워드 라벨 안의 커서/선택 상태를 편집 표시로 동기화합니다.
+  function syncKeywordEditModeFromInput(
+    input: HTMLTextAreaElement,
+    value = inlineNodeTextDraft
+  ) {
+    const selectionStart = input.selectionStart ?? 0;
+    const selectionEnd = input.selectionEnd ?? selectionStart;
+    const rangeStart = Math.min(selectionStart, selectionEnd);
+    const rangeEnd = Math.max(selectionStart, selectionEnd);
+    const activeRange = getInlineKeywordTokenRanges(value).find((range) => {
+      const labelStart = range.markerStart + 1;
+      const labelEnd = range.markerEnd;
+
+      if (rangeStart === rangeEnd) {
+        return rangeStart >= labelStart && rangeStart <= labelEnd;
+      }
+
+      return rangeStart <= labelEnd && rangeEnd >= labelStart;
+    });
+
+    setActiveKeywordTokenStart(activeRange?.start ?? null);
+  }
+
+  // 키워드 unwrap 대기 상태를 해제합니다.
+  function resetPendingKeywordUnwrap() {
+    pendingKeywordUnwrapRef.current = null;
+    setPendingKeywordUnwrapTokenStart(null);
+  }
+
+  // 키워드 토큰 효과만 제거하고 label은 일반 텍스트로 유지합니다.
+  function unwrapKeywordToken(candidate: NonNullable<ReturnType<typeof getKeywordTokenUnwrapCandidate>>) {
+    resetPendingKeywordUnwrap();
+    setActiveKeywordTokenStart(null);
+    markInlineNodeDraftDirty();
+    setInlineNodeTextDraft(candidate.nextText);
+    setSelectedAiKeywords(extractInlineKeywords(candidate.nextText));
+    syncInlineObjectMentions(node.id, candidate.nextText);
+
+    window.requestAnimationFrame(() => {
+      selectedNodeInputRef.current?.focus();
+      selectedNodeInputRef.current?.setSelectionRange(
+        candidate.nextCaret,
+        candidate.nextCaret
+      );
+      syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+    });
+  }
 
   // 오브젝트 토큰 내부 커서를 토큰 경계로 이동합니다.
   function snapObjectTokenCaret(
@@ -368,7 +434,9 @@ export function CanvasNodeCard({
               selectedNodeInputRef.current?.focus();
             }}
           >
-            <div className="node-inline-input-shell">
+            <div
+              className={`node-inline-input-shell${isInlineEditing ? " is-editing" : ""}`}
+            >
               <div
                 aria-hidden="true"
                 className={`node-inline-preview${
@@ -376,7 +444,10 @@ export function CanvasNodeCard({
                 }`}
               >
                 {displayText
-                  ? renderTextWithObjectMentions(displayText)
+                  ? renderTextWithObjectMentions(displayText, {
+                      activeKeywordTokenStart,
+                      pendingKeywordUnwrapTokenStart
+                    })
                   : activeKeywords.length === 0
                     ? "Type the beat"
                     : "\u200b"}
@@ -385,10 +456,21 @@ export function CanvasNodeCard({
                 className="node-inline-input"
                 data-node-id={node.id}
                 onBlur={() => {
-                  void persistInlineNodeContent(node, inlineNodeTextDraft, activeKeywords);
+                  setIsInlineEditing(false);
+                  setActiveKeywordTokenStart(null);
+                  resetPendingKeywordUnwrap();
+                  void flushSelectedNodeDraft();
+                }}
+                onFocus={(event) => {
+                  setIsInlineEditing(true);
+                  resetPendingKeywordUnwrap();
+                  syncKeywordEditModeFromInput(event.currentTarget);
                 }}
                 onChange={(event) => {
-                  const normalizedValue = normalizeInlineObjectMentions(event.target.value);
+                  resetPendingKeywordUnwrap();
+                  const normalizedValue = normalizeInlineKeywordTokens(
+                    normalizeInlineObjectMentions(event.target.value)
+                  );
                   const nextValue = hasObjectTokenInternalMutation(
                     inlineNodeTextDraft,
                     normalizedValue
@@ -397,22 +479,33 @@ export function CanvasNodeCard({
                     : normalizedValue;
                   const nextCaret = event.target.selectionStart ?? nextValue.length;
 
+                  markInlineNodeDraftDirty();
                   setInlineNodeTextDraft(nextValue);
                   setSelectedAiKeywords(extractInlineKeywords(nextValue));
                   updateObjectMentionQueryFromInput(event.currentTarget, nextValue);
                   syncSelectedNodeInputHeight(node.id, event.currentTarget);
                   syncInlineObjectMentions(node.id, nextValue);
+                  syncKeywordEditModeFromInput(event.currentTarget, nextValue);
 
                   if (nextValue !== event.target.value) {
                     window.requestAnimationFrame(() => {
-                      selectedNodeInputRef.current?.setSelectionRange(nextCaret, nextCaret);
+                      const input = selectedNodeInputRef.current;
+
+                      if (!input) {
+                        return;
+                      }
+
+                      input.setSelectionRange(nextCaret, nextCaret);
+                      syncKeywordEditModeFromInput(input, nextValue);
                     });
                   }
                 }}
                 onClick={(event) => {
                   event.stopPropagation();
+                  resetPendingKeywordUnwrap();
                   snapObjectTokenCaret(event.currentTarget);
                   updateObjectMentionQueryFromInput(event.currentTarget);
+                  syncKeywordEditModeFromInput(event.currentTarget);
                 }}
                 onKeyDown={(event) => {
                   const selectionStart = event.currentTarget.selectionStart ?? 0;
@@ -428,6 +521,7 @@ export function CanvasNodeCard({
                     activeMentionSuggestion?.name ?? activeMentionCreateCandidate?.name ?? null;
 
                   if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    resetPendingKeywordUnwrap();
                     window.requestAnimationFrame(() => {
                       if (!selectedNodeInputRef.current) {
                         return;
@@ -438,6 +532,7 @@ export function CanvasNodeCard({
                         event.key === "ArrowLeft" ? "backward" : "forward"
                       );
                       updateObjectMentionQueryFromInput(selectedNodeInputRef.current);
+                      syncKeywordEditModeFromInput(selectedNodeInputRef.current);
                     });
                   }
 
@@ -445,6 +540,7 @@ export function CanvasNodeCard({
                     selectionStart !== selectionEnd &&
                     (event.key === "Backspace" || event.key === "Delete")
                   ) {
+                    resetPendingKeywordUnwrap();
                     const removableObjectToken = removeSelectedObjectToken(
                       inlineNodeTextDraft,
                       selectionStart,
@@ -453,6 +549,7 @@ export function CanvasNodeCard({
 
                     if (removableObjectToken) {
                       event.preventDefault();
+                      markInlineNodeDraftDirty();
                       setInlineNodeTextDraft(removableObjectToken.nextText);
                       setSelectedAiKeywords(extractInlineKeywords(removableObjectToken.nextText));
                       syncInlineObjectMentions(node.id, removableObjectToken.nextText);
@@ -509,37 +606,67 @@ export function CanvasNodeCard({
                       return;
                     }
 
-                    const removableKeywordToken =
+                    const keywordUnwrapCandidate =
                       event.key === "Backspace"
-                        ? removeAdjacentKeywordTokenAtBoundary(
+                        ? getKeywordTokenUnwrapCandidate(inlineNodeTextDraft, selectionStart)
+                        : null;
+
+                    if (keywordUnwrapCandidate) {
+                      event.preventDefault();
+                      const pendingKeywordUnwrap = pendingKeywordUnwrapRef.current;
+                      const isSecondBackspace =
+                        pendingKeywordUnwrap?.nodeId === node.id &&
+                        pendingKeywordUnwrap.text === inlineNodeTextDraft &&
+                        pendingKeywordUnwrap.caretIndex === selectionStart &&
+                        pendingKeywordUnwrap.tokenStart === keywordUnwrapCandidate.tokenStart &&
+                        pendingKeywordUnwrap.tokenEnd === keywordUnwrapCandidate.tokenEnd;
+
+                      if (isSecondBackspace) {
+                        unwrapKeywordToken(keywordUnwrapCandidate);
+                        return;
+                      }
+
+                      pendingKeywordUnwrapRef.current = {
+                        caretIndex: selectionStart,
+                        nodeId: node.id,
+                        text: inlineNodeTextDraft,
+                        tokenEnd: keywordUnwrapCandidate.tokenEnd,
+                        tokenStart: keywordUnwrapCandidate.tokenStart
+                      };
+                      setActiveKeywordTokenStart(null);
+                      setPendingKeywordUnwrapTokenStart(keywordUnwrapCandidate.tokenStart);
+                      return;
+                    }
+
+                    const protectedKeywordCaret =
+                      event.key === "Delete"
+                        ? getProtectedKeywordMarkerCaret(
                             inlineNodeTextDraft,
                             selectionStart,
-                            "backward"
+                            "forward"
                           )
-                        : event.key === "Delete"
-                          ? removeAdjacentKeywordTokenAtBoundary(
+                        : event.key === "Backspace"
+                          ? getProtectedKeywordMarkerCaret(
                               inlineNodeTextDraft,
                               selectionStart,
-                              "forward"
+                              "backward"
                             )
                           : null;
 
-                    if (removableKeywordToken) {
+                    if (protectedKeywordCaret !== null) {
                       event.preventDefault();
-                      setInlineNodeTextDraft(removableKeywordToken.nextText);
-                      setSelectedAiKeywords(extractInlineKeywords(removableKeywordToken.nextText));
-                      syncInlineObjectMentions(node.id, removableKeywordToken.nextText);
-
-                      window.requestAnimationFrame(() => {
-                        selectedNodeInputRef.current?.focus();
-                        selectedNodeInputRef.current?.setSelectionRange(
-                          removableKeywordToken.nextCaret,
-                          removableKeywordToken.nextCaret
-                        );
-                        syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
-                      });
+                      resetPendingKeywordUnwrap();
+                      event.currentTarget.setSelectionRange(
+                        protectedKeywordCaret,
+                        protectedKeywordCaret
+                      );
+                      syncKeywordEditModeFromInput(event.currentTarget);
                       return;
                     }
+                  }
+
+                  if (event.key !== "Backspace") {
+                    resetPendingKeywordUnwrap();
                   }
 
                   if (
@@ -623,6 +750,7 @@ export function CanvasNodeCard({
                 onKeyUp={(event) => {
                   snapObjectTokenCaret(event.currentTarget);
                   updateObjectMentionQueryFromInput(event.currentTarget);
+                  syncKeywordEditModeFromInput(event.currentTarget);
                 }}
                 onPaste={(event) => {
                   const selectionStart = event.currentTarget.selectionStart ?? 0;
@@ -672,6 +800,7 @@ export function CanvasNodeCard({
                 }}
                 onSelect={(event) => {
                   snapObjectTokenCaret(event.currentTarget);
+                  syncKeywordEditModeFromInput(event.currentTarget);
                 }}
                 placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
                 ref={selectedNodeInputRef}

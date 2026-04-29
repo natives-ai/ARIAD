@@ -7,7 +7,10 @@ import { loadFrontendEnv } from "../config/env";
 import { LocalPersistenceStore } from "../persistence/localStore";
 import { createSampleWorkspace } from "../persistence/sampleWorkspace";
 import { WorkspaceShell } from "./WorkspaceShell";
-import { getObjectToken } from "./workspace-shell/workspaceShell.inlineEditor";
+import {
+  getInlineKeywordToken,
+  getObjectToken
+} from "./workspace-shell/workspaceShell.inlineEditor";
 
 describe("workspace shell recommendation flow", () => {
   const originalFetch = globalThis.fetch;
@@ -65,6 +68,18 @@ describe("workspace shell recommendation flow", () => {
 
   async function getSelectedNodeCard() {
     return (await screen.findByTestId("selected-node-title")).closest(".node-card") as HTMLElement;
+  }
+
+  // 테스트용 키워드 추천 목록을 만듭니다.
+  function createKeywordSuggestions(prefix: string, count: number, startIndex = 1) {
+    return Array.from({ length: count }, (_, index) => {
+      const suggestionIndex = startIndex + index;
+
+      return {
+        label: `${prefix} ${suggestionIndex}`,
+        reason: `Reason ${suggestionIndex}.`
+      };
+    });
   }
 
   // 루트 최근 스토리 목록의 현재 표시 순서를 읽습니다.
@@ -307,36 +322,152 @@ describe("workspace shell recommendation flow", () => {
     );
     expect(screen.queryByPlaceholderText("Type the beat")).not.toBeInTheDocument();
 
-    await user.click(inlineInput);
+    const pressureToken = getInlineKeywordToken("pressure spike");
+    const pressureTokenStart = (inlineInput as HTMLTextAreaElement).value.indexOf(
+      pressureToken
+    );
+
+    (inlineInput as HTMLTextAreaElement).setSelectionRange(
+      pressureTokenStart + pressureToken.length - 1,
+      pressureTokenStart + pressureToken.length - 1
+    );
     await user.keyboard("{Backspace}");
 
     await waitFor(() => {
       expect(
-        within(selectedNodeCard).queryByText("pressure spike", {
+        within(selectedNodeCard).queryByText("pressure spik", {
           selector: ".node-inline-keyword"
         })
-      ).not.toBeInTheDocument();
-      expect(screen.queryByTestId("keyword-cloud")).not.toBeInTheDocument();
+      ).toBeInTheDocument();
     });
+    expect(screen.getByTestId("keyword-suggestion-0")).toHaveTextContent("pressure spik");
 
-    await openSelectedNodeMenu(user);
-    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
-    expect(screen.getByTestId("keyword-suggestion-0")).toHaveAttribute("aria-pressed", "false");
-
-    await user.click(screen.getByTestId("keyword-suggestion-0"));
-
-    expect(
-      within(selectedNodeCard).getByText("pressure spike", {
-        selector: ".node-inline-keyword"
-      })
-    ).toBeInTheDocument();
+    fireEvent.blur(inlineInput);
 
     unmount();
 
     render(<WorkspaceShell />);
 
-    expect((await screen.findAllByText("pressure spike")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("pressure spik")).length).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps styled keyword preview visible while the inline input is focused", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "pressure spike", reason: "Sharpens the turn." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "pressure spike" }));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+    const inputShell = inlineInput.closest(".node-inline-input-shell");
+    const preview = inputShell?.querySelector(".node-inline-preview");
+
+    fireEvent.focus(inlineInput);
+    await waitFor(() => {
+      expect(inputShell).toHaveClass("is-editing");
+    });
+    expect(preview).toHaveTextContent("pressure spike");
+    expect(
+      within(selectedNodeCard).getByText("pressure spike", {
+        selector: ".node-inline-keyword"
+      })
+    ).toBeInTheDocument();
+    expect(window.getComputedStyle(preview as Element).opacity).not.toBe("0");
+
+    fireEvent.blur(inlineInput);
+    await waitFor(() => {
+      expect(inputShell).not.toHaveClass("is-editing");
+    });
+
+    fireEvent.focus(inlineInput);
+    await waitFor(() => {
+      expect(inputShell).toHaveClass("is-editing");
+    });
+  });
+
+  it("marks keyword edit mode separately from keyword unwrap mode", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "pressure spike", reason: "Sharpens the turn." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "pressure spike" }));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+    const keywordToken = getInlineKeywordToken("pressure spike");
+    const tokenStart = inlineInput.value.indexOf(keywordToken);
+
+    inlineInput.setSelectionRange(tokenStart + 2, tokenStart + 2);
+    fireEvent.select(inlineInput);
+
+    await waitFor(() => {
+      const keywordPreview = within(selectedNodeCard).getByText("pressure spike", {
+        selector: ".node-inline-keyword"
+      });
+
+      expect(keywordPreview).toHaveClass("is-keyword-editing");
+      expect(keywordPreview).not.toHaveClass("is-keyword-unwrap-pending");
+    });
   });
 
   it("keeps object detail editing available while the canvas is fullscreen", async () => {
@@ -730,15 +861,17 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
-  it("sends a cache bypass request when refreshing keyword suggestions", async () => {
+  it("requests a two-page keyword batch and refreshes from the local pool first", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
+      void init;
+
       if (url.endsWith("/recommendation/keywords")) {
         return new Response(
           JSON.stringify({
-            suggestions: [{ label: "renewed pressure", reason: "Fresh cloud result." }]
+            suggestions: createKeywordSuggestions("batch keyword", 18)
           }),
           {
             headers: {
@@ -749,7 +882,6 @@ describe("workspace shell recommendation flow", () => {
         );
       }
 
-      void init;
       return new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
           "Content-Type": "application/json"
@@ -769,7 +901,183 @@ describe("workspace shell recommendation flow", () => {
 
           return url.endsWith("/recommendation/keywords");
         })
-        .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as { cacheBypass?: boolean });
+        .map(
+          ([, init]) =>
+            JSON.parse(String(init?.body ?? "{}")) as {
+              cacheBypass?: boolean;
+              excludedSuggestionLabels?: string[];
+              maxSuggestions?: number;
+            }
+        );
+
+    globalThis.fetch = fetchMock as typeof fetch;
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+
+    await waitFor(() => {
+      expect(getKeywordPayloads()).toHaveLength(1);
+    });
+    expect(getKeywordPayloads()[0]?.maxSuggestions).toBe(18);
+    expect(await screen.findByRole("button", { name: "batch keyword 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "batch keyword 9" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "batch keyword 10" })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Refresh Cloud" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "batch keyword 10" })).toBeInTheDocument();
+    });
+    expect(getKeywordPayloads()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "batch keyword 18" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "batch keyword 1" })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Refresh Cloud" }));
+
+    await waitFor(() => {
+      expect(getKeywordPayloads()).toHaveLength(2);
+    });
+    expect(getKeywordPayloads()[1]?.cacheBypass).toBe(true);
+    expect(getKeywordPayloads()[1]?.excludedSuggestionLabels).toHaveLength(18);
+    expect(getKeywordPayloads()[1]?.excludedSuggestionLabels).toEqual(
+      expect.arrayContaining(
+        createKeywordSuggestions("batch keyword", 18).map((suggestion) => suggestion.label)
+      )
+    );
+  });
+
+  it("invalidates pooled keyword suggestions when the selected keyword context changes", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const keywordCallCount = fetchMock.mock.calls.filter(([callInput]) => {
+        const callUrl =
+          typeof callInput === "string"
+            ? callInput
+            : callInput instanceof URL
+              ? callInput.toString()
+              : callInput.url;
+
+        return callUrl.endsWith("/recommendation/keywords");
+      }).length;
+
+      void init;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions:
+              keywordCallCount <= 1
+                ? createKeywordSuggestions("context keyword", 18)
+                : [{ label: "fresh selected context", reason: "Context changed." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    });
+    const getKeywordPayloads = () =>
+      fetchMock.mock.calls
+        .filter(([input]) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
+
+          return url.endsWith("/recommendation/keywords");
+        })
+        .map(
+          ([, init]) =>
+            JSON.parse(String(init?.body ?? "{}")) as {
+              maxSuggestions?: number;
+              selectedKeywords?: string[];
+            }
+        );
+
+    globalThis.fetch = fetchMock as typeof fetch;
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "context keyword 1" }));
+    await user.click(await screen.findByRole("button", { name: "Refresh Cloud" }));
+
+    await waitFor(() => {
+      expect(getKeywordPayloads()).toHaveLength(2);
+    });
+    expect(getKeywordPayloads()[1]?.selectedKeywords).toEqual(["context keyword 1"]);
+    expect(getKeywordPayloads()[1]?.maxSuggestions).toBe(16);
+    expect(await screen.findByRole("button", { name: "fresh selected context" })).toBeInTheDocument();
+  });
+
+  it("sends a cache bypass request when refreshing keyword suggestions", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      void init;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "renewed pressure", reason: "Fresh cloud result." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    });
+    const getKeywordPayloads = () =>
+      fetchMock.mock.calls
+        .filter(([input]) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
+
+          return url.endsWith("/recommendation/keywords");
+        })
+        .map(
+          ([, init]) =>
+            JSON.parse(String(init?.body ?? "{}")) as {
+              cacheBypass?: boolean;
+              excludedSuggestionLabels?: string[];
+              refreshNonce?: string;
+            }
+        );
 
     globalThis.fetch = fetchMock as typeof fetch;
     const user = userEvent.setup();
@@ -782,6 +1090,7 @@ describe("workspace shell recommendation flow", () => {
     await waitFor(() => {
       expect(getKeywordPayloads()).toHaveLength(1);
     });
+    expect(await screen.findByRole("button", { name: "renewed pressure" })).toBeInTheDocument();
 
     await user.click(await screen.findByRole("button", { name: "Refresh Cloud" }));
     await waitFor(() => {
@@ -791,7 +1100,129 @@ describe("workspace shell recommendation flow", () => {
     const [initialPayload, refreshPayload] = getKeywordPayloads();
 
     expect(initialPayload?.cacheBypass).toBeUndefined();
+    expect(initialPayload?.excludedSuggestionLabels).toBeUndefined();
+    expect(initialPayload?.refreshNonce).toBeUndefined();
     expect(refreshPayload?.cacheBypass).toBe(true);
+    expect(refreshPayload?.excludedSuggestionLabels).toEqual(["renewed pressure"]);
+    expect(refreshPayload?.refreshNonce).toEqual(expect.any(String));
+  });
+
+  it("uses edited inline keyword labels for refresh selected keywords", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      void init;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [
+              { label: "pressure spike", reason: "Sharpens the turn." },
+              { label: "hard choice", reason: "Keeps the beat structural." }
+            ]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    });
+    const getKeywordPayloads = () =>
+      fetchMock.mock.calls
+        .filter(([input]) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
+
+          return url.endsWith("/recommendation/keywords");
+        })
+        .map(
+          ([, init]) =>
+            JSON.parse(String(init?.body ?? "{}")) as {
+              selectedKeywords?: string[];
+            }
+        );
+
+    globalThis.fetch = fetchMock as typeof fetch;
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "pressure spike" }));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+    const pressureToken = getInlineKeywordToken("pressure spike");
+    const pressureTokenStart = inlineInput.value.indexOf(pressureToken);
+
+    inlineInput.setSelectionRange(
+      pressureTokenStart + pressureToken.length - 1,
+      pressureTokenStart + pressureToken.length - 1
+    );
+    await user.keyboard("{Backspace}");
+
+    expect(await screen.findByRole("button", { name: "pressure spik" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Refresh Cloud" }));
+    await waitFor(() => {
+      expect(getKeywordPayloads()).toHaveLength(2);
+    });
+
+    expect(getKeywordPayloads()[1]?.selectedKeywords).toEqual(["pressure spik"]);
+  });
+
+  it("shows a keyword cloud error when the recommendation request fails", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(JSON.stringify({ message: "llm_retry_failed" }), {
+          headers: {
+            "Content-Type": "application/json"
+          },
+          status: 503
+        });
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+
+    expect(await screen.findByText(/llm_retry_failed/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh Cloud" })).toBeEnabled();
   });
 
   it("renders object summary as a one-line input and normalizes pasted newlines", async () => {
@@ -1224,6 +1655,73 @@ describe("workspace shell recommendation flow", () => {
     await waitFor(() => {
       expect(inlineInput.value).not.toContain(objectToken);
     });
+  });
+
+  it("unwraps keyword styling after double Backspace at a keyword boundary", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "pressure spike", reason: "Sharpens the turn." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "pressure spike" }));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+    const keywordToken = getInlineKeywordToken("pressure spike");
+    const tokenStart = inlineInput.value.indexOf(keywordToken);
+    const tokenEnd = tokenStart + keywordToken.length;
+
+    inlineInput.setSelectionRange(tokenEnd, tokenEnd);
+    fireEvent.keyDown(inlineInput, { key: "Backspace" });
+
+    expect(inlineInput.value).toContain(keywordToken);
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("pressure spike", {
+          selector: ".node-inline-keyword"
+        })
+      ).toHaveClass("is-keyword-unwrap-pending");
+    });
+
+    fireEvent.keyDown(inlineInput, { key: "Backspace" });
+
+    await waitFor(() => {
+      expect(inlineInput.value).toContain("pressure spike");
+      expect(inlineInput.value).not.toContain(keywordToken);
+    });
+    expect(
+      within(selectedNodeCard).queryByText("pressure spike", {
+        selector: ".node-inline-keyword"
+      })
+    ).not.toBeInTheDocument();
   });
 
   it("creates an object from an unmatched inline mention query", async () => {
@@ -2242,11 +2740,15 @@ describe("workspace shell recommendation flow", () => {
 
     pressWorkspaceKey("z", { ctrlKey: true }, canvasViewport);
 
-    expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    });
 
     pressWorkspaceKey("z", { ctrlKey: true, shiftKey: true }, canvasViewport);
 
-    expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    });
 
     await openSelectedNodeMenu(user);
     await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
@@ -2276,6 +2778,17 @@ describe("workspace shell recommendation flow", () => {
     pressWorkspaceKey("z", { ctrlKey: true }, pastedInlineInput);
 
     await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    });
+
+    const restoredSelectedNodeCard = (await screen.findByTestId("selected-node-title")).closest(
+      ".node-card"
+    ) as HTMLElement;
+    const restoredInlineInput = within(restoredSelectedNodeCard).getByRole("textbox");
+
+    pressWorkspaceKey("y", { ctrlKey: true }, restoredInlineInput);
+
+    await waitFor(() => {
       expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 3");
     });
 
@@ -2289,6 +2802,92 @@ describe("workspace shell recommendation flow", () => {
     pressWorkspaceKey("Escape");
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("flushes the selected node draft before canvas undo and redo", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.type(inlineInput, "Draft history beat");
+    expect(inlineInput).toHaveValue("Draft history beat");
+
+    const historyControls = within(screen.getByTestId("history-controls"));
+
+    await user.click(historyControls.getByRole("button", { name: "Undo" }));
+
+    await waitFor(() => {
+      const currentSelectedNodeCard = screen
+        .getByTestId("selected-node-title")
+        .closest(".node-card") as HTMLElement;
+
+      expect(within(currentSelectedNodeCard).getByRole("textbox")).toHaveValue("");
+    });
+    expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+
+    await user.click(historyControls.getByRole("button", { name: "Redo" }));
+
+    await waitFor(() => {
+      const currentSelectedNodeCard = screen
+        .getByTestId("selected-node-title")
+        .closest(".node-card") as HTMLElement;
+
+      expect(within(currentSelectedNodeCard).getByRole("textbox")).toHaveValue("Draft history beat");
+    });
+  });
+
+  it("runs canvas undo and redo from the focused node textarea", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox");
+
+    await user.type(inlineInput, "Keyboard history beat");
+
+    pressWorkspaceKey("z", { ctrlKey: true }, inlineInput);
+
+    await waitFor(() => {
+      expect(within(selectedNodeCard).getByRole("textbox")).toHaveValue("");
+    });
+
+    pressWorkspaceKey("y", { ctrlKey: true }, inlineInput);
+
+    await waitFor(() => {
+      const currentSelectedNodeCard = screen
+        .getByTestId("selected-node-title")
+        .closest(".node-card") as HTMLElement;
+
+      expect(within(currentSelectedNodeCard).getByRole("textbox")).toHaveValue(
+        "Keyboard history beat"
+      );
+    });
   });
 
   it("keeps keyboard undo scoped to the selected episode", async () => {
