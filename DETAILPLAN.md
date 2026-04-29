@@ -6820,3 +6820,960 @@ Prompt 구조:
 
 `detail-029` 2차는 미구현 상태가 맞습니다.
 다만 `detail-030`으로 node size 저장은 이미 분리 구현되었으므로, 다음 판단은 lane array/spacer 자체 저장이 정말 필요한지 검증한 뒤 진행합니다.
+
+## detail-040 / Workspace 편집 UX 안정화 계획
+
+이 섹션은 사이드바, 오브젝트 패널, 캔버스 히스토리, 키워드 추천 갱신, 인라인 오브젝트 토큰 편집 문제를 한 번에 정리하되, 구현은 단계별로 나누기 위한 계획입니다.
+
+사용자 요청 항목:
+
+1. 새 폴더 이름 입력 후 Enter로 폴더 생성
+2. 오브젝트 설명을 여러 줄 textarea가 아니라 한 줄 input처럼 수정
+3. Ctrl+Z/Y 및 이전/다음 UI 버튼을 웹사이트 전체가 아니라 캔버스 히스토리로 고정
+4. 연결선은 당장 수정은 아니지만, 화살표/연결선을 잡고 바꾸는 조작 개선 검토
+5. 에피소드 순서를 최근 열람순이 아니라 최근 수정순으로 변경
+6. 키워드 클라우드 refresh가 실제 API 재호출/새 추천을 보장하도록 수정
+7. 인라인 오브젝트 토큰 내부 수정으로 중복 오브젝트가 계속 생기는 문제 해결
+
+### 40.1 우선순위
+
+1차 즉시 수정:
+
+- 폴더 생성 Enter submit
+- 오브젝트 설명 한 줄 input
+- 캔버스 히스토리 scope 고정
+- 키워드 클라우드 refresh 캐시 우회
+
+2차 안정화:
+
+- 에피소드 최근 수정순 정렬
+- 인라인 오브젝트 토큰 atomic edit 정책
+
+3차 후속 UX:
+
+- 연결선/화살표 직접 드래그 조작 개선
+
+이 순서가 맞습니다.
+이유는 1차 항목은 사용자가 즉시 체감하는 입력/갱신 버그이고, 2차 항목은 히스토리/동기화/토큰 편집 정책까지 같이 검증해야 하기 때문입니다.
+
+### 40.2 Frontend 계획
+
+#### 40.2.1 폴더 생성 Enter submit
+
+현재 상태:
+
+- 폴더 이름 입력 UI는 `WorkspaceShell.tsx`의 inline panel에 있습니다
+- 생성 버튼을 눌러야 `createFolderFromSidebar()`가 실행됩니다
+- 폴더 rename은 이미 `<form onSubmit>` 구조라 Enter 저장이 됩니다
+
+작업:
+
+- 새 폴더 생성 패널도 `<form onSubmit>` 구조로 바꿉니다
+- Enter는 생성, Escape는 취소로 통일합니다
+- 빈 이름은 기존처럼 생성하지 않습니다
+- 생성 후 입력값 초기화, 패널 닫기, 사이드바 펼침 상태는 유지합니다
+
+검증:
+
+- 폴더 이름 입력 후 Enter를 누르면 폴더가 생성됩니다
+- 빈 이름에서 Enter를 눌러도 폴더가 생성되지 않습니다
+- Escape는 입력값을 버리고 패널을 닫습니다
+
+#### 40.2.2 오브젝트 설명 한 줄 input
+
+현재 상태:
+
+- `WorkspaceObjectPanel.tsx`에서 object summary가 `textarea`입니다
+- shared/backend 타입은 `summary: string`이라 UI만 바꾸면 됩니다
+
+작업:
+
+- 생성/수정 양쪽의 summary 입력을 `input type="text"`로 변경합니다
+- 저장 시 newline은 공백으로 정규화하거나 입력 단계에서 막습니다
+- CSS는 기존 field-stack에 맞추고, 높이가 여러 줄로 늘어나지 않게 합니다
+
+검증:
+
+- object summary 입력창이 한 줄로 표시됩니다
+- Enter가 줄바꿈을 만들지 않습니다
+- 기존 저장된 summary 문자열은 그대로 표시됩니다
+
+#### 40.2.3 캔버스 히스토리 scope 고정
+
+현재 상태:
+
+- `useEpisodeCanvasState()`의 `runUndo/runRedo`는 persistence controller undo/redo와 캔버스 UI 복원을 같이 실행합니다
+- 전역 keydown은 canvas target 또는 node inline input 여부를 기준으로 일부 shortcut을 처리합니다
+- 사용자는 folder rename 같은 사이드바 작업 중 Ctrl+Z/Y 또는 UI 버튼이 전체 앱 히스토리처럼 느껴진다고 보고했습니다
+
+작업:
+
+- `lastWorkspaceInteractionScope` 또는 focus 기반 scope를 둡니다
+- scope 값은 최소 `canvas`, `sidebar`, `object-panel`, `modal`, `none`으로 구분합니다
+- Ctrl/Cmd+Z/Y는 scope가 `canvas`일 때만 app-level `runUndo/runRedo`를 호출합니다
+- node inline editor 내부에서는 기존처럼 텍스트 편집 undo/redo를 우선합니다
+- floating history UI 버튼도 scope가 `canvas`일 때만 활성화하거나, 클릭 시 canvas scope로 명시 전환한 뒤 실행하는 규칙을 고정합니다
+- sidebar/object panel input에서는 app-level undo/redo를 실행하지 않습니다
+
+검증:
+
+- 폴더 이름 수정 input에서 Ctrl+Z/Y가 canvas undo/redo를 실행하지 않습니다
+- node/canvas 작업 후 canvas에 focus가 있을 때 Ctrl+Z/Y는 node/canvas 상태만 되돌립니다
+- floating undo/redo 버튼은 캔버스 히스토리만 대상으로 합니다
+- 폴더/오브젝트 UI 상태는 canvas undo/redo 대상이 아닙니다
+
+#### 40.2.4 에피소드 최근 수정순 정렬
+
+현재 상태:
+
+- root episode 목록은 `sortEpisodesForScope()`에서 `updatedAt` desc로 정렬됩니다
+- `controller.selectEpisode()`가 episode `updatedAt`을 갱신하고 있어 실제로는 최근 열람순처럼 보일 수 있습니다
+- 폴더 내부 episode는 folder의 수동 `episodeIds` 순서를 우선합니다
+
+작업:
+
+- `selectEpisode()`는 episode `updatedAt`을 갱신하지 않도록 바꿉니다
+- node/object/episode content 변경 시 해당 episode의 `updatedAt`을 갱신하는 helper를 controller에 둡니다
+- node 생성, 삭제, 이동, 배치, 내용 수정, object 생성/수정/삭제/attach/detach가 해당 episode를 touch하는지 점검합니다
+- root episode 정렬은 기존 `updatedAt desc`를 유지하되, 의미를 최근 수정순으로 고정합니다
+- 폴더 내부 수동 정렬 모드와 충돌하지 않도록, 폴더 안에서는 기존 manual order를 유지할지 최근 수정순으로 바꿀지 별도 선택지를 둡니다
+
+판단:
+
+- 새 queue/stack 구조는 만들지 않습니다
+- 이미 있는 `updatedAt` timestamp가 이 문제에 맞는 데이터입니다
+- 필요한 것은 데이터 구조 추가가 아니라 `updatedAt`을 언제 갱신하는지 바로잡는 것입니다
+
+검증:
+
+- 에피소드를 열람만 해도 목록 최상단으로 올라오지 않습니다
+- 노드/오브젝트/에피소드 내용을 수정하면 해당 episode가 최근 수정순으로 올라옵니다
+- cloud sync 후에도 정렬이 동일합니다
+
+#### 40.2.5 키워드 클라우드 refresh
+
+현재 상태:
+
+- refresh 버튼은 `openKeywordSuggestions(node, { refresh: true })`를 호출합니다
+- frontend는 local cycle을 증가시키지만, request payload가 동일하면 backend cache 또는 Gemini provider 내부 cache가 같은 결과를 돌려줄 수 있습니다
+
+작업:
+
+- refresh=true일 때 request에 cache bypass 의도를 포함합니다
+- refresh 중 중복 클릭은 막거나 마지막 요청만 반영합니다
+- 요청 시작 시 기존 suggestion을 clear하고 loading 상태를 표시합니다
+- 응답이 늦게 도착해도 최신 refresh 요청만 반영하도록 request id를 둡니다
+
+검증:
+
+- refresh 클릭 시 backend keyword endpoint가 실제로 다시 호출됩니다
+- 같은 context라도 refresh 요청은 route/provider cache를 읽지 않습니다
+- refresh 중 선택된 keyword duplicate는 계속 제외됩니다
+
+#### 40.2.6 인라인 오브젝트 토큰 atomic edit
+
+현재 상태:
+
+- object mention은 hidden marker 기반 토큰으로 저장됩니다
+- textarea라서 방향키/마우스로 토큰 내부에 커서를 둘 수 있습니다
+- 사용자가 기존 object token 내부를 `student -> stuudent -> stuuudent`처럼 수정하면, 동기화 로직이 단계별로 새 object를 만들 수 있습니다
+- keyword token은 사용자가 추천을 받은 뒤 직접 고쳐 쓰는 흐름이 필요하므로 object와 같은 방식으로 완전히 잠그면 안 됩니다
+
+작업:
+
+- object token range를 계산하는 helper를 추가합니다
+- caret이 object token 내부로 들어가면 token 앞/뒤 경계로 스냅합니다
+- object token 내부 문자가 부분 수정된 change는 거부하거나 직전 정상 token으로 복원합니다
+- object token 삭제는 2-step 방식으로 바꿉니다
+  - 첫 Backspace/Delete: 토큰 전체 range를 선택하거나 삭제 준비 상태로 표시
+  - 두 번째 Backspace/Delete: 토큰 전체 삭제
+- keyword token은 내부 텍스트 편집을 허용합니다
+- 다만 keyword token 경계에서 Backspace/Delete가 hidden marker만 깨뜨리지 않도록 경계 처리만 보강합니다
+- object 자동 생성은 명시적인 create candidate 확정 또는 정상적인 새 object mention 확정에서만 실행되도록 제한합니다
+
+검증:
+
+- object chip 내부로 방향키/클릭 커서가 들어가지 않습니다
+- object chip 문자를 한 글자씩 바꿔도 새 object가 계속 생성되지 않습니다
+- object chip은 Backspace 두 번 또는 선택 후 삭제로만 제거됩니다
+- keyword는 사용자가 마지막 글자도 수정할 수 있습니다
+- 기존 `@Hero@`, `Hero`/`hero` 중복 방지 규칙은 유지됩니다
+
+#### 40.2.7 연결선/화살표 직접 드래그 UX 후속
+
+이 항목은 `detail-043 / 연결선·화살표 직접 드래그 UX 계획`으로 분리합니다.
+
+### 40.3 Backend / Recommendation 계획
+
+#### 40.3.1 오브젝트 summary 입력
+
+Backend 변경:
+
+- schema 변경 없음
+- `StoryObject.summary`는 기존 string 그대로 유지합니다
+- newline 정규화는 frontend 저장 전 처리로 충분합니다
+
+#### 40.3.2 캔버스 히스토리 scope
+
+Backend 변경:
+
+- schema 변경 없음
+- undo/redo 저장 구조 변경 없음
+- 다만 episode touch 정책을 바꿀 경우 controller mutation operations에 episode upsert가 추가될 수 있습니다
+
+#### 40.3.3 에피소드 최근 수정순
+
+Backend 변경:
+
+- DB schema 변경 없음
+- 기존 `StoryEpisode.updatedAt`를 사용합니다
+- node/object 변경 시 해당 episode의 `updatedAt`도 함께 sync되도록 frontend controller operation에 episode upsert를 포함합니다
+- backend file/mysql persistence는 기존 episode upsert를 저장하면 됩니다
+
+주의:
+
+- `selectEpisode()`가 episode updatedAt을 갱신하지 않아야 최근 열람순 문제가 사라집니다
+- project `activeEpisodeId` 갱신은 그대로 필요합니다
+
+#### 40.3.4 키워드 refresh cache bypass
+
+Backend / Recommendation 변경:
+
+- `KeywordRecommendationRequest`에 `cacheBypass?: boolean`을 추가합니다
+- backend route validation에서 boolean만 허용합니다
+- `cacheBypass === true`이면 backend keyword cache read/write를 건너뜁니다
+- recommendation context에도 `cacheBypass`를 전달합니다
+- Gemini provider 내부 cache도 `cacheBypass === true`이면 read/write를 건너뜁니다
+- heuristic provider는 cache가 없으므로 영향 없습니다
+
+검증:
+
+- refresh 요청은 backend cache hit log를 남기지 않습니다
+- refresh 요청은 Gemini provider cache도 읽지 않습니다
+- 일반 추천 요청은 기존 cache TTL 정책을 유지합니다
+
+#### 40.3.5 인라인 오브젝트 토큰
+
+Backend 변경:
+
+- schema 변경 없음
+- object 생성 API는 그대로 사용합니다
+- 중복 방지 핵심은 frontend에서 token edit를 막고, create 조건을 명시화하는 것입니다
+
+추가 방어 후보:
+
+- 같은 episode scope에서 object name normalized unique 정책을 backend에 둘 수 있지만, 이는 별도 schema/contract 검토가 필요합니다
+- 이번 작업에서는 frontend editor 동작을 먼저 고칩니다
+
+### 40.4 테스트 계획
+
+Frontend:
+
+- `WorkspaceShell.test.tsx`
+  - 새 폴더 input Enter 생성
+  - 폴더 input Escape 취소
+  - sidebar input focus 상태에서 Ctrl+Z/Y가 canvas undo/redo를 실행하지 않음
+  - keyword refresh가 `cacheBypass: true` request를 보냄
+- `WorkspaceObjectPanel` 관련 테스트
+  - summary input이 한 줄 field로 렌더링됨
+  - newline 입력이 저장 전에 정규화됨
+- `workspaceShell.sidebar.test.tsx`
+  - 최근 수정순 정렬이 `updatedAt desc`를 따름
+  - 열람만으로 `updatedAt`이 바뀌지 않는 controller regression
+- `workspaceShell.inlineEditor.test.ts`
+  - object token range 감지
+  - object token 내부 caret snap
+  - object token 2-step delete
+  - keyword token 내부 편집 허용
+
+Backend / Recommendation:
+
+- `backend/src/recommendation/routes.structured.test.ts`
+  - `cacheBypass` boolean validation
+  - cacheBypass true일 때 cache hit 없이 provider 호출
+- `recommendation/src/provider/factory.test.ts` 또는 Gemini provider test
+  - cacheBypass true일 때 provider internal cache skip
+  - cacheBypass false일 때 기존 cache 유지
+- `frontend/src/persistence/controller.test.ts`
+  - selectEpisode은 episode updatedAt을 바꾸지 않음
+  - node/object 변경은 episode updatedAt을 touch함
+
+### 40.5 결정
+
+채택합니다.
+
+이번 묶음은 한 번에 구현하지 않습니다.
+먼저 1차 즉시 수정으로 입력/히스토리/refresh를 안정화하고, 2차로 episode updatedAt 의미와 object token atomic edit를 잡습니다.
+연결선 직접 드래그는 UX 설계와 hit target 검증이 필요하므로 3차 후속으로 분리합니다.
+
+### 40.6 1차 구현 결과
+
+구현 완료:
+
+- 새 폴더 생성 패널을 submit form으로 바꿔 Enter 생성, Escape 취소를 지원했습니다.
+- 오브젝트 summary 생성/수정 입력을 `input type="text"`로 바꾸고, newline paste/save를 공백으로 정규화했습니다.
+- canvas/sidebar/object/modal scope를 분리해 sidebar/object 입력 중 Ctrl/Cmd+Z/Y와 floating undo/redo가 canvas history를 건드리지 않게 했습니다.
+- keyword refresh 요청에 `cacheBypass: true`를 추가하고, 최신 request id만 suggestion/loading/error 상태에 반영하도록 했습니다.
+- keyword cache bypass를 frontend request, backend route cache, recommendation context, Gemini provider internal cache까지 전달했습니다.
+
+검증 완료:
+
+- frontend typecheck / changed-file ESLint / focused WorkspaceShell + recommendation request Vitest / frontend build smoke를 통과했습니다.
+- backend recommendation route ESLint / structured route Vitest / backend build smoke를 통과했습니다.
+- recommendation typecheck / lint / provider factory Vitest / build smoke를 통과했습니다.
+
+남은 범위:
+
+- 에피소드 최근 수정순 의미 고정은 `detail-042`에서 `selectEpisode()`와 mutation touch 정책을 함께 처리합니다.
+- 인라인 오브젝트 토큰 atomic edit는 `detail-042`에서 object token range/caret/delete 정책으로 처리합니다.
+- 연결선/화살표 직접 드래그 UX는 `detail-043`에서 처리합니다.
+
+## detail-042 / Workspace 편집 UX 2차 안정화 계획
+
+2차 목표:
+
+- 에피소드 목록의 "최근" 의미를 열람순이 아니라 실제 수정순으로 고정합니다.
+- 인라인 노드 에디터에서 object token을 부분 수정 불가능한 atomic token으로 다룹니다.
+- keyword token은 사용자가 직접 고칠 수 있어야 하므로 object token과 다르게 처리합니다.
+
+2차는 2개 트랙으로 나눕니다.
+
+### 42.1 Track A / 에피소드 최근 수정순 의미 고정
+
+문제 정의:
+
+- 현재 episode 목록은 `updatedAt desc`로 정렬되지만, `selectEpisode()`가 episode `updatedAt`을 갱신하면 최근 열람순처럼 보입니다.
+- 사용자가 원하는 기준은 "최근 열람"이 아니라 "최근 수정"입니다.
+
+Frontend 작업:
+
+1. `selectEpisode()` 동작 분리
+   - episode `updatedAt`은 갱신하지 않습니다.
+   - project/registry의 active episode 또는 last opened 정보만 갱신합니다.
+   - 열람 기록이 필요하면 episode가 아니라 project registry의 `lastOpenedAt` 계열 데이터로만 처리합니다.
+
+2. episode touch helper 추가
+   - `touchEpisodeUpdatedAt(snapshot, episodeId, now)` 또는 controller 내부 helper를 둡니다.
+   - 모든 episode content/structure mutation이 이 helper를 통해 episode `updatedAt`을 갱신하게 합니다.
+   - 같은 transaction 안에서 node/object 변경과 episode touch가 같이 저장되도록 합니다.
+
+3. 수정으로 인정할 operation 목록 확정
+   - episode title/metadata rename
+   - node 생성, 삭제, 내용 수정
+   - node 이동, lane/order 변경, parent/connection 변경
+   - node size/placement 저장
+   - object 생성, 수정, 삭제
+   - object attach/detach 또는 node text mention 변경
+   - drawer/source reference가 episode 구조에 영향을 주는 경우
+
+4. 수정으로 인정하지 않을 operation 목록 확정
+   - episode 열람/select
+   - sidebar 검색어 입력
+   - panel 열기/닫기
+   - canvas pan/zoom
+   - selection/focus 변경
+   - keyword cloud 열람만 하는 행위
+
+5. 정렬 정책 점검
+   - root episode list는 기존 `updatedAt desc`를 유지하되 의미를 "최근 수정순"으로 고정합니다.
+   - folder 내부 episode는 수동 folder order가 있으면 기존 수동 순서를 유지합니다.
+   - folder 내부도 최근 수정순으로 바꿀지는 별도 UX 결정이 필요하므로 이번 2차에서는 바꾸지 않습니다.
+
+Backend 작업:
+
+- DB schema 변경 없음
+- API contract 변경 없음
+- file/mysql persistence는 기존 episode `updatedAt` 값을 그대로 저장하면 됩니다.
+- cloud sync/import/export에서 episode `updatedAt`이 frontend controller 결과와 동일하게 roundtrip되는지만 확인합니다.
+
+검증:
+
+- 에피소드를 클릭해 열람만 해도 root list 순서가 바뀌지 않습니다.
+- node를 생성/수정/이동/삭제하면 해당 episode가 root list 최상단으로 올라옵니다.
+- object를 생성/수정/삭제하면 해당 episode가 root list 최상단으로 올라옵니다.
+- folder 내부 manual order는 유지됩니다.
+- reload/cloud sync 후에도 정렬이 유지됩니다.
+
+### 42.2 Track B / 인라인 오브젝트 토큰 atomic edit
+
+문제 정의:
+
+- object mention token 내부로 커서가 들어가면 `student -> stuudent -> stuuudent`처럼 부분 수정이 가능합니다.
+- 이 상태에서 object sync/create 로직이 단계별 오타를 새 object 후보로 볼 수 있습니다.
+- keyword는 사용자가 추천을 받은 뒤 직접 수정할 수 있어야 하므로 object처럼 완전히 잠그면 안 됩니다.
+
+Frontend 작업:
+
+1. token range parser 정리
+   - inline editor helper에 object token range를 계산하는 함수를 둡니다.
+   - 각 range는 `start`, `end`, `objectId`, `label`, `markerStart`, `markerEnd`를 갖습니다.
+   - keyword token range와 object token range를 분리해서 반환합니다.
+
+2. caret boundary snap
+   - click, keyup, selectionchange 이후 caret이 object token 내부에 있으면 token 앞/뒤 경계로 이동시킵니다.
+   - shift selection이 token 일부만 걸치면 전체 token range로 확장하거나 selection을 정상 경계로 보정합니다.
+
+3. object token 내부 edit 차단
+   - `beforeinput`/`keydown`에서 object token 내부 insert/delete를 막습니다.
+   - paste가 object token 내부에 들어오면 token 밖으로 이동시키거나 paste를 거부합니다.
+   - object token marker만 깨지는 변경은 직전 정상 inline value로 복원합니다.
+
+4. object token 삭제 2-step
+   - 첫 Backspace/Delete: object token 전체 range를 선택하고 삭제 대기 상태로 표시합니다.
+   - 두 번째 Backspace/Delete: token 전체를 삭제합니다.
+   - 다른 키 입력, blur, selection 이동이 발생하면 삭제 대기 상태를 해제합니다.
+   - 이 Delete는 inline text editing 동작이므로 node/episode/object 삭제 confirm shortcut과 충돌하지 않게 합니다.
+
+5. object 생성 조건 제한
+   - 기존 object token을 부분 수정한 결과로 새 object를 만들지 않습니다.
+   - 새 object 생성은 mention menu에서 create candidate를 Enter/click으로 확정한 경우에만 허용합니다.
+   - 기존 object lookup은 대소문자 normalized 비교를 유지합니다.
+
+6. keyword token은 편집 허용
+   - keyword label 내부 텍스트 수정은 계속 허용합니다.
+   - 다만 hidden marker 또는 token boundary만 깨지는 경우는 보정합니다.
+   - keyword token의 마지막 글자를 수정할 수 있어야 하므로 object token식 2-step 삭제를 적용하지 않습니다.
+
+Backend 작업:
+
+- DB schema 변경 없음
+- object 생성 API 변경 없음
+- 1차 방어는 frontend editor에서 처리합니다.
+- 추가로 backend/object unique constraint를 둘지는 별도 schema/contract 검토가 필요한 후속 항목으로 남깁니다.
+
+검증:
+
+- object token 내부를 클릭해도 caret이 내부에 머물지 않습니다.
+- 방향키로 object token 내부에 진입하려고 하면 앞/뒤 경계로 스냅됩니다.
+- object token 문자를 한 글자씩 바꾸는 시나리오에서 새 object가 생성되지 않습니다.
+- object token은 Backspace/Delete 두 번으로만 전체 삭제됩니다.
+- keyword token은 내부 텍스트와 마지막 글자를 수정할 수 있습니다.
+- `Hero`가 있을 때 `@hero`는 새 object 생성 후보를 만들지 않습니다.
+
+### 42.3 2차 구현 순서
+
+1. 먼저 Track A episode `updatedAt` 의미를 고정합니다.
+   - 이유: 정렬/동기화 의미가 명확해야 이후 keyboard/delete confirm 작업과도 충돌하지 않습니다.
+2. 그 다음 Track B object token atomic edit를 구현합니다.
+   - 이유: editor event 처리와 keyboard policy가 섞이므로, `detail-041`의 Delete shortcut 예외와 함께 검증해야 합니다.
+3. 마지막에 `detail-041` keyboard command policy와 충돌 검증을 실행합니다.
+
+### 42.4 2차 테스트 게이트
+
+Frontend:
+
+- `frontend/src/persistence/controller.test.ts`
+  - `selectEpisode()`가 episode `updatedAt`을 변경하지 않음
+  - node/object mutation이 episode `updatedAt`을 변경함
+- `frontend/src/routes/WorkspaceShell.test.tsx`
+  - 열람만으로 episode order가 바뀌지 않음
+  - node/object 수정 후 episode order가 최근 수정순으로 바뀜
+- `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`
+  - object token caret snap
+  - object token 내부 edit 차단
+  - object token 2-step delete
+  - keyword token edit 허용
+
+Backend:
+
+- 별도 schema/API 테스트는 기본적으로 없음
+- sync roundtrip이 필요하면 기존 backend persistence/integration 테스트에 episode `updatedAt` 유지 케이스만 추가합니다.
+
+### 42.5 2차 완료 기준
+
+- 에피소드 목록은 열람이 아니라 수정으로만 정렬이 바뀝니다.
+- object token을 부분 수정해서 중복 object가 생기는 경로가 막힙니다.
+- keyword token의 자유 편집성은 유지됩니다.
+- `detail-041`의 Delete confirm shortcut과 inline editor Delete가 충돌하지 않습니다.
+
+### 42.6 Frontend 구현 결과
+
+적용 범위:
+
+- `selectEpisode()`는 더 이상 episode `updatedAt`을 변경하지 않고 active episode만 project 상태로 바꿉니다.
+- node/object/drawer/rewire/placement/delete/restore/paste 계열 mutation은 같은 로컬 transaction에서 episode `updatedAt` upsert를 함께 저장합니다.
+- root episode list는 기존 `updatedAt desc`를 유지하되, 열람만으로 순서가 바뀌지 않고 node/object 편집 후에만 해당 episode가 최상단으로 이동합니다.
+- inline editor는 object token range를 계산하고, object token 내부 caret/selection/paste/input을 토큰 경계로 보정하거나 차단합니다.
+- object token 삭제는 첫 Backspace/Delete에서 전체 token 선택, 두 번째 Backspace/Delete에서 삭제로 동작합니다.
+- 새 object 생성은 mention menu의 create candidate 확정 경로에서만 허용하고, 기존 token 부분 수정이나 닫힌 `@name@` 직접 입력은 새 object 생성으로 이어지지 않습니다.
+- keyword token은 object token과 분리해 내부 라벨 편집 가능성을 유지하고, 경계 삭제만 기존 UX처럼 처리합니다.
+
+검증:
+
+- `frontend/src/persistence/controller.test.ts`: select/view와 mutation touch 회귀 추가
+- `frontend/src/routes/WorkspaceShell.test.tsx`: root order, object token atomic edit, 명시적 object 생성 회귀 추가
+- `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`: object token range/snap/delete/marker damage 회귀 추가
+
+## detail-041 / Workspace 생성·삭제 키보드 상호작용 공통화 계획
+
+### 41.1 배경
+
+사용자 지적:
+
+- 키보드 상호작용을 폴더 생성에만 Enter로 붙이면 안 됩니다.
+- 오브젝트, 에피소드도 같은 방식으로 Enter 생성이 되어야 합니다.
+- Delete 키로 삭제할 수 있어야 하며, 삭제는 즉시 실행이 아니라 반드시 주의/확인창을 띄워야 합니다.
+
+판단:
+
+- 맞습니다. 이 작업은 "폴더 Enter 생성" 단건 UX가 아니라 workspace 전체 command policy입니다.
+- 생성 폼, 선택된 row/card, detail panel, canvas selection이 같은 규칙을 공유해야 합니다.
+- Delete는 destructive action이므로 공통 confirm flow로만 연결하고, input 편집 중에는 절대 실행하지 않습니다.
+
+### 41.2 Frontend 계획
+
+#### 41.2.1 공통 키보드 정책 정의
+
+대상 scope:
+
+- canvas node selection
+- sidebar episode row
+- sidebar folder row
+- object list row
+- object detail/create panel
+- episode/folder/object 생성 inline form
+
+공통 규칙:
+
+- `Enter`
+  - 생성/수정 form 안에서는 submit으로 동작합니다.
+  - IME 조합 중(`event.isComposing`)에는 submit하지 않습니다.
+  - multiline editor나 node 본문 textarea에서는 기존 줄바꿈/텍스트 편집 동작을 우선합니다.
+- `Escape`
+  - 생성/수정 draft를 닫거나 confirm dialog를 닫습니다.
+- `Delete`
+  - 선택된 삭제 대상이 있을 때 confirm dialog만 엽니다.
+  - confirm 전에는 실제 삭제를 호출하지 않습니다.
+  - input, textarea, contenteditable, select, button focus 상태에서는 삭제 shortcut을 실행하지 않습니다.
+- `Backspace`
+  - 브라우저/텍스트 삭제와 충돌하므로 이번 공통 삭제 shortcut에는 포함하지 않습니다.
+
+#### 41.2.2 생성 Enter submit 적용 범위
+
+에피소드:
+
+- `New Episode` 생성 UI가 열려 있고 제목 input에 focus가 있으면 Enter로 episode 생성
+- 빈 제목이면 기존 validation 또는 기본 title 정책 유지
+- Escape로 생성 취소
+
+폴더:
+
+- `New Folder` 생성 UI가 열려 있고 이름 input에 focus가 있으면 Enter로 folder 생성
+- Escape로 생성 취소
+
+오브젝트:
+
+- `New Object` detail/create form에서 Enter로 object 생성
+- summary는 한 줄 input이므로 Enter submit 가능
+- category select focus 상태에서는 브라우저 기본 select 조작을 방해하지 않도록 확인 필요
+
+주의:
+
+- node 본문 editor는 story text 입력 영역이므로 Enter submit 대상으로 묶지 않습니다.
+- keyword/object mention menu가 열린 상태에서는 Enter가 suggestion 확정으로 우선 동작해야 합니다.
+
+#### 41.2.3 Delete confirm 적용 범위
+
+노드:
+
+- 기존 canvas node Delete 동작은 confirm dialog를 여는 정책을 유지합니다.
+- inline node editor focus 중에는 Delete shortcut을 실행하지 않습니다.
+
+에피소드:
+
+- sidebar에서 episode row가 선택되었거나 row action focus가 있을 때 Delete를 누르면 `Delete Episode?` 확인창을 엽니다.
+- confirm하면 기존 episode delete 로직을 호출합니다.
+- 마지막 episode 삭제 제약은 이미 제거/완화된 흐름과 충돌하지 않게 유지합니다.
+
+폴더:
+
+- folder row가 선택/focus 상태일 때 Delete를 누르면 folder 삭제 확인창을 엽니다.
+- folder 안 episode는 삭제하지 않고 folder assignment만 해제하는 기존 의미를 유지합니다.
+
+오브젝트:
+
+- object list row 또는 object detail panel에서 object가 선택된 상태일 때 Delete를 누르면 object 삭제 확인창을 엽니다.
+- confirm하면 기존 object delete/detach cleanup 로직을 호출합니다.
+- node text mention token cleanup이 필요한지 기존 object delete side effect를 재확인합니다.
+
+#### 41.2.4 Selection/focus 모델
+
+필요한 상태:
+
+- `lastWorkspaceInteractionScope`: `canvas | sidebar | object-panel | modal | none`
+- `selectedSidebarEntity`: `episode | folder | null`
+- `selectedObjectId`는 기존 상태 재사용
+- `selectedNodeId`는 기존 상태 재사용
+
+우선순위:
+
+1. modal/confirm이 열려 있으면 modal이 키보드 입력을 소유합니다.
+2. mention menu가 열려 있으면 mention menu가 Enter/Escape를 소유합니다.
+3. form input focus면 form submit/cancel만 처리합니다.
+4. canvas focus면 node shortcut을 처리합니다.
+5. sidebar/object panel focus면 해당 row/object shortcut만 처리합니다.
+
+#### 41.2.5 UI confirm 통합
+
+작업:
+
+- episode/folder/object/node delete confirm copy와 state를 공통 구조로 정리합니다.
+- confirm dialog는 destructive target type/id/name을 명확히 보여줍니다.
+- Delete shortcut으로 열린 confirm도 기존 마우스 delete와 같은 confirm component를 사용합니다.
+- confirm dialog에서는 Enter = confirm, Escape = cancel을 지원합니다.
+
+주의:
+
+- 실제 삭제 버튼 없이 Delete만으로 삭제가 되는 흐름은 만들지 않습니다.
+- Delete는 "확인창 열기"까지만 shortcut입니다.
+
+### 41.3 Backend 계획
+
+#### 41.3.1 API / DB
+
+Backend 변경:
+
+- schema 변경 없음
+- DB 변경 없음
+- delete API 또는 persistence operation 의미 변경 없음
+
+이유:
+
+- 이번 작업은 keyboard command routing과 confirm UX입니다.
+- 실제 삭제는 이미 존재하는 frontend controller/backend sync 흐름을 사용합니다.
+
+#### 41.3.2 삭제 side effect 재확인
+
+Backend/데이터 관점 확인:
+
+- episode 삭제 후 active episode/project registry가 깨지지 않는지 확인
+- folder 삭제가 episode 자체 삭제로 오해되지 않는지 확인
+- object 삭제 시 node mention/object attachment 정합성이 유지되는지 확인
+- node 삭제는 detail-039/040 전후의 child rewire 정책과 충돌하지 않는지 확인
+
+추가 변경 후보:
+
+- 삭제 audit/log가 필요하면 별도 계획으로 분리합니다.
+- keyboard shortcut 자체를 backend에 기록하지 않습니다.
+
+### 41.4 테스트 계획
+
+Frontend:
+
+- `WorkspaceShell.test.tsx`
+  - New Episode input에서 Enter 생성
+  - New Folder input에서 Enter 생성
+  - New Object form에서 Enter 생성
+  - Escape로 각 생성 draft 취소
+  - sidebar episode focus 후 Delete가 confirm dialog만 열고, confirm 전 삭제하지 않음
+  - folder focus 후 Delete가 confirm dialog만 열고, episode는 삭제하지 않음
+  - object row/detail focus 후 Delete가 confirm dialog만 열고, confirm 후 object 삭제
+  - node inline editor focus 중 Delete는 글자 삭제/기본 편집으로 남고 node delete confirm을 열지 않음
+  - mention menu open 상태에서 Enter는 form submit이 아니라 suggestion 확정
+- confirm dialog 테스트
+  - Enter confirm
+  - Escape cancel
+  - cancel 후 entity 유지
+
+Backend:
+
+- 신규 backend 테스트는 기본적으로 없음
+- object/episode/folder 삭제 side effect가 frontend controller test에 이미 없다면 controller regression만 추가합니다.
+
+### 41.5 구현 순서
+
+1. 현재 구현된/진행 중인 폴더 Enter 단건 패치를 공통 keyboard policy 기준으로 재검토합니다.
+2. 생성 form submit 규칙을 episode/folder/object에 먼저 맞춥니다.
+3. Delete shortcut은 confirm dialog를 여는 것까지만 연결합니다.
+4. 실제 삭제 confirm handler는 기존 버튼 삭제 로직을 재사용합니다.
+5. node editor/mention menu/input focus 예외를 마지막에 회귀 테스트로 잠급니다.
+
+### 41.6 결정
+
+채택합니다.
+
+`detail-040`의 폴더 Enter 작업은 단독 완료 기준으로 보지 않고, `detail-041`의 공통 생성·삭제 keyboard policy 안으로 흡수합니다.
+Frontend는 keyboard routing, focus scope, confirm UX를 담당합니다.
+Backend는 schema/API 변경 없이 기존 삭제 side effect 정합성만 확인합니다.
+
+### 41.7 구현 결과
+
+구현 완료:
+
+- 폴더 생성 패널을 submit form으로 고정해 Enter 생성, Escape 취소를 지원했습니다.
+- 오브젝트 생성/수정 form은 summary를 한 줄 input으로 다루므로 Enter submit 흐름에 포함됩니다.
+- sidebar episode/folder row와 object row에 keyboard target metadata와 focus target을 추가했습니다.
+- Delete shortcut은 input/select/button/editor focus에서는 실행하지 않고, sidebar folder/episode 또는 object row focus에서 confirm dialog만 엽니다.
+- folder/object 삭제도 기존 삭제 버튼과 같은 confirm dialog를 거치도록 바꿨습니다.
+- confirm dialog에서는 Delete 버튼을 눌러야 실제 삭제가 실행되며, folder 삭제는 episode 자체를 삭제하지 않고 folder assignment만 해제합니다.
+
+검증 완료:
+
+- `WorkspaceShell.test.tsx`에 folder row Delete confirm, object row Delete confirm, sidebar input 중 canvas undo 차단, object summary one-line input, keyword refresh cache bypass 회귀 테스트를 추가했습니다.
+- frontend typecheck / changed-file ESLint / focused Vitest / frontend build smoke를 통과했습니다.
+- backend/recommendation cache bypass 관련 typecheck / lint / focused Vitest / build smoke를 통과했습니다.
+
+남은 범위:
+
+- New Episode는 현재 별도 제목 input 생성 UI가 아니라 기존 버튼 기반 즉시 생성 흐름입니다. episode 제목 입력형 생성 UI가 필요하면 별도 UI 변경으로 분리합니다.
+- object token atomic edit와 episode recent-modified semantics는 `detail-042`에서 계속 추적합니다.
+
+## detail-043 / 연결선·화살표 직접 드래그 UX 계획
+
+### 43.1 배경
+
+사용자 요청:
+
+- 연결점을 잡고 연결선을 바꾸는 조작이 불편합니다.
+- 화살표나 연결선 자체를 잡고 이동하면 더 편할 것 같습니다.
+
+현재 상태:
+
+- 연결 변경은 별도 rewire 모드나 노드 기준 조작에 가깝습니다.
+- 사용자는 "선/화살표를 잡고 연결을 바꾼다"는 직접 조작 모델을 기대합니다.
+- 기존 `detail-033`은 연결 기준, 같은 레인 앵커, 화살표 스타일, 드래그 중 선 갱신을 다뤘습니다.
+- 기존 `detail-034`는 node/rewire drag 중 자동 스크롤을 다뤘습니다.
+
+판단:
+
+- `detail-043`은 저장 모델 변경이 아니라 hit target, hover affordance, drag-to-rewire UX 개선입니다.
+- `parentId` 저장 의미는 그대로 유지합니다.
+- 사용자가 실제로 잡기 쉬운 영역은 시각 선보다 넓어야 합니다.
+
+### 43.2 Frontend 계획
+
+#### 43.2.1 연결선 hit area 추가
+
+작업:
+
+- 기존 visible connection path와 별개로 transparent hit path를 렌더링합니다.
+- hit path는 `pointer-events: stroke`와 두꺼운 stroke width를 사용합니다.
+- hit path는 visible path와 같은 `d`를 공유해 시각 위치와 조작 위치가 어긋나지 않게 합니다.
+- 같은 레인 vertical connection과 cross-lane horizontal/curved connection 모두 hit target을 가집니다.
+
+검증:
+
+- 얇은 선을 정확히 누르지 않아도 hover/drag가 시작됩니다.
+- hit path가 visible path를 가리거나 색을 바꾸지 않습니다.
+
+#### 43.2.2 hover affordance와 drag handle
+
+작업:
+
+- 연결선 hover 시 선 강조, cursor 변경, arrowhead 또는 중간 handle 표시를 추가합니다.
+- arrowhead hover 시에도 같은 rewire affordance를 보여줍니다.
+- 선택된 연결선은 parent node와 child node를 함께 highlight합니다.
+- keyboard focus 접근성은 최소한 connection hit target에 `aria-label`을 부여하는 수준부터 시작합니다.
+
+주의:
+
+- hover 장식이 node card 내용이나 object/keyword overlay를 가리면 안 됩니다.
+- 기존 main timeline arrow와 스타일 충돌이 없어야 합니다.
+
+#### 43.2.3 drag-to-rewire 상태 모델
+
+작업:
+
+- drag 시작 대상은 connection의 child node 기준으로 둡니다.
+- drag 시작 시 기존 `parentId`는 즉시 바꾸지 않고 preview 상태로만 전환합니다.
+- preview line은 기존 parent anchor 또는 pointer anchor에서 시작해 pointer 위치까지 이어집니다.
+- drag 중에는 nearest valid parent 후보를 계산합니다.
+- drop 시 유효 후보가 있으면 기존 rewire controller/path를 재사용해 `parentId`를 갱신합니다.
+- drop 후보가 없거나 Escape/cancel이면 기존 연결을 유지합니다.
+
+유효 후보 규칙:
+
+- 같은 project/episode 안의 node만 후보가 됩니다.
+- 자기 자신과 descendant는 후보에서 제외합니다.
+- level 규칙은 기존 rewire validation을 그대로 따릅니다.
+- 같은 레인 연결은 top/bottom anchor 규칙을 사용합니다.
+- 다른 레인 연결은 기존 side anchor 또는 `detail-033`에서 정한 anchor 규칙을 사용합니다.
+
+#### 43.2.4 드래그 중 시각 갱신
+
+작업:
+
+- pointer 이동, canvas scroll, window auto-scroll 모두 preview line 재계산을 트리거합니다.
+- node drag preview와 connection drag preview가 동시에 활성화되지 않게 guard를 둡니다.
+- auto-scroll은 `detail-034`의 node/rewire drag 루프를 재사용하거나 drag kind에 `connection-drag`를 추가합니다.
+- drag 중 후보 node highlight와 connection preview가 스크롤 후에도 현재 위치를 기준으로 유지되어야 합니다.
+
+검증:
+
+- 화면 위/아래로 drag할 때 canvas/window auto-scroll이 연결선 preview와 함께 움직입니다.
+- 스크롤만 발생하고 pointer move가 없어도 preview line이 stale 상태로 남지 않습니다.
+
+#### 43.2.5 arrowhead 스타일 정리
+
+작업:
+
+- 연결선 arrowhead는 main lane arrowhead 계열의 compact marker로 통일합니다.
+- cross-lane connection과 same-lane connection이 같은 marker family를 쓰되 크기는 connection density에 맞춥니다.
+- hover/active 상태 marker가 너무 커지지 않도록 별도 scale을 제한합니다.
+
+검증:
+
+- 기존 큰 삼각형 느낌이 줄어듭니다.
+- main lane arrow와 visual family가 맞습니다.
+- mobile/zoom 상태에서도 arrowhead가 과하게 두껍지 않습니다.
+
+#### 43.2.6 충돌 방지
+
+작업:
+
+- node card drag와 connection drag 시작 조건을 분리합니다.
+- connection hit area가 node resize handle, node menu, inline editor 클릭을 가로채지 않게 z-index/pointer-events를 조정합니다.
+- canvas pan drag와 connection drag가 동시에 시작되지 않게 합니다.
+- detail-041 Delete shortcut, detail-042 inline token Delete와 이벤트가 섞이지 않게 pointer-only rewire로 시작합니다.
+
+### 43.3 Backend 계획
+
+Backend 변경:
+
+- DB schema 변경 없음
+- API contract 변경 없음
+- `parentId` 저장 의미 변경 없음
+- 기존 node rewire/update persistence path를 재사용합니다.
+
+Backend 확인:
+
+- drop 후 저장되는 것은 child node의 `parentId` 변경뿐입니다.
+- stale revision, cycle validation, cross-episode parent validation은 기존 persistence/controller 검증을 그대로 사용합니다.
+- 서버가 connection drag라는 UI 조작을 별도 이벤트로 알 필요는 없습니다.
+
+### 43.4 테스트 계획
+
+Frontend:
+
+- `WorkspaceShell.test.tsx`
+  - connection hit area hover/drag 시작
+  - drag 중 nearest valid parent highlight
+  - valid drop 후 child `parentId` 변경
+  - invalid drop/cancel 후 기존 parent 유지
+  - 같은 레인 connection은 top/bottom anchor preview 사용
+  - 다른 레인 connection은 side/cross-lane anchor preview 사용
+  - drag 중 auto-scroll 후 preview line 재계산
+- canvas helper/unit test
+  - connection hit metadata 생성
+  - nearest valid parent 후보 계산
+  - descendant/self 후보 제외
+  - marker size/style regression
+
+Backend:
+
+- 별도 신규 API 테스트는 기본적으로 없음
+- 기존 rewire/controller 테스트가 부족하면 parentId update/cycle rejection regression만 보강합니다.
+
+### 43.5 구현 순서
+
+1. connection render 구조를 visible path + hit path로 분리합니다.
+2. hover/active affordance와 selected connection state를 추가합니다.
+3. connection drag state와 preview line을 추가합니다.
+4. nearest valid parent 후보 계산과 highlight를 연결합니다.
+5. drop 시 기존 rewire controller path를 호출합니다.
+6. auto-scroll/scroll 재계산을 연결합니다.
+7. arrowhead marker를 compact style로 정리합니다.
+8. 회귀 테스트와 visual smoke를 실행합니다.
+
+### 43.6 완료 기준
+
+- 사용자는 연결선 또는 화살표를 직접 잡고 다른 후보 노드로 연결을 바꿀 수 있습니다.
+- 드래그 중 연결선은 pointer/scroll/node 위치에 맞춰 자연스럽게 늘어나고 줄어듭니다.
+- drop 전에는 저장 상태가 바뀌지 않습니다.
+- drop 후에는 기존 `parentId` persistence와 validation을 통과합니다.
+- arrowhead는 main lane arrow와 어울리는 작고 정돈된 형태입니다.
+
+### 43.7 Frontend 구현 결과
+
+적용 범위:
+
+- connection line 렌더링을 visible path와 transparent hit path로 분리했습니다.
+- hit path는 같은 `d`/path를 공유하고, 두꺼운 transparent stroke로 직접 hover/drag가 가능합니다.
+- connection line hover/active 상태에서 선과 compact arrowhead가 파란색으로 강조되고, 중간 drag grip이 표시됩니다.
+- hovered/active connection의 parent/child node를 함께 highlight합니다.
+- connection hit path와 기존 start/end port 모두 같은 `beginRewireDrag()` 경로를 사용합니다.
+- drop 후보는 기존 candidate parent 계산과 `controller.rewireNode()`를 재사용합니다.
+- 후보 밖에 drop하면 기존 `parentId`를 유지합니다.
+- 기존 rewire drag 자동 스크롤/preview 갱신 루프를 connection direct drag에서도 그대로 사용합니다.
+
+검증:
+
+- `workspaceShell.canvas.test.ts`: connection metadata/hit path와 same-level anchor 회귀를 확인했습니다.
+- `WorkspaceShell.test.tsx`: connection hit area drag로 valid parent에 rewire되는지, invalid drop에서 기존 parent가 유지되는지 확인했습니다.
+
+## detail-044 / 에피소드별 캔버스 undo-redo 분리 패치
+
+### 44.1 배경
+
+사용자 요청:
+
+- Ctrl+Z / Ctrl+Y가 아직도 다른 에피소드로 넘어가는 문제가 있습니다.
+- 과거/미래 행동 데이터는 에피소드별로 따로 저장되거나, 에피소드별 캔버스처럼 동작해야 합니다.
+
+현재 문제:
+
+- 기존 history는 전역 undo/redo 스택이었습니다.
+- `selectEpisode()` 같은 탐색 상태도 history에 들어갈 수 있었습니다.
+- 더 큰 문제는 history entry가 전체 workspace snapshot이라서, 에피소드 A의 undo가 에피소드 B의 최신 변경까지 과거 snapshot으로 덮을 수 있다는 점입니다.
+
+### 44.2 구현 결정
+
+채택:
+
+- undo/redo stack을 `episodeId` 기준으로 분리합니다.
+- active episode의 history 상태만 `state.history.canUndo/canRedo`에 노출합니다.
+- episode 생성/선택/이름 변경/삭제는 canvas undo history에 넣지 않습니다.
+- undo/redo 적용 시 전체 workspace를 교체하지 않고, 해당 episode의 `episodes`, `nodes`, `objects`, `temporaryDrawer` 조각만 과거 snapshot에서 병합합니다.
+- `project.activeEpisodeId`는 undo/redo로 바꾸지 않고 현재 선택 에피소드를 유지합니다.
+
+보류:
+
+- cross-episode object reference를 한 번의 history entry로 다중 episode까지 원자 복원하는 고급 정책은 아직 도입하지 않습니다. 현재 기본 UX는 active episode canvas history 분리가 우선입니다.
+
+### 44.3 Frontend 구현 결과
+
+적용 범위:
+
+- `WorkspacePersistenceController`의 전역 `undoSnapshots` / `redoSnapshots`를 episode별 map으로 변경했습니다.
+- 모든 node/object/drawer/canvas mutation은 owning episode id로 history를 저장합니다.
+- `createEpisode()`, `selectEpisode()`, `renameEpisode()`, `deleteEpisode()`는 canvas history를 생성하지 않게 했습니다.
+- 삭제된 episode의 history stack은 함께 제거합니다.
+- `replaceState()` / `patchState()`의 history 계산은 새 snapshot의 active episode 기준으로 바꿨습니다.
+- historical snapshot 적용은 active episode 조각만 병합하므로, 다른 episode의 최신 노드/오브젝트/드로어 상태를 덮지 않습니다.
+
+검증:
+
+- `controller.test.ts`: episode별 undo/redo 분리와 다른 episode 데이터 보존 회귀를 추가했습니다.
+- `WorkspaceShell.test.tsx`: 다른 episode에서 Ctrl+Z를 눌러도 이전 episode history를 소비하거나 화면이 넘어가지 않는 회귀를 추가했습니다.
+- frontend typecheck / changed-file ESLint / controller full Vitest / WorkspaceShell full Vitest / frontend build smoke / `git diff --check`를 통과했습니다.
+
+## detail-045 / 첫 major 노드 생성 크기와 timeline 최소 길이 패치
+
+### 45.1 배경
+
+사용자 요청:
+
+- 첫 노드 생성에 한해서 메인 이벤트 레인의 화살표가 마지막 노드를 향해야 한다는 제약을 없앱니다.
+- 첫 major 노드도 기존 노드 생성 크기와 동일하게 생성합니다.
+- 대신 메인 이벤트 레인의 화살표는 충분히 긴 최솟값을 유지해 다음 노드를 추가할 공간을 확보합니다.
+
+현재 문제:
+
+- 첫 major 노드를 생성하면 timeline span에 맞춰 노드 높이를 강제로 늘리는 특수 처리가 있었습니다.
+- major timeline end도 마지막 major node bottom과 맞춰지는 전제의 테스트/렌더 계산이 남아 있었습니다.
+- 결과적으로 첫 노드가 일반 노드 크기보다 과하게 커지고, 다음 노드 추가 UX가 timeline 종속처럼 보였습니다.
+
+### 45.2 Frontend 구현 결과
+
+적용 범위:
+
+- 첫 major 노드 생성 직후 `nodeCardHeight`보다 큰 timeline span 높이를 저장하던 특수 처리를 제거했습니다.
+- major 노드 생성은 첫 노드 여부와 무관하게 기본 `nodeCardWidth` / `nodeCardHeight`로 저장됩니다.
+- timeline end 계산은 `initialTimelineEndY`를 최소값으로 사용해 노드가 하나뿐이어도 짧게 접히지 않습니다.
+- timeline end 저장/드래그/major 이동 보정도 같은 최소값을 기준으로 정리했습니다.
+- 기존 테스트 중 “timeline end는 항상 end major bottom과 같아야 한다”는 기대를 “timeline minimum은 독립적으로 유지되고 node bottom 이상이면 된다”로 바꿨습니다.
+
+검증:
+
+- `WorkspaceShell.test.tsx`: 첫 major 재생성 노드가 기본 높이 `102px`를 유지하고 timeline 최소 span이 유지되는 회귀를 추가/수정했습니다.
+- timeline end 관련 focused Vitest와 full `WorkspaceShell.test.tsx`를 통과했습니다.

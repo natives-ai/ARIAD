@@ -7,6 +7,7 @@ import { loadFrontendEnv } from "../config/env";
 import { LocalPersistenceStore } from "../persistence/localStore";
 import { createSampleWorkspace } from "../persistence/sampleWorkspace";
 import { WorkspaceShell } from "./WorkspaceShell";
+import { getObjectToken } from "./workspace-shell/workspaceShell.inlineEditor";
 
 describe("workspace shell recommendation flow", () => {
   const originalFetch = globalThis.fetch;
@@ -64,6 +65,20 @@ describe("workspace shell recommendation flow", () => {
 
   async function getSelectedNodeCard() {
     return (await screen.findByTestId("selected-node-title")).closest(".node-card") as HTMLElement;
+  }
+
+  // 루트 최근 스토리 목록의 현재 표시 순서를 읽습니다.
+  function getRootEpisodeTitles() {
+    const rootList = document.querySelector(".sidebar-root-episode-list");
+
+    if (!(rootList instanceof HTMLElement)) {
+      throw new Error("root_episode_list_not_found");
+    }
+
+    return within(rootList)
+      .getAllByRole("button")
+      .filter((button) => button.classList.contains("sidebar-episode-link"))
+      .map((button) => button.textContent?.trim() ?? "");
   }
 
   // 캔버스 뷰포트 요소를 찾는 함수
@@ -191,6 +206,22 @@ describe("workspace shell recommendation flow", () => {
     }
 
     return firstMatch.startY;
+  }
+
+  // 연결선 hit path 목록을 가져옵니다.
+  function getConnectionHitLines() {
+    return Array.from(document.querySelectorAll(".connection-hit-line")) as SVGPathElement[];
+  }
+
+  // 노드 카드 test id에서 실제 node id를 추출합니다.
+  function getNodeIdFromCard(node: HTMLElement) {
+    const testId = node.getAttribute("data-testid");
+
+    if (!testId?.startsWith("node-")) {
+      throw new Error("node_card_testid_missing");
+    }
+
+    return testId.slice("node-".length);
   }
 
   function pressWorkspaceKey(
@@ -699,6 +730,163 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
+  it("sends a cache bypass request when refreshing keyword suggestions", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "renewed pressure", reason: "Fresh cloud result." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      void init;
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    });
+    const getKeywordPayloads = () =>
+      fetchMock.mock.calls
+        .filter(([input]) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
+
+          return url.endsWith("/recommendation/keywords");
+        })
+        .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as { cacheBypass?: boolean });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await waitFor(() => {
+      expect(getKeywordPayloads()).toHaveLength(1);
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Refresh Cloud" }));
+    await waitFor(() => {
+      expect(getKeywordPayloads()).toHaveLength(2);
+    });
+
+    const [initialPayload, refreshPayload] = getKeywordPayloads();
+
+    expect(initialPayload?.cacheBypass).toBeUndefined();
+    expect(refreshPayload?.cacheBypass).toBe(true);
+  });
+
+  it("renders object summary as a one-line input and normalizes pasted newlines", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click((await screen.findAllByRole("button", { name: "New Object" }))[0]!);
+
+    const createEditor = await screen.findByTestId("detail-editor");
+    const summaryInput = within(createEditor).getByLabelText("Information");
+
+    expect(summaryInput.tagName).toBe("INPUT");
+
+    fireEvent.paste(summaryInput, {
+      clipboardData: {
+        getData: () => "First line\nSecond line"
+      }
+    });
+
+    expect(summaryInput).toHaveValue("First line Second line");
+  });
+
+  it("keeps root episode order when an older episode is only viewed", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    expect(await screen.findByRole("button", { name: "Episode 12" })).toBeInTheDocument();
+    expect(getRootEpisodeTitles().slice(0, 2)).toEqual(["Episode 12", "Episode 11"]);
+
+    await user.click(screen.getByRole("button", { name: "Episode 11" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Episode 11" })).toHaveClass("is-active");
+    });
+    expect(getRootEpisodeTitles().slice(0, 2)).toEqual(["Episode 12", "Episode 11"]);
+  });
+
+  it("moves an episode to the top only after node or object edits", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: "Episode 11" }));
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-major"));
+
+    await waitFor(() => {
+      expect(getRootEpisodeTitles()[0]).toBe("Episode 11");
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Episode 10" }));
+
+    expect(getRootEpisodeTitles()[0]).toBe("Episode 11");
+
+    await user.click((await screen.findAllByRole("button", { name: "New Object" }))[0]!);
+
+    const createEditor = await screen.findByTestId("detail-editor");
+
+    await user.type(within(createEditor).getByLabelText("Object Name"), "Episode 10 prop");
+    await user.click(within(createEditor).getByRole("button", { name: "New Object" }));
+
+    await waitFor(() => {
+      expect(getRootEpisodeTitles()[0]).toBe("Episode 10");
+    });
+  });
+
   it("stops node typing when clicking outside the inline editor", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -900,7 +1088,7 @@ describe("workspace shell recommendation flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("creates and reuses object mentions from inline node text", async () => {
+  it("reuses object mentions and avoids implicit object creation from closed tokens", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -958,11 +1146,84 @@ describe("workspace shell recommendation flow", () => {
       ).toBeInTheDocument();
     });
 
-    const coatRow = await screen.findByText("coat", { selector: ".object-row-name" });
-    const coatObjectRow = coatRow.closest(".object-row");
+    expect(screen.queryByText("coat", { selector: ".object-row-name" })).not.toBeInTheDocument();
+  });
 
-    expect(coatObjectRow).not.toBeNull();
-    expect(coatObjectRow as HTMLElement).toHaveTextContent("(1)");
+  it("keeps inline object tokens atomic while editing and deleting", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+
+    await user.type(inlineInput, "She dropped the coffee to his @h");
+
+    const mentionMenu = await waitFor(() => {
+      const menu = document.querySelector(".object-mention-menu");
+
+      if (!(menu instanceof HTMLElement)) {
+        throw new Error("object_mention_menu_missing_for_atomic_test");
+      }
+
+      return menu;
+    });
+
+    await user.click(
+      within(mentionMenu).getByRole("button", {
+        name: "Heroine's Mother"
+      })
+    );
+
+    const objectToken = getObjectToken("Heroine's Mother");
+
+    await waitFor(() => {
+      expect(inlineInput.value).toContain(objectToken);
+    });
+
+    const stableValue = inlineInput.value;
+    const damagedValue = stableValue.replace("Mother", "Motherr");
+
+    fireEvent.change(inlineInput, {
+      target: {
+        value: damagedValue
+      }
+    });
+
+    await waitFor(() => {
+      expect(inlineInput).toHaveValue(stableValue);
+    });
+
+    const tokenStart = stableValue.indexOf(objectToken);
+    const tokenEnd = tokenStart + objectToken.length;
+
+    inlineInput.setSelectionRange(tokenEnd, tokenEnd);
+    fireEvent.keyDown(inlineInput, {
+      key: "Backspace"
+    });
+
+    expect(inlineInput).toHaveValue(stableValue);
+    expect(inlineInput.selectionStart).toBe(tokenStart);
+    expect(inlineInput.selectionEnd).toBe(tokenEnd);
+
+    fireEvent.keyDown(inlineInput, {
+      key: "Backspace"
+    });
+
+    await waitFor(() => {
+      expect(inlineInput.value).not.toContain(objectToken);
+    });
   });
 
   it("creates an object from an unmatched inline mention query", async () => {
@@ -1433,8 +1694,38 @@ describe("workspace shell recommendation flow", () => {
 
     await user.click(within(cafeRow).getByRole("button", { name: "More Cafe Exit" }));
     await user.click(await screen.findByRole("button", { name: "Delete Object" }));
+    const deleteDialog = await screen.findByRole("dialog", { name: "Cafe Exit" });
+
+    expect(screen.getByRole("button", { name: "Cafe Exit" })).toBeInTheDocument();
+    await user.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
 
     expect(screen.queryByRole("button", { name: "Cafe Exit" })).not.toBeInTheDocument();
+  });
+
+  it("opens object delete confirmation from the focused object row", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    render(<WorkspaceShell />);
+
+    const objectButton = await screen.findByRole("button", { name: "Heroine's Mother" });
+    const objectRow = objectButton.closest(".object-row") as HTMLElement;
+
+    objectRow.focus();
+    pressWorkspaceKey("Delete", {}, objectRow);
+
+    const deleteDialog = await screen.findByRole("dialog", { name: "Heroine's Mother" });
+
+    expect(objectButton).toBeInTheDocument();
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("button", { name: "Heroine's Mother" })).toBeInTheDocument();
   });
 
   it("moves episodes into folders, dissolves them, and enables folder-scoped sort mode", async () => {
@@ -1495,6 +1786,37 @@ describe("workspace shell recommendation flow", () => {
 
     expect(within(folderItem).queryByRole("button", { name: "Episode 11" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Episode 11" })).toBeInTheDocument();
+  });
+
+  it("opens folder delete confirmation from the focused folder row", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await user.click(await screen.findByRole("button", { name: /New Folder/i }));
+    await user.type(screen.getByPlaceholderText("Name this folder"), "Act One{Enter}");
+
+    const folderItem = (await screen.findByText("Act One")).closest(".sidebar-folder-item") as HTMLElement;
+
+    folderItem.focus();
+    pressWorkspaceKey("Delete", {}, folderItem);
+
+    const deleteDialog = await screen.findByRole("dialog", { name: "Act One" });
+
+    expect(within(folderItem).getByText("Act One")).toBeInTheDocument();
+    await user.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
+
+    expect(screen.queryByText("Act One")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Episode 12" })).toBeInTheDocument();
   });
 
   it("removes stale restored sidebar folders that no longer contain current episodes", async () => {
@@ -1676,8 +1998,8 @@ describe("workspace shell recommendation flow", () => {
     await user.click(within(detailEditor).getByRole("button", { name: "Save Object" }));
 
     expect(
-      await screen.findAllByText("A sharpened location anchor for the confrontation beat.")
-    ).not.toHaveLength(0);
+      await screen.findByDisplayValue("A sharpened location anchor for the confrontation beat.")
+    ).toBeInTheDocument();
 
     unmount();
     render(<WorkspaceShell />);
@@ -1875,10 +2197,8 @@ describe("workspace shell recommendation flow", () => {
       );
       const restoredTargetNode = screen.getByTestId(targetTestId);
       const restoredTargetMetrics = getNodeCardMetrics(restoredTargetNode);
-      const restoredTargetBottom = restoredTargetMetrics.top + restoredTargetMetrics.height;
 
-      expect(restoredTimelineEndY).toBeCloseTo(restoredTargetBottom, 2);
-      expect(restoredTimelineEndY).toBeLessThan(customCanvasUiState.timelineEndY);
+      expect(restoredTimelineEndY).toBeCloseTo(customCanvasUiState.timelineEndY, 2);
       expect(
         Math.abs(restoredSecondDividerLeft - customCanvasUiState.laneDividerXs.second)
       ).toBeLessThanOrEqual(40);
@@ -1971,6 +2291,94 @@ describe("workspace shell recommendation flow", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("keeps keyboard undo scoped to the selected episode", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    const canvasViewport = getCanvasViewport();
+    await user.click(canvasViewport);
+
+    pressWorkspaceKey("c", { ctrlKey: true }, canvasViewport);
+    pressWorkspaceKey("v", { ctrlKey: true }, canvasViewport);
+
+    expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    expect(within(screen.getByTestId("history-controls")).getByRole("button", { name: "Undo" })).toBeEnabled();
+
+    await user.click(await screen.findByRole("button", { name: "Episode 11" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
+    });
+    expect(within(screen.getByTestId("history-controls")).getByRole("button", { name: "Undo" })).toBeDisabled();
+
+    pressWorkspaceKey("z", { ctrlKey: true }, canvasViewport);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Episode 12" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    });
+
+    const restoredCanvasViewport = getCanvasViewport();
+    await user.click(restoredCanvasViewport);
+    expect(within(screen.getByTestId("history-controls")).getByRole("button", { name: "Undo" })).toBeEnabled();
+  });
+
+  it("does not run canvas undo while a sidebar input owns focus", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 1");
+    const canvasViewport = getCanvasViewport();
+    await user.click(canvasViewport);
+    pressWorkspaceKey("c", { ctrlKey: true }, canvasViewport);
+    pressWorkspaceKey("v", { ctrlKey: true }, canvasViewport);
+
+    expect(await screen.findByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    expect(
+      within(screen.getByTestId("history-controls")).getByRole("button", { name: "Undo" })
+    ).toBeEnabled();
+
+    await user.click(await screen.findByRole("button", { name: /New Folder/i }));
+    const folderInput = await screen.findByPlaceholderText("Name this folder");
+    await user.type(folderInput, "Sidebar draft");
+
+    expect(
+      within(screen.getByTestId("history-controls")).getByRole("button", { name: "Undo" })
+    ).toBeDisabled();
+
+    pressWorkspaceKey("z", { ctrlKey: true }, folderInput);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    });
+  });
+
   it("restores resized node dimensions after delete undo and keeps redo consistent", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
@@ -2049,7 +2457,7 @@ describe("workspace shell recommendation flow", () => {
     expect(restoredAfterRedoNode.style.width).toBe("316px");
   });
 
-  it("sizes the first major node to timeline span and shrinks timeline after deletion", async () => {
+  it("keeps the first recreated major node at default size and preserves timeline minimum", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -2096,8 +2504,8 @@ describe("workspace shell recommendation flow", () => {
       expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
     });
 
-    const shrunkTimeline = getTimelineSpan();
-    expect(shrunkTimeline.endTop).toBeLessThanOrEqual(initialTimeline.endTop);
+    const minimumTimeline = getTimelineSpan();
+    expect(minimumTimeline.endTop).toBeCloseTo(initialTimeline.endTop, 1);
 
     await user.click(screen.getByRole("button", { name: "Create Node" }));
     await user.click(screen.getByTestId("lane-major"));
@@ -2109,8 +2517,11 @@ describe("workspace shell recommendation flow", () => {
     const recreatedMajorNode = (await screen.findByTestId("selected-node-title")).closest(
       ".node-card"
     ) as HTMLElement;
+    const recreatedTimeline = getTimelineSpan();
 
-    expect(recreatedMajorNode.style.height).toBe(`${shrunkTimeline.span}px`);
+    expect(recreatedMajorNode.style.height).toBe("102px");
+    expect(recreatedTimeline.span).toBeGreaterThan(parseCssPixels(recreatedMajorNode.style.height));
+    expect(recreatedTimeline.endTop).toBeCloseTo(minimumTimeline.endTop, 1);
   });
 
   it("disables timeline-end drag when start and end are the same major node", async () => {
@@ -2277,11 +2688,11 @@ describe("workspace shell recommendation flow", () => {
     const endNodeBottomAfter =
       parseCssPixels(endMajorNodeAfter.style.top) + parseCssPixels(endMajorNodeAfter.style.height);
 
-    expect(Math.abs(timelineEndTopAfter - endNodeBottomAfter)).toBeLessThan(0.6);
+    expect(timelineEndTopAfter).toBeGreaterThanOrEqual(endNodeBottomAfter);
     expect(screen.getByTestId(nonEndMajorNodeId)).not.toHaveClass("is-end-node");
   });
 
-  it("keeps major timeline end anchored when dragging a minor below the last major", async () => {
+  it("keeps major timeline minimum independent when dragging a minor below the last major", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -2356,11 +2767,11 @@ describe("workspace shell recommendation flow", () => {
         parseCssPixels(endMajorAfter.style.top) + parseCssPixels(endMajorAfter.style.height);
 
       expect(minorBottomAfter).toBeGreaterThan(timelineEndTopAfter + 80);
-      expect(Math.abs(timelineEndTopAfter - endMajorBottomAfter)).toBeLessThan(0.6);
+      expect(timelineEndTopAfter).toBeGreaterThanOrEqual(endMajorBottomAfter);
     });
   });
 
-  it("keeps major timeline end anchored when resizing a minor below the last major", async () => {
+  it("keeps major timeline minimum independent when resizing a minor below the last major", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -2433,7 +2844,7 @@ describe("workspace shell recommendation flow", () => {
 
       expect(minorMetricsAfter.height).toBeGreaterThan(500);
       expect(minorBottomAfter).toBeGreaterThan(timelineEndTopAfter + 80);
-      expect(Math.abs(timelineEndTopAfter - endMajorBottomAfter)).toBeLessThan(0.6);
+      expect(timelineEndTopAfter).toBeGreaterThanOrEqual(endMajorBottomAfter);
     });
   });
 
@@ -2639,7 +3050,7 @@ describe("workspace shell recommendation flow", () => {
     });
   });
 
-  it("keeps resized end major node aligned to timeline center and end anchor", async () => {
+  it("keeps resized end major node aligned to timeline center without forcing the end anchor", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -2713,7 +3124,7 @@ describe("workspace shell recommendation flow", () => {
       parseCssPixels(endNodeAfter.style.top) + parseCssPixels(endNodeAfter.style.height);
 
     expect(Math.abs(endNodeCenterX - timelineCenterX)).toBeLessThan(0.6);
-    expect(Math.abs(endNodeBottomY - timelineEndY)).toBeLessThan(0.6);
+    expect(timelineEndY).toBeGreaterThanOrEqual(endNodeBottomY);
   });
 
   it("keeps three major nodes separated after large end-node resize", async () => {
@@ -3649,6 +4060,149 @@ describe("workspace shell recommendation flow", () => {
 
       expect(after.left).toBe(before.left);
       expect(after.top).toBeGreaterThan(before.top + 60);
+    });
+  });
+
+  it("rewires a child by dragging the connection hit area to another parent", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await createEmptyMajorNode(user);
+    await createEmptyMajorNode(user);
+
+    const getMajorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-major")) as HTMLElement[];
+    const getMinorNodes = () =>
+      Array.from(document.querySelectorAll(".node-card-level-minor")) as HTMLElement[];
+
+    await waitFor(() => {
+      expect(getMajorNodes().length).toBeGreaterThanOrEqual(3);
+    });
+
+    const sourceMajor = getMajorNodes()[0];
+
+    if (!(sourceMajor instanceof HTMLElement)) {
+      throw new Error("source_major_missing_for_connection_drag_test");
+    }
+
+    const sourceMajorMetrics = getNodeCardMetrics(sourceMajor);
+    const minorLaneMetrics = getLaneColumnMetrics("minor");
+
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    fireEvent.click(await screen.findByTestId("lane-minor"), {
+      clientX: minorLaneMetrics.left + 10,
+      clientY: sourceMajorMetrics.top + sourceMajorMetrics.height / 2
+    });
+
+    await waitFor(() => {
+      expect(getMinorNodes()).toHaveLength(1);
+      expect(getConnectionHitLines()).toHaveLength(1);
+    });
+
+    const hitLine = getConnectionHitLines()[0]!;
+    const childId = hitLine.dataset.childId;
+    const originalParentId = hitLine.dataset.parentId;
+
+    if (!childId || !originalParentId) {
+      throw new Error("connection_hit_metadata_missing");
+    }
+
+    const targetMajor = getMajorNodes().find(
+      (majorNode) => getNodeIdFromCard(majorNode) !== originalParentId
+    );
+
+    if (!(targetMajor instanceof HTMLElement)) {
+      throw new Error("target_major_missing_for_connection_drag_test");
+    }
+
+    const targetMajorId = getNodeIdFromCard(targetMajor);
+
+    vi.spyOn(targetMajor, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(620, 240, 268, 102)
+    );
+
+    fireEvent.mouseEnter(hitLine);
+
+    await waitFor(() => {
+      expect(hitLine.closest(".connection-line-group")).toHaveClass("is-active");
+      expect(sourceMajor).toHaveClass("is-rewire-target");
+    });
+
+    fireEvent.mouseDown(hitLine, {
+      button: 0,
+      clientX: 460,
+      clientY: 180
+    });
+    fireEvent.pointerMove(window, {
+      clientX: 650,
+      clientY: 270
+    });
+
+    await waitFor(() => {
+      expect(targetMajor).toHaveClass("is-rewire-hover-target");
+    });
+
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const rewiredLine = screen.getByTestId(`connection-hit-${childId}`);
+
+      expect(rewiredLine).toHaveAttribute("data-parent-id", targetMajorId);
+    });
+  });
+
+  it("keeps the original parent when connection drag drops outside candidates", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      })
+    ) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+    await user.click(await screen.findByRole("button", { name: "Create Node" }));
+    await user.click(await screen.findByTestId("lane-minor"));
+
+    await waitFor(() => {
+      expect(getConnectionHitLines()).toHaveLength(1);
+    });
+
+    const hitLine = getConnectionHitLines()[0]!;
+    const childId = hitLine.dataset.childId;
+    const originalParentId = hitLine.dataset.parentId;
+
+    if (!childId || !originalParentId) {
+      throw new Error("connection_hit_metadata_missing_for_invalid_drop_test");
+    }
+
+    fireEvent.mouseDown(hitLine, {
+      button: 0,
+      clientX: 420,
+      clientY: 180
+    });
+    fireEvent.pointerMove(window, {
+      clientX: 9999,
+      clientY: 9999
+    });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      const unchangedLine = screen.getByTestId(`connection-hit-${childId}`);
+
+      expect(unchangedLine).toHaveAttribute("data-parent-id", originalParentId);
     });
   });
 

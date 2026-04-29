@@ -2978,3 +2978,133 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Deleting a parent no longer removes its child chain. Direct children remain on canvas and reconnect to the nearest valid upper-lane node; descendants below those children keep their existing parent links.
 - Warnings / blockers: No DB/schema change was made. Existing dirty recommendation, auto-scroll, and inline-editor files are unrelated to this deletion fix and were not reverted.
 - Approval needed: `none`
+
+### 2026-04-29 / loop-203
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`, read-only review of `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/workspace-shell/WorkspaceObjectPanel.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.sidebar.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `backend/src/recommendation/routes.ts`, `recommendation/src/provider/gemini.ts`
+- What changed: Added `detail-040 / Workspace 편집 UX 안정화 계획` for the seven requested interaction fixes. The plan splits immediate frontend fixes for folder Enter submit, one-line object summary, canvas-scoped undo/redo, and keyword refresh from second-phase episode updatedAt semantics and inline object token atomic editing. Connection-line direct dragging is recorded as a third-phase UX follow-up.
+- Tests run: planning update and read-only code inspection only
+- Result: The work is now divided by frontend/backend/recommendation ownership, with cache bypass identified as the one item that must cross frontend request, backend route cache, and Gemini provider cache.
+- Warnings / blockers: Episode recent-modified sorting should reuse existing `StoryEpisode.updatedAt`; no new queue/stack structure is recommended. Object token protection should be solved in the frontend editor before considering backend name uniqueness.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-204
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/WorkspaceObjectPanel.tsx`, `frontend/src/recommendation/request.ts`, `frontend/src/recommendation/request.test.ts`, `recommendation/src/contracts/index.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/factory.test.ts`, `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-040` phase 1. Folder creation now submits on Enter and cancels on Escape, object summary uses a one-line input with newline normalization, canvas undo/redo is gated by workspace interaction scope, keyword cloud refresh sends `cacheBypass: true`, stale refresh responses are ignored, and backend/Gemini keyword caches are skipped only for bypass requests.
+- Tests run: `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); `corepack yarn workspace @scenaairo/backend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint (pass); changed-file backend recommendation ESLint (pass); recommendation lint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx src/recommendation/request.test.ts` (outside sandbox pass, 65 tests); `corepack yarn --cwd recommendation run -T vitest run src/provider/factory.test.ts` (outside sandbox pass, 21 tests); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts` (outside sandbox pass, 5 tests); frontend/backend/recommendation build smoke (pass).
+- Result: The immediate edit UX bugs and keyword refresh cache issue are fixed without schema changes. Phase 2 episode updatedAt semantics and object-token atomic editing remain intentionally deferred.
+- Warnings / blockers: Windows sandbox still blocks Vitest worker startup with `spawn EPERM`, so focused tests were rerun outside sandbox. `detail-040` phase 2 and 3 remain open by plan.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-204
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend, Recommendation
+- Touched zones: `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `recommendation/src/contracts/index.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/factory.test.ts`, `PLANS.md`
+- What changed: Implemented the backend/recommendation slice of `detail-040` keyword refresh cache bypass. Added `cacheBypass?: boolean` to keyword recommendation requests and provider context, validated the flag in the backend keyword route, skipped backend keyword cache read/write when true, logged `keyword_cache_bypass`, and made Gemini provider skip its internal keyword cache on bypassed contexts. After the user clarified backend scope, frontend UI/request edits from this loop were reverted and left out of the patch.
+- Tests run: `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); `corepack yarn workspace @scenaairo/recommendation build` (pass); `corepack yarn workspace @scenaairo/recommendation lint` (pass); `corepack yarn workspace @scenaairo/recommendation test` (outside sandbox pass, 25 tests); `corepack yarn workspace @scenaairo/backend typecheck` (pass); changed-file backend ESLint for recommendation route files (pass); `corepack yarn workspace @scenaairo/backend build` (pass); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts` (outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/backend test` (outside sandbox pass, 19 tests)
+- Result: Backend and Gemini cache layers now have a dedicated keyword refresh bypass path without DB schema changes and without changing sentence recommendation requests.
+- Warnings / blockers: Windows sandbox still blocks Vitest child process spawning with `spawn EPERM`; affected tests were run outside sandbox. Frontend still needs a separate owner to send `cacheBypass: true` from the refresh button.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-205
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Added `detail-041 / Workspace 생성·삭제 키보드 상호작용 공통화 계획` after the user clarified that keyboard interaction must not be limited to folder Enter submit. The new plan absorbs the narrow folder Enter work into a workspace-wide keyboard command policy covering episode/folder/object creation on Enter, Delete-to-confirm for episode/folder/object/node targets, input/editor/mention-menu exceptions, and confirm dialog Enter/Escape behavior.
+- Tests run: planning update only
+- Result: Frontend ownership is now keyboard routing, focus scope, creation form submit, and destructive confirm UX. Backend ownership is limited to existing delete side-effect consistency; no schema/API/DB change is planned.
+- Warnings / blockers: Existing in-progress implementation changes from the interrupted loop were not expanded in this planning update. Before implementation, frontend patches should be reconciled against `detail-041` so folder-only behavior is not treated as complete.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-206
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Expanded `detail-040` with a dedicated `40.7 2차 구현 계획`. The second phase is now split into Track A for episode recent-modified semantics (`selectEpisode()` must not touch episode `updatedAt`; node/object/structure mutations must touch it) and Track B for inline object token atomic editing (object token range parser, caret boundary snap, internal edit blocking, 2-step object token delete, keyword token edit preservation).
+- Tests run: planning update only
+- Result: `detail-040` phase 2 now has implementation order, frontend/backend ownership, validation gates, and completion criteria instead of only high-level remaining items.
+- Warnings / blockers: Track B must be implemented together with `detail-041` keyboard shortcut exceptions so inline Delete for object-token editing does not conflict with entity Delete confirm shortcuts.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-207
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Corrected the phase-2 plan placement after the user clarified it should be a new numbered detail. The former `40.7` phase-2 content is now promoted to `detail-042 / Workspace 편집 UX 2차 안정화 계획`, while `detail-040` only points to `detail-042` for the remaining episode updatedAt and inline object-token work.
+- Tests run: planning update only
+- Result: Detail numbering is now aligned: `detail-040` remains the phase-1 UX stabilization container, `detail-041` covers common creation/delete keyboard policy, and `detail-042` owns the phase-2 recent-modified + atomic token plan.
+- Warnings / blockers: `loop-206` remains as historical log context, but the current source of truth is `detail-042`.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-208
+- Active milestone: Post-baseline support task
+- Agents engaged: Backend
+- Touched zones: `backend/src/persistence/routes.integration.test.ts`, `PLANS.md`
+- What changed: Implemented the backend verification slice of `detail-042` Track A. Added a persistence integration regression that imports a project with an older episode `updatedAt`, verifies a node-only sync does not invent a new episode modified timestamp, then verifies an explicit episode upsert roundtrips the frontend-provided `updatedAt` through sync and get responses.
+- Tests run: `corepack yarn --cwd backend run -T vitest run src/persistence/routes.integration.test.ts -t "preserves episode updatedAt"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); `corepack yarn workspace @scenaairo/backend typecheck` (pass); changed-file backend ESLint for `src/persistence/routes.integration.test.ts` (pass); `corepack yarn --cwd backend run -T vitest run src/persistence/routes.integration.test.ts` (outside sandbox pass, 8 tests); `corepack yarn workspace @scenaairo/backend test` (pass, 20 tests); `corepack yarn workspace @scenaairo/backend build` (pass)
+- Result: Backend file persistence now has explicit coverage for the `detail-042` contract: episode `updatedAt` is preserved exactly as supplied by frontend/controller state, and backend does not reinterpret node-only sync as an episode modification.
+- Warnings / blockers: No DB schema or API contract change was made. MySQL code already stores/reconstructs `cloud_episodes.updated_at`, but no live MySQL integration was run in this loop.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-209
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend, Recommendation
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/WorkspaceObjectPanel.tsx`, `frontend/src/routes/workspace-shell/WorkspaceSidebarRecents.tsx`, `frontend/src/recommendation/request.ts`, `frontend/src/recommendation/request.test.ts`, `backend/src/recommendation/routes.ts`, `backend/src/recommendation/routes.structured.test.ts`, `recommendation/src/contracts/index.ts`, `recommendation/src/context/index.ts`, `recommendation/src/provider/gemini.ts`, `recommendation/src/provider/factory.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Repatched `detail-040` and implemented the practical `detail-041` keyboard policy slice. Restored frontend cache bypass payloads, one-line object summary input, folder Enter/Escape form behavior, canvas-scoped history controls, stale keyword refresh guarding, sidebar/object Delete-to-confirm routing, folder/object confirm dialogs, and focused row metadata for sidebar/object keyboard targets.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint (pass); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx src/recommendation/request.test.ts` (outside sandbox pass, 71 tests); `corepack yarn workspace @scenaairo/recommendation typecheck` (pass); recommendation lint (pass); `corepack yarn --cwd recommendation run -T vitest run src/provider/factory.test.ts` (outside sandbox pass, 21 tests); `corepack yarn workspace @scenaairo/backend typecheck` (pass); changed-file backend recommendation ESLint (pass); `corepack yarn --cwd backend run -T vitest run src/recommendation/routes.structured.test.ts` (outside sandbox pass, 5 tests); frontend/backend/recommendation build smoke (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: 40번 immediate UX fixes and 41번 folder/object/sidebar Delete confirm behavior are now implemented together. New Episode remains the existing button-based immediate creation path; adding a dedicated episode-title creation input is left as a separate UI change if needed.
+- Warnings / blockers: Windows sandbox still blocks Vitest worker startup with `spawn EPERM`, so focused Vitest runs used the approved outside-sandbox path. Existing `backend/src/persistence/routes.integration.test.ts` changes from loop-208 remain in the worktree and were not modified by this patch.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-210
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented the frontend slice of `detail-042`. `selectEpisode()` now changes active episode without touching episode `updatedAt`, while node/object/drawer/rewire/placement/delete/restore/paste mutations touch the owning episode in the same persistence transaction. Root recent stories therefore stay in modified order, not viewed order. Inline object mentions now use object-token range parsing, caret/selection snapping, internal edit and paste blocking, two-step Backspace/Delete removal, and explicit-create-only object creation. Keyword token editing remains separate from object-token atomic behavior.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for the detail-042 files (pass); `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 44 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts` (sandbox `spawn EPERM`, rerun outside sandbox pass, 13 tests after paste guard refinement); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 71 tests); `corepack yarn workspace @scenaairo/frontend build` (pass).
+- Result: Episode list order changes only after real edits, and object-token partial edit paths no longer create typo objects. Inline Delete remains inside the editor and does not trigger workspace destructive-confirm shortcuts.
+- Warnings / blockers: Windows sandbox still intermittently blocks Vitest/Vite config loading with `spawn EPERM`; affected focused tests were rerun outside sandbox. Existing backend/recommendation dirty files from earlier loops remain in the worktree and were not reverted.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-210
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend, Backend
+- Touched zones: `DETAILPLAN.md`, `PLANS.md`
+- What changed: Added `detail-043 / 연결선·화살표 직접 드래그 UX 계획` as the new index for the former `detail-040` phase-3 follow-up. The plan covers visible path vs transparent hit path separation, hover/active affordance, direct drag-to-rewire state, nearest valid parent highlighting, scroll-synced preview updates, compact arrowhead styling, and pointer-event collision rules.
+- Tests run: planning update only
+- Result: Third-phase work is now isolated from `detail-040`: frontend owns the direct manipulation UX and reuses existing parent rewire paths; backend keeps the existing `parentId` persistence/validation model with no schema/API change.
+- Warnings / blockers: This should be implemented after the current keyboard/token work is stable because connection drag, canvas pan, node drag, and auto-scroll share pointer-event ownership.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-211
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.ts`, `frontend/src/routes/workspace-shell/workspaceShell.canvas.test.ts`, `frontend/src/styles.css`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-043`. Connection rendering now includes a transparent wide hit path that shares the visible path geometry, hover/active styling, compact active arrowhead, and a midpoint drag grip. Dragging a connection hit path or existing endpoint port starts the same rewire preview flow, highlights the candidate parent, commits via the existing `controller.rewireNode()` path on valid drop, and preserves the original parent on invalid drop.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for TS/TSX files (pass; CSS is not covered by this ESLint config); `corepack yarn --cwd frontend run -T vitest run src/routes/workspace-shell/workspaceShell.canvas.test.ts` (pass, 8 tests); `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (pass, 73 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Users can now grab the connection line/arrow area directly to rewire a child node without relying only on the small endpoint handles.
+- Warnings / blockers: No backend/schema/API change was made. Existing dirty backend/recommendation files from earlier loops remain in the worktree and were not modified by this patch.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-212
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/persistence/controller.ts`, `frontend/src/persistence/controller.test.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-044`. Canvas undo/redo history is now keyed by active/owning episode instead of one global stack. Episode create/select/rename/delete no longer create canvas history entries, deleted episode stacks are purged, and historical undo/redo application merges only that episode's episode/node/object/drawer slices while preserving the current `project.activeEpisodeId` and other episodes' latest data.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for controller and WorkspaceShell tests (pass); focused controller episode-scoped history Vitest (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); focused WorkspaceShell keyboard scoped-history Vitest (outside sandbox pass, 1 test); full `corepack yarn --cwd frontend run -T vitest run src/persistence/controller.test.ts` (outside sandbox pass, 32 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 74 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Ctrl+Z / Ctrl+Y now operate against the currently selected episode's canvas history and no longer jump back to another episode or overwrite another episode's newer canvas data.
+- Warnings / blockers: Multi-episode object-reference edits are still treated by their primary owning episode for history ownership; no schema/API/backend change was made.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-213
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `DETAILPLAN.md`, `PLANS.md`
+- What changed: Implemented `detail-045`. Removed the first-major-node special case that stretched the node to the main-event timeline span, so first major nodes now persist with the same default card size as other created nodes. The main-event timeline end now keeps `initialTimelineEndY` as a minimum instead of collapsing to the only/last major node bottom, and related timeline movement/resize guards use the same minimum.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for WorkspaceShell files (pass); focused timeline Vitest for first node/timeline end cases (sandbox `spawn EPERM`, rerun outside sandbox pass, 6 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 74 tests); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: Creating the first major node no longer produces an oversized card, while the main-event lane arrow remains long enough to leave room for adding additional major nodes.
+- Warnings / blockers: The timeline end can still extend when major nodes are deliberately moved below the current minimum; no persistence schema/API change was made.
+- Approval needed: `none`

@@ -1806,6 +1806,182 @@ describe("workspace persistence controller", () => {
     controller.dispose();
   });
 
+  it("does not change episode updatedAt when selecting an episode", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const firstEpisodeId = await controller.createEpisode();
+    const secondEpisodeId = await controller.createEpisode();
+    const beforeSelect = cloneSnapshot(controller.getState()!.snapshot);
+
+    await controller.selectEpisode(firstEpisodeId!);
+
+    const state = controller.getState()!;
+    const firstEpisodeBefore = beforeSelect.episodes.find(
+      (episode) => episode.id === firstEpisodeId
+    );
+    const secondEpisodeBefore = beforeSelect.episodes.find(
+      (episode) => episode.id === secondEpisodeId
+    );
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(firstEpisodeId);
+    expect(
+      state.snapshot.episodes.find((episode) => episode.id === firstEpisodeId)?.updatedAt
+    ).toBe(firstEpisodeBefore?.updatedAt);
+    expect(
+      state.snapshot.episodes.find((episode) => episode.id === secondEpisodeId)?.updatedAt
+    ).toBe(secondEpisodeBefore?.updatedAt);
+
+    controller.dispose();
+  });
+
+  it("keeps canvas undo and redo scoped to each active episode", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+    await controller.signIn();
+    await controller.createWorkspaceFromEmptyState();
+
+    const firstEpisodeId = controller.getState()!.snapshot.project.activeEpisodeId;
+    const firstNodeId = (await controller.createNode("major", 0))!;
+    const secondEpisodeId = (await controller.createEpisode())!;
+
+    let state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(secondEpisodeId);
+    expect(state.history.canUndo).toBe(false);
+
+    await controller.undo();
+
+    state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(secondEpisodeId);
+    expect(state.snapshot.nodes.some((node) => node.id === firstNodeId)).toBe(true);
+    expect(state.snapshot.nodes.filter((node) => node.episodeId === secondEpisodeId)).toHaveLength(
+      0
+    );
+
+    const secondNodeId = (await controller.createNode("major", 0))!;
+
+    await controller.undo();
+
+    state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(secondEpisodeId);
+    expect(state.snapshot.nodes.some((node) => node.id === firstNodeId)).toBe(true);
+    expect(state.snapshot.nodes.filter((node) => node.episodeId === secondEpisodeId)).toHaveLength(
+      0
+    );
+    expect(state.history.canRedo).toBe(true);
+
+    await controller.redo();
+
+    state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(secondEpisodeId);
+    expect(state.snapshot.nodes.filter((node) => node.episodeId === secondEpisodeId).map((node) => node.id)).toEqual([
+      secondNodeId
+    ]);
+
+    await controller.selectEpisode(firstEpisodeId);
+
+    state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(firstEpisodeId);
+    expect(state.history.canUndo).toBe(true);
+
+    await controller.undo();
+
+    state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(firstEpisodeId);
+    expect(state.snapshot.nodes.filter((node) => node.episodeId === firstEpisodeId)).toHaveLength(
+      0
+    );
+    expect(state.snapshot.nodes.filter((node) => node.episodeId === secondEpisodeId).map((node) => node.id)).toEqual([
+      secondNodeId
+    ]);
+    expect(state.history.canRedo).toBe(true);
+
+    await controller.selectEpisode(secondEpisodeId);
+
+    state = controller.getState()!;
+
+    expect(state.snapshot.project.activeEpisodeId).toBe(secondEpisodeId);
+    expect(state.history.canUndo).toBe(true);
+    expect(state.history.canRedo).toBe(false);
+
+    controller.dispose();
+  });
+
+  it("touches episode updatedAt when node and object mutations change content", async () => {
+    const now = createClock();
+    const storage = new MemoryStorage();
+    const auth = new StubAuthBoundary(storage, "test");
+    const controller = new WorkspacePersistenceController({
+      auth,
+      cloud: new FakeCloudPersistenceGateway(now),
+      local: new LocalPersistenceStore(storage, "test"),
+      now
+    });
+
+    await controller.initialize();
+
+    const episodeId = await controller.createEpisode();
+    const createdEpisodeUpdatedAt = controller
+      .getState()!
+      .snapshot.episodes.find((episode) => episode.id === episodeId)?.updatedAt;
+    const nodeId = await controller.createNode("major", 0);
+    const afterNodeCreateUpdatedAt = controller
+      .getState()!
+      .snapshot.episodes.find((episode) => episode.id === episodeId)?.updatedAt;
+
+    expect(afterNodeCreateUpdatedAt).not.toBe(createdEpisodeUpdatedAt);
+
+    await controller.updateNodeContent(nodeId!, {
+      contentMode: "text",
+      keywords: [],
+      text: "A revised beat."
+    });
+
+    const afterNodeContentUpdatedAt = controller
+      .getState()!
+      .snapshot.episodes.find((episode) => episode.id === episodeId)?.updatedAt;
+
+    expect(afterNodeContentUpdatedAt).not.toBe(afterNodeCreateUpdatedAt);
+
+    const objectId = await controller.createObject({
+      category: "thing",
+      name: "Glass shard",
+      summary: "A small visual pressure point."
+    });
+    const afterObjectCreateUpdatedAt = controller
+      .getState()!
+      .snapshot.episodes.find((episode) => episode.id === episodeId)?.updatedAt;
+
+    expect(objectId).toBeTruthy();
+    expect(afterObjectCreateUpdatedAt).not.toBe(afterNodeContentUpdatedAt);
+
+    controller.dispose();
+  });
+
   it("creates, switches, renames, and deletes episodes without mixing canvas nodes", async () => {
     const now = createClock();
     const storage = new MemoryStorage();

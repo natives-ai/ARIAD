@@ -239,6 +239,7 @@ export function buildRecommendationContext(
 
   return {
     anchors,
+    cacheBypass: "cacheBypass" in request && request.cacheBypass === true,
     constraints: [
       "Preserve creator control.",
       "Do not silently finalize story structure.",

@@ -322,6 +322,46 @@ function createDrawerOperations(
   return operations;
 }
 
+// 에피소드 수정 시간을 단일 upsert 작업으로 갱신합니다.
+function touchEpisodeUpdatedAt(
+  episodes: StoryWorkspaceSnapshot["episodes"],
+  episodeId: string,
+  timestamp: string
+) {
+  let touchedEpisode: StoryEpisode | null = null;
+  const nextEpisodes = episodes.map((episode) => {
+    if (episode.id !== episodeId) {
+      return episode;
+    }
+
+    touchedEpisode = {
+      ...episode,
+      updatedAt: timestamp
+    };
+
+    return touchedEpisode;
+  });
+  const operation: CloudSyncOperation | null = touchedEpisode
+    ? {
+        action: "upsert",
+        kind: "episode",
+        payload: touchedEpisode
+      }
+    : null;
+
+  return {
+    nextEpisodes,
+    operation
+  };
+}
+
+// 에피소드 touch 작업을 배열 형태로 반환합니다.
+function getEpisodeTouchOperations(
+  operation: CloudSyncOperation | null
+): CloudSyncOperation[] {
+  return operation ? [operation] : [];
+}
+
 function stampNodes(nodes: StoryNode[], timestamp: string) {
   return nodes.map((node) => ({
     ...node,
@@ -608,6 +648,14 @@ function createSnapshotOperations(
 
 type WorkspaceStateSeed = Omit<WorkspacePersistenceState, "history">;
 
+type HistoryMutationOptions = {
+  historyEpisodeId?: string | null;
+  skipHistory?: boolean;
+};
+
+// 에피소드별 history stack을 저장합니다.
+type EpisodeHistoryMap = Map<string, StoryWorkspaceSnapshot[]>;
+
 export class WorkspacePersistenceController {
   private readonly listeners = new Set<WorkspaceListener>();
 
@@ -623,9 +671,9 @@ export class WorkspacePersistenceController {
 
   private readonly historyLimit = 50;
 
-  private undoSnapshots: StoryWorkspaceSnapshot[] = [];
+  private undoSnapshotsByEpisode: EpisodeHistoryMap = new Map();
 
-  private redoSnapshots: StoryWorkspaceSnapshot[] = [];
+  private redoSnapshotsByEpisode: EpisodeHistoryMap = new Map();
 
   private state: WorkspacePersistenceState | null = null;
 
@@ -915,26 +963,34 @@ export class WorkspacePersistenceController {
 
   async undo() {
     const current = this.requireState();
-    const previousSnapshot = this.undoSnapshots.pop();
+    const episodeId = this.getHistoryEpisodeId(current.snapshot);
+    const undoSnapshots = episodeId
+      ? this.undoSnapshotsByEpisode.get(episodeId)
+      : null;
+    const previousSnapshot = undoSnapshots?.pop();
 
-    if (!previousSnapshot) {
+    if (!previousSnapshot || !episodeId) {
       return;
     }
 
-    this.redoSnapshots.push(cloneSnapshot(current.snapshot));
-    await this.applyHistoricalSnapshot(previousSnapshot);
+    this.pushRedoSnapshot(current.snapshot, episodeId);
+    await this.applyHistoricalSnapshot(previousSnapshot, episodeId);
   }
 
   async redo() {
     const current = this.requireState();
-    const nextSnapshot = this.redoSnapshots.pop();
+    const episodeId = this.getHistoryEpisodeId(current.snapshot);
+    const redoSnapshots = episodeId
+      ? this.redoSnapshotsByEpisode.get(episodeId)
+      : null;
+    const nextSnapshot = redoSnapshots?.pop();
 
-    if (!nextSnapshot) {
+    if (!nextSnapshot || !episodeId) {
       return;
     }
 
-    this.pushUndoSnapshot(current.snapshot);
-    await this.applyHistoricalSnapshot(nextSnapshot);
+    this.pushUndoSnapshot(current.snapshot, episodeId);
+    await this.applyHistoricalSnapshot(nextSnapshot, episodeId);
   }
 
   async addSampleNode() {
@@ -988,8 +1044,14 @@ export class WorkspacePersistenceController {
       sourceNodeId: sourceNode?.id ?? null,
       updatedAt: timestamp
     };
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      activeEpisode.id,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       temporaryDrawer: [...current.snapshot.temporaryDrawer, item]
     };
 
@@ -998,8 +1060,11 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "temporary_drawer",
         payload: item
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: activeEpisode.id
+    });
   }
 
   async createEpisode() {
@@ -1036,7 +1101,9 @@ export class WorkspacePersistenceController {
         snapshot.episodes,
         current.snapshot.project.id
       )
-    ]);
+    ], {
+      skipHistory: true
+    });
 
     return nextEpisode.id;
   }
@@ -1050,14 +1117,6 @@ export class WorkspacePersistenceController {
     }
 
     const timestamp = this.now();
-    const nextEpisodes = current.snapshot.episodes.map((episode) =>
-      episode.id === episodeId
-        ? {
-            ...episode,
-            updatedAt: timestamp
-          }
-        : episode
-    );
     const nextProject = {
       ...current.snapshot.project,
       activeEpisodeId: episodeId,
@@ -1065,7 +1124,6 @@ export class WorkspacePersistenceController {
     };
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
-      episodes: nextEpisodes,
       project: nextProject
     };
 
@@ -1074,13 +1132,10 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "project",
         payload: nextProject
-      },
-      ...createEpisodeOperations(
-        current.snapshot.episodes,
-        nextEpisodes,
-        current.snapshot.project.id
-      )
-    ]);
+      }
+    ], {
+      skipHistory: true
+    });
   }
 
   async renameEpisode(episodeId: string, title: string) {
@@ -1128,7 +1183,9 @@ export class WorkspacePersistenceController {
         nextEpisodes,
         current.snapshot.project.id
       )
-    ]);
+    ], {
+      skipHistory: true
+    });
   }
 
   async deleteEpisode(episodeId: string) {
@@ -1173,6 +1230,7 @@ export class WorkspacePersistenceController {
       temporaryDrawer: nextDrawer
     };
 
+    this.deleteEpisodeHistory(episodeId);
     this.applyLocalMutation(snapshot, [
       {
         action: "upsert",
@@ -1195,7 +1253,9 @@ export class WorkspacePersistenceController {
         nextDrawer,
         current.snapshot.project.id
       )
-    ]);
+    ], {
+      skipHistory: true
+    });
 
     return true;
   }
@@ -1256,15 +1316,23 @@ export class WorkspacePersistenceController {
       )
     );
     const nextNodes = mergeEpisodeNodes(current.snapshot.nodes, activeEpisode.id, nextEpisodeNodes);
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      activeEpisode.id,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
-    this.applyLocalMutation(
-      snapshot,
-      createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
-    );
+    this.applyLocalMutation(snapshot, [
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: activeEpisode.id
+    });
 
     if (shouldUseCanonicalCreate) {
       await this.flushNow();
@@ -1275,6 +1343,12 @@ export class WorkspacePersistenceController {
 
   async updateNodeContent(nodeId: string, draft: NodeContentDraft) {
     const current = this.requireState();
+    const currentNode = current.snapshot.nodes.find((node) => node.id === nodeId);
+
+    if (!currentNode) {
+      return;
+    }
+
     const timestamp = this.now();
     const nextNodes = current.snapshot.nodes.map((node) => {
       if (node.id !== nodeId) {
@@ -1295,8 +1369,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      currentNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1305,8 +1385,11 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "node",
         payload: updatedNode
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: currentNode.episodeId
+    });
   }
 
   async updateNodePlacement(nodeId: string, draft: NodePlacementDraft) {
@@ -1340,8 +1423,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      currentNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1350,12 +1439,21 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "node",
         payload: updatedNode
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: currentNode.episodeId
+    });
   }
 
   async updateNodeVisualState(nodeId: string, draft: NodeVisualStateDraft) {
     const current = this.requireState();
+    const currentNode = current.snapshot.nodes.find((node) => node.id === nodeId);
+
+    if (!currentNode) {
+      return;
+    }
+
     const timestamp = this.now();
     const nextNodes = current.snapshot.nodes.map((node) => {
       if (node.id !== nodeId) {
@@ -1376,8 +1474,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      currentNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1386,8 +1490,11 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "node",
         payload: updatedNode
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: currentNode.episodeId
+    });
   }
 
   async createObject(draft: StoryObjectDraft) {
@@ -1411,8 +1518,14 @@ export class WorkspacePersistenceController {
       summary,
       updatedAt: timestamp
     };
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      activeEpisode.id,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       objects: [...current.snapshot.objects, nextObject]
     };
 
@@ -1421,18 +1534,22 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "object",
         payload: nextObject
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: activeEpisode.id
+    });
 
     return nextObject.id;
   }
 
   async updateObject(objectId: string, draft: StoryObjectDraft) {
     const current = this.requireState();
+    const currentObject = current.snapshot.objects.find((object) => object.id === objectId);
     const name = sanitizeText(draft.name);
     const summary = sanitizeText(draft.summary);
 
-    if (!name) {
+    if (!name || !currentObject) {
       return;
     }
 
@@ -1454,8 +1571,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      currentObject.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       objects: nextObjects
     };
 
@@ -1464,30 +1587,60 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "object",
         payload: updatedObject
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: currentObject.episodeId
+    });
   }
 
   async deleteObject(objectId: string) {
     const current = this.requireState();
+    const currentObject = current.snapshot.objects.find((object) => object.id === objectId);
 
-    if (!current.snapshot.objects.some((object) => object.id === objectId)) {
+    if (!currentObject) {
       return false;
     }
 
     const timestamp = this.now();
     const nextObjects = current.snapshot.objects.filter((object) => object.id !== objectId);
+    const touchedEpisodeIds = new Set<string>([currentObject.episodeId]);
     const nextNodes = current.snapshot.nodes.map((node) =>
       node.objectIds.includes(objectId)
-        ? {
-            ...node,
-            objectIds: node.objectIds.filter((entry) => entry !== objectId),
-            updatedAt: timestamp
-          }
+        ? (() => {
+            touchedEpisodeIds.add(node.episodeId);
+            return {
+              ...node,
+              objectIds: node.objectIds.filter((entry) => entry !== objectId),
+              updatedAt: timestamp
+            };
+          })()
         : node
+    );
+    const episodeTouches = [...touchedEpisodeIds].reduce(
+      (currentTouch, episodeId) => {
+        const nextTouch = touchEpisodeUpdatedAt(
+          currentTouch.nextEpisodes,
+          episodeId,
+          timestamp
+        );
+
+        return {
+          nextEpisodes: nextTouch.nextEpisodes,
+          operations: [
+            ...currentTouch.operations,
+            ...getEpisodeTouchOperations(nextTouch.operation)
+          ]
+        };
+      },
+      {
+        nextEpisodes: current.snapshot.episodes,
+        operations: [] as CloudSyncOperation[]
+      }
     );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouches.nextEpisodes,
       nodes: nextNodes,
       objects: nextObjects
     };
@@ -1498,8 +1651,11 @@ export class WorkspacePersistenceController {
         nextObjects,
         current.snapshot.project.id
       ),
-      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
-    ]);
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
+      ...episodeTouches.operations
+    ], {
+      historyEpisodeId: currentObject.episodeId
+    });
 
     return true;
   }
@@ -1534,8 +1690,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      targetNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1544,12 +1706,21 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "node",
         payload: updatedNode
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: targetNode.episodeId
+    });
   }
 
   async detachObjectFromNode(nodeId: string, objectId: string) {
     const current = this.requireState();
+    const currentNode = current.snapshot.nodes.find((node) => node.id === nodeId);
+
+    if (!currentNode) {
+      return;
+    }
+
     const timestamp = this.now();
     const nextNodes = current.snapshot.nodes.map((node) =>
       node.id === nodeId
@@ -1566,8 +1737,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      currentNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1576,8 +1753,11 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "node",
         payload: updatedNode
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: currentNode.episodeId
+    });
   }
 
   // 에피소드 외부 참조 오브젝트를 현재 에피소드 소유로 고정합니다.
@@ -1646,8 +1826,14 @@ export class WorkspacePersistenceController {
       };
     });
     const nextObjects = [...current.snapshot.objects, ...clonedObjects];
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes,
       objects: nextObjects
     };
@@ -1658,8 +1844,11 @@ export class WorkspacePersistenceController {
         nextObjects,
         current.snapshot.project.id
       ),
-      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
-    ]);
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: episodeId
+    });
 
     return true;
   }
@@ -1755,8 +1944,14 @@ export class WorkspacePersistenceController {
       rootNode.episodeId,
       nextEpisodeNodes
     );
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      rootNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1773,7 +1968,12 @@ export class WorkspacePersistenceController {
             current.snapshot.project.id
           );
 
-    this.applyLocalMutation(snapshot, operations);
+    this.applyLocalMutation(snapshot, [
+      ...operations,
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: rootNode.episodeId
+    });
 
     if (shouldUseCanonicalReorder) {
       void this.flushNow();
@@ -1812,8 +2012,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      node.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
@@ -1822,8 +2028,11 @@ export class WorkspacePersistenceController {
         action: "upsert",
         kind: "node",
         payload: rewiredNode
-      }
-    ]);
+      },
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: node.episodeId
+    });
   }
 
   async deleteNodeTree(nodeId: string) {
@@ -1853,15 +2062,23 @@ export class WorkspacePersistenceController {
       targetNode.episodeId,
       nextEpisodeNodes
     );
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      targetNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
-    this.applyLocalMutation(
-      snapshot,
-      createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
-    );
+    this.applyLocalMutation(snapshot, [
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: targetNode.episodeId
+    });
   }
 
   // 이 함수는 선택 노드만 삭제하고 직접 자식을 새 부모로 재연결합니다.
@@ -1931,8 +2148,14 @@ export class WorkspacePersistenceController {
         updatedAt: timestamp
       };
     });
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      targetNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes,
       temporaryDrawer: nextDrawer
     };
@@ -1945,8 +2168,11 @@ export class WorkspacePersistenceController {
             nextDrawer,
             current.snapshot.project.id
           )
-        : [])
-    ]);
+        : []),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: targetNode.episodeId
+    });
   }
 
   async moveNodeToDrawer(nodeId: string) {
@@ -1991,8 +2217,14 @@ export class WorkspacePersistenceController {
     );
     const nextNodes = mergeEpisodeNodes(current.snapshot.nodes, rootNode.episodeId, nextEpisodeNodes);
     const nextDrawer = [...current.snapshot.temporaryDrawer, drawerItem];
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      rootNode.episodeId,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes,
       temporaryDrawer: nextDrawer
     };
@@ -2003,8 +2235,11 @@ export class WorkspacePersistenceController {
         current.snapshot.temporaryDrawer,
         nextDrawer,
         current.snapshot.project.id
-      )
-    ]);
+      ),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: rootNode.episodeId
+    });
 
     return drawerItem.id;
   }
@@ -2074,8 +2309,14 @@ export class WorkspacePersistenceController {
     const nextDrawer = current.snapshot.temporaryDrawer.filter(
       (item) => item.id !== drawerItemId
     );
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      activeEpisode.id,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes,
       temporaryDrawer: nextDrawer
     };
@@ -2086,8 +2327,11 @@ export class WorkspacePersistenceController {
         current.snapshot.temporaryDrawer,
         nextDrawer,
         current.snapshot.project.id
-      )
-    ]);
+      ),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: activeEpisode.id
+    });
 
     return rootNode.id;
   }
@@ -2152,15 +2396,23 @@ export class WorkspacePersistenceController {
     ];
     const nextEpisodeNodes = normalizeNodeOrder(stampNodes(mergedNodes, timestamp));
     const nextNodes = mergeEpisodeNodes(current.snapshot.nodes, activeEpisode.id, nextEpisodeNodes);
+    const episodeTouch = touchEpisodeUpdatedAt(
+      current.snapshot.episodes,
+      activeEpisode.id,
+      timestamp
+    );
     const snapshot: StoryWorkspaceSnapshot = {
       ...current.snapshot,
+      episodes: episodeTouch.nextEpisodes,
       nodes: nextNodes
     };
 
-    this.applyLocalMutation(
-      snapshot,
-      createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id)
-    );
+    this.applyLocalMutation(snapshot, [
+      ...createNodeOperations(current.snapshot.nodes, nextNodes, current.snapshot.project.id),
+      ...getEpisodeTouchOperations(episodeTouch.operation)
+    ], {
+      historyEpisodeId: activeEpisode.id
+    });
 
     return rootNode.id;
   }
@@ -2478,23 +2730,41 @@ export class WorkspacePersistenceController {
 
   private applyLocalMutation(
     snapshot: StoryWorkspaceSnapshot,
-    operations: CloudSyncOperation[]
+    operations: CloudSyncOperation[],
+    options: HistoryMutationOptions = {}
   ) {
     const current = this.requireState();
     if (snapshotsMatch(current.snapshot, snapshot)) {
       return;
     }
 
-    this.pushUndoSnapshot(current.snapshot);
-    this.redoSnapshots = [];
+    const historyEpisodeId = this.getHistoryEpisodeId(
+      current.snapshot,
+      options.historyEpisodeId
+    );
+
+    if (!options.skipHistory && historyEpisodeId) {
+      this.pushUndoSnapshot(current.snapshot, historyEpisodeId);
+      this.clearRedoSnapshots(historyEpisodeId);
+    }
+
     this.commitSnapshot(snapshot, operations);
   }
 
-  private async applyHistoricalSnapshot(snapshot: StoryWorkspaceSnapshot) {
+  private async applyHistoricalSnapshot(
+    snapshot: StoryWorkspaceSnapshot,
+    episodeId: string
+  ) {
     const current = this.requireState();
-    this.commitSnapshot(
+    const scopedSnapshot = this.createEpisodeScopedSnapshot(
+      current.snapshot,
       snapshot,
-      createSnapshotOperations(current.snapshot, snapshot)
+      episodeId
+    );
+
+    this.commitSnapshot(
+      scopedSnapshot,
+      createSnapshotOperations(current.snapshot, scopedSnapshot)
     );
   }
 
@@ -2526,17 +2796,149 @@ export class WorkspacePersistenceController {
     }
   }
 
-  private pushUndoSnapshot(snapshot: StoryWorkspaceSnapshot) {
-    this.undoSnapshots.push(cloneSnapshot(snapshot));
+  // 현재 에피소드의 undo stack에 스냅샷을 저장합니다.
+  private pushUndoSnapshot(snapshot: StoryWorkspaceSnapshot, episodeId: string) {
+    const undoSnapshots = this.getEpisodeHistoryStack(
+      this.undoSnapshotsByEpisode,
+      episodeId
+    );
 
-    if (this.undoSnapshots.length > this.historyLimit) {
-      this.undoSnapshots.shift();
+    undoSnapshots.push(cloneSnapshot(snapshot));
+
+    if (undoSnapshots.length > this.historyLimit) {
+      undoSnapshots.shift();
     }
   }
 
+  // 현재 에피소드의 redo stack에 스냅샷을 저장합니다.
+  private pushRedoSnapshot(snapshot: StoryWorkspaceSnapshot, episodeId: string) {
+    const redoSnapshots = this.getEpisodeHistoryStack(
+      this.redoSnapshotsByEpisode,
+      episodeId
+    );
+
+    redoSnapshots.push(cloneSnapshot(snapshot));
+
+    if (redoSnapshots.length > this.historyLimit) {
+      redoSnapshots.shift();
+    }
+  }
+
+  // 에피소드별 redo stack을 비웁니다.
+  private clearRedoSnapshots(episodeId: string) {
+    this.redoSnapshotsByEpisode.delete(episodeId);
+  }
+
+  // 삭제된 에피소드의 history stack을 제거합니다.
+  private deleteEpisodeHistory(episodeId: string) {
+    this.undoSnapshotsByEpisode.delete(episodeId);
+    this.redoSnapshotsByEpisode.delete(episodeId);
+  }
+
   private resetHistory() {
-    this.undoSnapshots = [];
-    this.redoSnapshots = [];
+    this.undoSnapshotsByEpisode.clear();
+    this.redoSnapshotsByEpisode.clear();
+  }
+
+  // 에피소드별 history stack을 가져오거나 새로 만듭니다.
+  private getEpisodeHistoryStack(
+    historyMap: EpisodeHistoryMap,
+    episodeId: string
+  ) {
+    const existingStack = historyMap.get(episodeId);
+
+    if (existingStack) {
+      return existingStack;
+    }
+
+    const nextStack: StoryWorkspaceSnapshot[] = [];
+    historyMap.set(episodeId, nextStack);
+    return nextStack;
+  }
+
+  // 현재 스냅샷에서 history가 속할 에피소드를 계산합니다.
+  private getHistoryEpisodeId(
+    snapshot: StoryWorkspaceSnapshot,
+    requestedEpisodeId?: string | null
+  ) {
+    const episodeId = requestedEpisodeId ?? snapshot.project.activeEpisodeId;
+
+    if (!episodeId || !snapshot.episodes.some((episode) => episode.id === episodeId)) {
+      return null;
+    }
+
+    return episodeId;
+  }
+
+  // 배열에서 특정 에피소드 소유 항목만 과거 스냅샷 값으로 교체합니다.
+  private mergeEpisodeScopedItems<T extends { episodeId: string }>(
+    currentItems: T[],
+    historicalItems: T[],
+    episodeId: string
+  ) {
+    const historicalScopedItems = historicalItems.filter(
+      (item) => item.episodeId === episodeId
+    );
+    const mergedItems: T[] = [];
+    let insertedScopedItems = false;
+
+    for (const item of currentItems) {
+      if (item.episodeId !== episodeId) {
+        mergedItems.push(item);
+        continue;
+      }
+
+      if (!insertedScopedItems) {
+        mergedItems.push(...historicalScopedItems);
+        insertedScopedItems = true;
+      }
+    }
+
+    if (!insertedScopedItems) {
+      mergedItems.push(...historicalScopedItems);
+    }
+
+    return mergedItems;
+  }
+
+  // 전체 스냅샷 중 현재 에피소드의 캔버스 데이터만 과거 상태로 되돌립니다.
+  private createEpisodeScopedSnapshot(
+    currentSnapshot: StoryWorkspaceSnapshot,
+    historicalSnapshot: StoryWorkspaceSnapshot,
+    episodeId: string
+  ): StoryWorkspaceSnapshot {
+    const historicalEpisode = historicalSnapshot.episodes.find(
+      (episode) => episode.id === episodeId
+    );
+    const nextEpisodes = historicalEpisode
+      ? currentSnapshot.episodes.map((episode) =>
+          episode.id === episodeId ? historicalEpisode : episode
+        )
+      : currentSnapshot.episodes;
+
+    return {
+      ...currentSnapshot,
+      episodes: nextEpisodes,
+      nodes: this.mergeEpisodeScopedItems(
+        currentSnapshot.nodes,
+        historicalSnapshot.nodes,
+        episodeId
+      ),
+      objects: this.mergeEpisodeScopedItems(
+        currentSnapshot.objects,
+        historicalSnapshot.objects,
+        episodeId
+      ),
+      project: {
+        ...currentSnapshot.project,
+        activeEpisodeId: currentSnapshot.project.activeEpisodeId
+      },
+      temporaryDrawer: this.mergeEpisodeScopedItems(
+        currentSnapshot.temporaryDrawer,
+        historicalSnapshot.temporaryDrawer,
+        episodeId
+      )
+    };
   }
 
   private persistWorkspace(
@@ -2591,7 +2993,7 @@ export class WorkspacePersistenceController {
   private replaceState(state: WorkspaceStateSeed) {
     this.state = {
       ...state,
-      history: this.getHistoryState()
+      history: this.getHistoryState(state.snapshot)
     };
     this.emit();
   }
@@ -2601,10 +3003,14 @@ export class WorkspacePersistenceController {
       return;
     }
 
-    this.state = {
+    const nextState = {
       ...this.state,
-      ...patch,
-      history: this.getHistoryState()
+      ...patch
+    };
+
+    this.state = {
+      ...nextState,
+      history: this.getHistoryState(nextState.snapshot)
     };
     this.emit();
   }
@@ -2623,10 +3029,19 @@ export class WorkspacePersistenceController {
     return error instanceof Error ? error.message : "unknown_error";
   }
 
-  private getHistoryState(): WorkspaceHistoryState {
+  private getHistoryState(snapshot: StoryWorkspaceSnapshot): WorkspaceHistoryState {
+    const episodeId = this.getHistoryEpisodeId(snapshot);
+
+    if (!episodeId) {
+      return {
+        canRedo: false,
+        canUndo: false
+      };
+    }
+
     return {
-      canRedo: this.redoSnapshots.length > 0,
-      canUndo: this.undoSnapshots.length > 0
+      canRedo: (this.redoSnapshotsByEpisode.get(episodeId)?.length ?? 0) > 0,
+      canUndo: (this.undoSnapshotsByEpisode.get(episodeId)?.length ?? 0) > 0
     };
   }
 

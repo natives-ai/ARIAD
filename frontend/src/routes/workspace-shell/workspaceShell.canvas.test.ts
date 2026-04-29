@@ -225,6 +225,10 @@ describe("workspace shell canvas placement", () => {
 
     expect(lines[0]?.startY).toBe(160);
     expect(lines[0]?.endY).toBe(320);
+    expect(lines[0]?.parentId).toBe("major");
+    expect(lines[0]?.childId).toBe("minor");
+    expect(lines[0]?.hitPath).toBe(lines[0]?.path);
+    expect(lines[0]?.midX).toBe((lines[0]!.startX + lines[0]!.endX) / 2);
     expect(lines[0]?.path).toContain("400 320");
   });
 
@@ -247,6 +251,7 @@ describe("workspace shell canvas placement", () => {
 
     expect(lines).toHaveLength(1);
     expect(lines[0]?.id).toBe("minor-top-minor-bottom");
+    expect(lines[0]?.isSameLevel).toBe(true);
     expect(lines[0]?.startX).toBe(534);
     expect(lines[0]?.startY).toBe(220);
     expect(lines[0]?.endX).toBe(534);

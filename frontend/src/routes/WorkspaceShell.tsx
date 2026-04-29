@@ -57,7 +57,8 @@ import {
   canvasBottomPadding,
   minimumCanvasHeight,
   emptyNodes,
-  rootFolderScopeId
+  rootFolderScopeId,
+  initialTimelineEndY
 } from "./workspace-shell/workspaceShell.constants";
 import {
   toMessage,
@@ -133,6 +134,45 @@ import type {
   NodeSize,
   ObjectMentionQuery
 } from "./workspace-shell/workspaceShell.types";
+
+type WorkspaceInteractionScope = "canvas" | "modal" | "none" | "object-panel" | "sidebar";
+
+// 이벤트 대상을 워크스페이스 편집 영역으로 분류합니다.
+function resolveWorkspaceInteractionScope(
+  target: EventTarget | null,
+  canvasViewport: HTMLElement | null
+): WorkspaceInteractionScope {
+  if (!(target instanceof Element)) {
+    return "none";
+  }
+
+  if (target.closest(".modal-backdrop")) {
+    return "modal";
+  }
+
+  if (target.closest(".floating-history-controls")) {
+    return "canvas";
+  }
+
+  if (canvasViewport?.contains(target)) {
+    return "canvas";
+  }
+
+  if (target.closest(".panel-navigation")) {
+    return "sidebar";
+  }
+
+  if (target.closest(".panel-details, .panel-objects")) {
+    return "object-panel";
+  }
+
+  return "none";
+}
+
+// 오브젝트 설명은 한 줄 입력으로 저장되도록 줄바꿈을 공백으로 바꿉니다.
+function normalizeObjectSummaryInput(value: string) {
+  return value.replace(/\s*\r?\n+\s*/g, " ");
+}
 
 // 로그인 실패 코드를 사용자 메시지로 변환합니다.
 function describeSignInError(error: unknown) {
@@ -247,6 +287,8 @@ export function WorkspaceShell() {
   const [selectedAiKeywords, setSelectedAiKeywords] = useState<string[]>([]);
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [isLoadingKeywords, setIsLoadingKeywords] = useState(false);
+  const [workspaceHistoryScope, setWorkspaceHistoryScope] =
+    useState<WorkspaceInteractionScope>("canvas");
   const [detailMode, setDetailMode] = useState<DetailEditorMode | null>(null);
   const [isNodeMoreMenuOpen, setIsNodeMoreMenuOpen] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
@@ -292,6 +334,8 @@ export function WorkspaceShell() {
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [folderRenameDraft, setFolderRenameDraft] = useState("");
   const [deleteEpisodeId, setDeleteEpisodeId] = useState<string | null>(null);
+  const [deleteFolderId, setDeleteFolderId] = useState<string | null>(null);
+  const [deleteObjectId, setDeleteObjectId] = useState<string | null>(null);
   const [sidebarFolders, setSidebarFolders] = useState<SidebarFolder[]>([]);
   const [folderEpisodePins, setFolderEpisodePins] = useState<EpisodePinMap>({});
   const [sortingFolderId, setSortingFolderId] = useState<string | null>(null);
@@ -320,6 +364,7 @@ export function WorkspaceShell() {
     top: number;
   } | null>(null);
   const [rewireHoverTargetId, setRewireHoverTargetId] = useState<string | null>(null);
+  const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
   const [objectEditorDraft, setObjectEditorDraft] = useState<StoryObjectDraft>({
     category: "person",
     name: "",
@@ -348,6 +393,8 @@ export function WorkspaceShell() {
   const rewireHoverTargetIdRef = useRef<string | null>(null);
   const inlineMentionSignatureRef = useRef<Record<string, string>>({});
   const pendingMentionObjectIdsRef = useRef(new Map<string, Promise<string | null>>());
+  const explicitMentionCreateNamesRef = useRef<Set<string>>(new Set());
+  const keywordRequestIdRef = useRef(0);
   const nodePlacementsRef = useRef(new Map<string, { x: number; y: number }>());
   const visibleNodesRef = useRef<StoryNode[]>(emptyNodes);
   const laneCanvasBoundsRef = useRef<
@@ -407,8 +454,10 @@ export function WorkspaceShell() {
         pointerStartY: number;
       }
     | {
+        connectionId: string | null;
         kind: "rewire-drag";
         nodeId: string;
+        parentId: string | null;
         stageLeft: number;
         stageTop: number;
       }
@@ -917,8 +966,10 @@ export function WorkspaceShell() {
   useEffect(() => {
     function updateRewireDragFromPointer(
       dragState: {
+        connectionId: string | null;
         kind: "rewire-drag";
         nodeId: string;
+        parentId: string | null;
         stageLeft: number;
         stageTop: number;
       },
@@ -1008,8 +1059,8 @@ export function WorkspaceShell() {
         ),
         activeDragState.level === "major"
           ? getTimelineAnchorPositions(
-              Math.max(
-                timelineStartY + 120,
+            Math.max(
+                initialTimelineEndY,
                 stagePoint.y - activeDragState.pointerOffsetY + activeDragState.nodeSize.height
               ),
               currentLaneCanvasBounds.major,
@@ -1027,7 +1078,7 @@ export function WorkspaceShell() {
       if (activeDragState.level === "major") {
         setTimelineEndY(
           Math.max(
-            timelineStartY + 120,
+            initialTimelineEndY,
             Math.max(
               0,
               ...visibleNodesRef.current
@@ -1365,7 +1416,7 @@ export function WorkspaceShell() {
       }
 
       const nextTimelineEndY = Math.max(
-        timelineStartY + 120,
+        initialTimelineEndY,
         (event.clientY - dragState.stageTop) / canvasZoom
       );
       const followerNodeId = dragState.followerNodeId;
@@ -1462,6 +1513,7 @@ export function WorkspaceShell() {
         setRewireHoverTargetId(null);
         setRewirePreviewPoint(null);
         setRewireNodeId(null);
+        setHoveredConnectionId(null);
       }
 
       if (dragState?.kind === "timeline-end") {
@@ -1498,7 +1550,7 @@ export function WorkspaceShell() {
                 })
             );
 
-            setTimelineEndY(Math.max(timelineStartY + 120, nextLowestMajorBottom));
+            setTimelineEndY(Math.max(initialTimelineEndY, nextLowestMajorBottom));
           }
         });
       }
@@ -1635,6 +1687,7 @@ export function WorkspaceShell() {
       : state.syncStatus === "booting" ||
         state.syncStatus === "importing" ||
         state.syncStatus === "syncing";
+  const canUseCanvasHistory = workspaceHistoryScope === "canvas" && !isBusy;
   const isAuthBusy = isBusy || isAuthSignInInProgress;
 
   const handleSignInWithGoogle = useCallback(() => {
@@ -1815,6 +1868,9 @@ export function WorkspaceShell() {
         targetElement !== null &&
         viewport !== null &&
         viewport.contains(targetElement);
+      const keyboardInteractionScope = resolveWorkspaceInteractionScope(targetElement, viewport);
+      const hasCanvasHistoryScope =
+        workspaceHistoryScope === "canvas" || keyboardInteractionScope === "canvas";
 
       if (event.key === "Escape") {
         if (deleteEpisodeId !== null) {
@@ -1826,6 +1882,18 @@ export function WorkspaceShell() {
         if (deleteTargetId !== null) {
           event.preventDefault();
           setDeleteTargetId(null);
+          return;
+        }
+
+        if (deleteFolderId !== null) {
+          event.preventDefault();
+          setDeleteFolderId(null);
+          return;
+        }
+
+        if (deleteObjectId !== null) {
+          event.preventDefault();
+          setDeleteObjectId(null);
           return;
         }
 
@@ -1896,7 +1964,12 @@ export function WorkspaceShell() {
 
         if (rewireNodeId !== null) {
           event.preventDefault();
+          canvasDragStateRef.current = null;
+          rewireHoverTargetIdRef.current = null;
+          setRewireHoverTargetId(null);
+          setRewirePreviewPoint(null);
           setRewireNodeId(null);
+          setHoveredConnectionId(null);
           return;
         }
 
@@ -1911,7 +1984,12 @@ export function WorkspaceShell() {
       const isSelectedNodeInputTarget =
         event.target instanceof HTMLTextAreaElement &&
         event.target.classList.contains("node-inline-input");
-      const canUseCanvasShortcuts = isCanvasEventTarget || isSelectedNodeInputTarget;
+      const canUseCanvasShortcuts =
+        hasCanvasHistoryScope &&
+        (isCanvasEventTarget ||
+          isSelectedNodeInputTarget ||
+          targetElement === document.body ||
+          targetElement === document.documentElement);
       const selectedNodeInputElement = isSelectedNodeInputTarget
         ? event.target
         : selectedNodeInputRef.current;
@@ -1947,6 +2025,63 @@ export function WorkspaceShell() {
       }
 
       if ((isEditableTarget(event.target) && !canUseNodeShortcutFromInlineEditor) || isBusy) {
+        return;
+      }
+
+      if (event.key === "Delete" && !usesModifier) {
+        const sidebarEpisodeElement = targetElement?.closest("[data-sidebar-episode-id]");
+        const sidebarFolderElement = targetElement?.closest("[data-sidebar-folder-id]");
+        const objectElement = targetElement?.closest("[data-object-id]");
+
+        if (
+          keyboardInteractionScope === "sidebar" &&
+          sidebarEpisodeElement instanceof HTMLElement
+        ) {
+          const episodeId = sidebarEpisodeElement.dataset.sidebarEpisodeId;
+
+          if (episodeId) {
+            event.preventDefault();
+            setDeleteEpisodeId(episodeId);
+            setEpisodeMenuId(null);
+            setEpisodeMenuPosition(null);
+            setFolderPickerEpisodeId(null);
+            setFolderPickerPosition(null);
+            return;
+          }
+        }
+
+        if (
+          keyboardInteractionScope === "sidebar" &&
+          sidebarFolderElement instanceof HTMLElement
+        ) {
+          const folderId = sidebarFolderElement.dataset.sidebarFolderId;
+
+          if (folderId) {
+            event.preventDefault();
+            setDeleteFolderId(folderId);
+            setFolderMenuId(null);
+            setFolderMenuPosition(null);
+            return;
+          }
+        }
+
+        if (keyboardInteractionScope === "object-panel") {
+          const objectId =
+            objectElement instanceof HTMLElement
+              ? objectElement.dataset.objectId
+              : selectedObject?.id;
+
+          if (objectId) {
+            event.preventDefault();
+            setDeleteObjectId(objectId);
+            setObjectMenuId(null);
+            setObjectMenuPosition(null);
+            return;
+          }
+        }
+      }
+
+      if (!hasCanvasHistoryScope) {
         return;
       }
 
@@ -2054,12 +2189,15 @@ export function WorkspaceShell() {
     aiPanelNodeId,
     controller,
     deleteEpisodeId,
+    deleteFolderId,
+    deleteObjectId,
     deleteTargetId,
     detailMode,
     draftVisible,
     episodeMenuId,
     folderMenuId,
     folderPickerEpisodeId,
+    isFolderCreatorVisible,
     isMoreVisible,
     isNodeMoreMenuOpen,
     inlineNodeTextDraft,
@@ -2072,7 +2210,9 @@ export function WorkspaceShell() {
     runRedo,
     runUndo,
     selectedNode,
-    state
+    selectedObject,
+    state,
+    workspaceHistoryScope
   ]);
 
   if (!state) {
@@ -2211,8 +2351,9 @@ export function WorkspaceShell() {
     major: laneCanvasBounds.major.right - laneCanvasBounds.major.left,
     minor: laneCanvasBounds.minor.right - laneCanvasBounds.minor.left
   };
+  const minimumTimelineEndY = Math.max(initialTimelineEndY, timelineEndY);
   const timelineAnchors = getTimelineAnchorPositions(
-    timelineEndY,
+    minimumTimelineEndY,
     laneCanvasBounds.major,
     {
       height: nodeCardHeight,
@@ -2290,6 +2431,10 @@ export function WorkspaceShell() {
     visualNodePlacements,
     effectiveNodeSizes
   );
+  const activeConnection =
+    hoveredConnectionId !== null
+      ? connectionLines.find((line) => line.id === hoveredConnectionId) ?? null
+      : null;
   const lowestNodeBottom = Math.max(
     0,
     ...visibleNodes.map((node) => {
@@ -2355,9 +2500,9 @@ export function WorkspaceShell() {
   const endMajorBottomY =
     endMajorPlacement && endMajorNodeSize
       ? endMajorPlacement.y + endMajorNodeSize.height
-      : timelineEndY;
+      : minimumTimelineEndY;
   const effectiveTimelineEndY = Math.max(
-    timelineStartY + 120,
+    minimumTimelineEndY,
     endMajorBottomY
   );
   const stageHeight = Math.max(
@@ -2493,7 +2638,7 @@ export function WorkspaceShell() {
       return null;
     }
 
-    const clampedTimelineEndY = Math.max(timelineStartY + 120, nextTimelineEndY);
+    const clampedTimelineEndY = Math.max(initialTimelineEndY, nextTimelineEndY);
     const dynamicTimelineAnchors = getTimelineAnchorPositions(
       clampedTimelineEndY,
       currentLaneCanvasBounds.major,
@@ -2730,7 +2875,7 @@ export function WorkspaceShell() {
     const nextBottom = stagePoint.y + nodeSize.height / 2;
 
     if (nextBottom > effectiveTimelineEndY) {
-      setTimelineEndY(Math.max(timelineStartY + 120, nextBottom));
+      setTimelineEndY(Math.max(initialTimelineEndY, nextBottom));
     }
   }
 
@@ -2877,7 +3022,15 @@ export function WorkspaceShell() {
     };
   }
 
-  function beginRewireDrag(nodeId: string, event: ReactMouseEvent<HTMLButtonElement>) {
+  // 이 함수는 포트나 연결선 hit path에서 rewire 드래그를 시작합니다.
+  function beginRewireDrag(
+    nodeId: string,
+    event: ReactMouseEvent<HTMLButtonElement | SVGPathElement>,
+    options: {
+      connectionId?: string | null;
+      parentId?: string | null;
+    } = {}
+  ) {
     const stagePoint = getStagePointFromClient(event.clientX, event.clientY);
 
     if (!stagePoint) {
@@ -2891,13 +3044,16 @@ export function WorkspaceShell() {
     setRewireNodeId(nodeId);
     rewireHoverTargetIdRef.current = null;
     setRewireHoverTargetId(null);
+    setHoveredConnectionId(options.connectionId ?? null);
     setRewirePreviewPoint({
       x: stagePoint.x,
       y: stagePoint.y
     });
     canvasDragStateRef.current = {
+      connectionId: options.connectionId ?? null,
       kind: "rewire-drag",
       nodeId,
+      parentId: options.parentId ?? null,
       stageLeft: stagePoint.stageRect.left,
       stageTop: stagePoint.stageRect.top
     };
@@ -2936,6 +3092,10 @@ export function WorkspaceShell() {
         if (pendingObjectPromise) {
           objectId = await pendingObjectPromise;
         } else {
+          if (!explicitMentionCreateNamesRef.current.has(normalizedName)) {
+            continue;
+          }
+
           const createObjectPromise = controller
             .createObject({
               category: "thing",
@@ -2944,6 +3104,7 @@ export function WorkspaceShell() {
             })
             .finally(() => {
               pendingMentionObjectIdsRef.current.delete(normalizedName);
+              explicitMentionCreateNamesRef.current.delete(normalizedName);
             });
 
           pendingMentionObjectIdsRef.current.set(normalizedName, createObjectPromise);
@@ -3082,6 +3243,18 @@ export function WorkspaceShell() {
     const mentionText = `${getObjectToken(objectName)}${withTrailingSpace ? " " : ""}`;
     const nextText = `${inlineNodeTextDraft.slice(0, objectMentionQuery.start)}${mentionText}${inlineNodeTextDraft.slice(objectMentionQuery.end)}`;
     const nextCaret = objectMentionQuery.start + mentionText.length;
+    const normalizedObjectName = normalizeObjectMentionMatchName(objectName);
+    const selectsCreateCandidate =
+      objectMentionCreateCandidate !== null &&
+      normalizeObjectMentionMatchName(objectMentionCreateCandidate.name) ===
+        normalizedObjectName &&
+      !activeEpisodeObjects.some(
+        (object) => normalizeObjectMentionMatchName(object.name) === normalizedObjectName
+      );
+
+    if (selectsCreateCandidate) {
+      explicitMentionCreateNamesRef.current.add(normalizedObjectName);
+    }
 
     setInlineNodeTextDraft(nextText);
     setObjectMentionQuery(null);
@@ -3147,25 +3320,6 @@ export function WorkspaceShell() {
     );
 
     if (createdNodeId) {
-      if (level === "major" && orderedNodes.every((node) => node.level !== "major")) {
-        const timelineSpanHeight = Math.max(
-          nodeCardHeight,
-          Math.ceil(Math.max(120, effectiveTimelineEndY - timelineStartY))
-        );
-
-        setNodeSizes((current) => ({
-          ...current,
-          [createdNodeId]: {
-            height: timelineSpanHeight,
-            width: nodeCardWidth
-          }
-        }));
-        await controller.updateNodePlacement(createdNodeId, {
-          canvasHeight: timelineSpanHeight,
-          canvasWidth: nodeCardWidth
-        });
-      }
-
       shouldFocusSelectedNodeRef.current = true;
       setSelectedNodeId(createdNodeId);
       setInlineNodeTextDraft("");
@@ -3205,7 +3359,7 @@ export function WorkspaceShell() {
 
     if (level === "major") {
       const requiredTimelineEndY = Math.max(
-        timelineStartY + 120,
+        initialTimelineEndY,
         effectiveTimelineEndY,
         laneResolvedPlacement.y + nodeSize.height
       );
@@ -3223,7 +3377,7 @@ export function WorkspaceShell() {
 
       setTimelineEndY(
         Math.max(
-          timelineStartY + 120,
+          initialTimelineEndY,
           getProjectedLowestMajorNodeBottom(nodeId, snappedPlacement, nodeSize)
         )
       );
@@ -3396,7 +3550,7 @@ export function WorkspaceShell() {
           return placement.y + nodeSize.height;
         })
     );
-    const nextTimelineEndY = Math.max(timelineStartY + 120, remainingLowestMajorBottom);
+    const nextTimelineEndY = Math.max(initialTimelineEndY, remainingLowestMajorBottom);
 
     setTimelineEndY((currentTimelineEndY) =>
       nextTimelineEndY < currentTimelineEndY ? nextTimelineEndY : currentTimelineEndY
@@ -3486,7 +3640,9 @@ export function WorkspaceShell() {
     const parentNode = node.parentId ? nodesById.get(node.parentId) ?? null : null;
     const inlineDraft = buildInlineEditorText(node.text, node.keywords);
     const nextSelectedKeywords = extractInlineKeywords(inlineDraft);
+    const requestId = keywordRequestIdRef.current + 1;
 
+    keywordRequestIdRef.current = requestId;
     setAiPanelNodeId(node.id);
     setKeywordSuggestions([]);
     setSelectedAiKeywords(nextSelectedKeywords);
@@ -3500,16 +3656,27 @@ export function WorkspaceShell() {
     try {
       const response = await recommendationClient.getKeywordSuggestions(
         createKeywordRecommendationRequest(snapshot, node, parentNode, {
+          cacheBypass: options?.refresh === true,
           maxSuggestions: Math.max(0, keywordCloudSlotCount - nextSelectedKeywords.length),
           selectedKeywords: nextSelectedKeywords
         })
       );
 
+      if (keywordRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setKeywordSuggestions(response.suggestions);
     } catch (error) {
+      if (keywordRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setRecommendationError(toMessage(error));
     } finally {
-      setIsLoadingKeywords(false);
+      if (keywordRequestIdRef.current === requestId) {
+        setIsLoadingKeywords(false);
+      }
     }
   }
 
@@ -3643,9 +3810,10 @@ export function WorkspaceShell() {
     const nodeSize = getNodeSize(effectiveNodeSizes, node.id);
     const isSelected = selectedNode?.id === node.id;
     const isDragging = activeNodeDragPreview?.nodeId === node.id;
-    const isRewireSource = rewireNode?.id === node.id;
-    const isRewireTarget = candidateParentIds.has(node.id);
-    const isHoveredRewireTarget = rewireHoverTargetId === node.id;
+    const isRewireSource = rewireNode?.id === node.id || activeConnection?.childId === node.id;
+    const isRewireTarget = candidateParentIds.has(node.id) || activeConnection?.parentId === node.id;
+    const isHoveredRewireTarget =
+      rewireHoverTargetId === node.id || activeConnection?.parentId === node.id;
     const isStartMajorNode = node.id === startMajorNodeId;
     const isEndMajorNode = node.id === endMajorNodeId;
     const placement =
@@ -3782,6 +3950,14 @@ export function WorkspaceShell() {
     deleteEpisodeId !== null
       ? snapshot.episodes.find((episode) => episode.id === deleteEpisodeId) ?? null
       : null;
+  const deleteFolderTarget =
+    deleteFolderId !== null
+      ? sidebarFolders.find((folder) => folder.id === deleteFolderId) ?? null
+      : null;
+  const deleteObjectTarget =
+    deleteObjectId !== null
+      ? snapshot.objects.find((object) => object.id === deleteObjectId) ?? null
+      : null;
   const profileName =
     state.session.displayName ??
     state.session.accountId ??
@@ -3816,6 +3992,7 @@ export function WorkspaceShell() {
 
   async function saveObjectDetails() {
     const name = objectEditorDraft.name.trim();
+    const summary = normalizeObjectSummaryInput(objectEditorDraft.summary).trim();
 
     if (!name) {
       setDetailError("Object name is required.");
@@ -3826,7 +4003,7 @@ export function WorkspaceShell() {
       const nextObjectId = await controller.createObject({
         ...objectEditorDraft,
         name,
-        summary: objectEditorDraft.summary.trim()
+        summary
       });
 
       if (nextObjectId) {
@@ -3845,7 +4022,7 @@ export function WorkspaceShell() {
     await controller.updateObject(selectedObject.id, {
       ...objectEditorDraft,
       name,
-      summary: objectEditorDraft.summary.trim()
+      summary
     });
     setDetailError(null);
   }
@@ -3863,9 +4040,14 @@ export function WorkspaceShell() {
     field: keyof StoryObjectDraft,
     value: StoryObjectDraft[keyof StoryObjectDraft]
   ) {
+    const nextValue =
+      field === "summary" && typeof value === "string"
+        ? normalizeObjectSummaryInput(value)
+        : value;
+
     setObjectEditorDraft((current) => ({
       ...current,
-      [field]: value
+      [field]: nextValue
     }));
   }
 
@@ -3898,6 +4080,22 @@ export function WorkspaceShell() {
     if (detailMode === "object") {
       setDetailMode(null);
     }
+  }
+
+  function requestDeleteObject(objectId: string) {
+    setDeleteObjectId(objectId);
+    setObjectMenuId(null);
+    setObjectMenuPosition(null);
+  }
+
+  async function confirmDeleteObject() {
+    if (!deleteObjectTarget) {
+      setDeleteObjectId(null);
+      return;
+    }
+
+    await deleteObjectFromLibrary(deleteObjectTarget.id);
+    setDeleteObjectId(null);
   }
 
   function beginObjectRename(objectId: string) {
@@ -4386,6 +4584,24 @@ export function WorkspaceShell() {
     setFolderEpisodePickerPosition(null);
   }
 
+  async function requestDeleteFolder(folderId: string) {
+    setDeleteFolderId(folderId);
+    setFolderMenuId(null);
+    setFolderMenuPosition(null);
+    setFolderEpisodePickerFolderId(null);
+    setFolderEpisodePickerPosition(null);
+  }
+
+  async function confirmDeleteFolder() {
+    if (!deleteFolderTarget) {
+      setDeleteFolderId(null);
+      return;
+    }
+
+    await deleteFolder(deleteFolderTarget.id);
+    setDeleteFolderId(null);
+  }
+
   function reorderEpisodeWithinFolder(
     folderId: string,
     draggedEpisodeId: string,
@@ -4462,6 +4678,16 @@ export function WorkspaceShell() {
       className={`workspace-shell${detailMode === null ? " workspace-shell-details-closed" : ""}${
         isSidebarCollapsed ? " workspace-shell-sidebar-collapsed" : ""
       }`}
+      onFocusCapture={(event) => {
+        setWorkspaceHistoryScope(
+          resolveWorkspaceInteractionScope(event.target, canvasViewportRef.current)
+        );
+      }}
+      onPointerDownCapture={(event) => {
+        setWorkspaceHistoryScope(
+          resolveWorkspaceInteractionScope(event.target, canvasViewportRef.current)
+        );
+      }}
     >
       <aside
         className={`panel panel-navigation${isSidebarCollapsed ? " panel-navigation-collapsed" : ""}`}
@@ -4595,7 +4821,22 @@ export function WorkspaceShell() {
             ) : null}
 
             {isFolderCreatorVisible ? (
-              <section className="sidebar-section sidebar-inline-panel">
+              <form
+                className="sidebar-section sidebar-inline-panel"
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  setIsFolderCreatorVisible(false);
+                  setFolderNameDraft("");
+                }}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  createFolderFromSidebar();
+                }}
+              >
                 <label className="field-stack">
                   <span>{copy.workspace.newFolder}</span>
                   <input
@@ -4608,12 +4849,7 @@ export function WorkspaceShell() {
                   />
                 </label>
                 <div className="control-row">
-                  <button
-                    onClick={() => {
-                      createFolderFromSidebar();
-                    }}
-                    type="button"
-                  >
+                  <button type="submit">
                     {copy.workspace.createFolder}
                   </button>
                   <button
@@ -4627,7 +4863,7 @@ export function WorkspaceShell() {
                     {copy.persistence.cancel}
                   </button>
                 </div>
-              </section>
+              </form>
             ) : null}
 
             <WorkspaceSidebarRecents
@@ -4650,7 +4886,7 @@ export function WorkspaceShell() {
               getViewportMenuPosition={getViewportMenuPosition}
               onBeginEpisodeRename={beginEpisodeRename}
               onBeginFolderRename={beginFolderRename}
-              onDeleteFolder={deleteFolder}
+              onDeleteFolder={requestDeleteFolder}
               onDissolveEpisodeFromFolder={dissolveEpisodeFromFolder}
               onReorderEpisodeWithinFolder={reorderEpisodeWithinFolder}
               onSelectEpisodeFromSidebar={selectEpisodeFromSidebar}
@@ -4875,8 +5111,15 @@ export function WorkspaceShell() {
                     className={`object-row${selectedObject?.id === object.id ? " is-selected" : ""}${
                       isAttached ? " is-attached" : ""
                     }`}
+                    data-object-id={object.id}
                     data-testid={`object-row-${object.id}`}
                     key={object.id}
+                    onFocus={(event) => {
+                      if (event.target === event.currentTarget) {
+                        setSelectedObjectId(object.id);
+                      }
+                    }}
+                    tabIndex={0}
                   >
                     <button
                       aria-label={object.name}
@@ -4963,7 +5206,7 @@ export function WorkspaceShell() {
                 <button
                   className="button-secondary"
                   onClick={() => {
-                    void deleteObjectFromLibrary(objectMenuId);
+                    requestDeleteObject(objectMenuId);
                   }}
                   type="button"
                 >
@@ -5097,8 +5340,9 @@ export function WorkspaceShell() {
             style={{ "--stage-height": `${stageHeight}px`, "--stage-width": `${stageWidth}px` } as CSSProperties}
           >
             <svg
-              aria-hidden="true"
+              aria-label="Node connections"
               className="connection-layer"
+              role="group"
               viewBox={`0 0 ${stageWidth} ${stageHeight}`}
             >
               <defs>
@@ -5112,6 +5356,20 @@ export function WorkspaceShell() {
                   viewBox="0 0 7 7"
                 >
                   <path d="M 0.8 0.8 L 6.2 3.5 L 0.8 6.2 L 2.2 3.5 Z" />
+                </marker>
+                <marker
+                  id="canvas-active-arrowhead"
+                  markerHeight="7"
+                  markerWidth="7"
+                  orient="auto"
+                  refX="6.3"
+                  refY="3.5"
+                  viewBox="0 0 7 7"
+                >
+                  <path
+                    className="connection-active-arrowhead"
+                    d="M 0.8 0.8 L 6.2 3.5 L 0.8 6.2 L 2.2 3.5 Z"
+                  />
                 </marker>
                 <marker
                   id="canvas-preview-arrowhead"
@@ -5128,14 +5386,57 @@ export function WorkspaceShell() {
                   />
                 </marker>
               </defs>
-              {connectionLines.map((line) => (
-                <path
-                  className="connection-parent-line"
-                  d={line.path}
-                  key={line.id}
-                  markerEnd="url(#canvas-arrowhead)"
-                />
-              ))}
+              {connectionLines.map((line) => {
+                const parentNode = nodesById.get(line.parentId) ?? null;
+                const childNode = nodesById.get(line.childId) ?? null;
+                const isActiveConnection =
+                  hoveredConnectionId === line.id || rewireNode?.id === line.childId;
+
+                return (
+                  <g
+                    className={`connection-line-group${
+                      isActiveConnection ? " is-active" : ""
+                    }`}
+                    key={line.id}
+                  >
+                    <path
+                      className="connection-parent-line"
+                      d={line.path}
+                      markerEnd={
+                        isActiveConnection
+                          ? "url(#canvas-active-arrowhead)"
+                          : "url(#canvas-arrowhead)"
+                      }
+                    />
+                    <path
+                      aria-label={`Adjust connection from ${parentNode ? getNodeHeadline(parentNode) : "parent node"} to ${childNode ? getNodeHeadline(childNode) : "child node"}`}
+                      className="connection-hit-line"
+                      d={line.hitPath}
+                      data-child-id={line.childId}
+                      data-parent-id={line.parentId}
+                      data-testid={`connection-hit-${line.childId}`}
+                      onMouseDown={(event) => {
+                        beginRewireDrag(line.childId, event, {
+                          connectionId: line.id,
+                          parentId: line.parentId
+                        });
+                      }}
+                      onMouseEnter={() => {
+                        setHoveredConnectionId(line.id);
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredConnectionId((current) =>
+                          current === line.id && rewireNode?.id !== line.childId
+                            ? null
+                            : current
+                        );
+                      }}
+                      role="button"
+                      tabIndex={0}
+                    />
+                  </g>
+                );
+              })}
               {rewirePreviewLine ? (
                 <path
                   className="connection-preview-line"
@@ -5146,16 +5447,47 @@ export function WorkspaceShell() {
             </svg>
             {aiPanelNodeId === null ? (
               <div className="connection-handle-layer">
+                {connectionLines.map((line) => {
+                  const isActiveConnection =
+                    hoveredConnectionId === line.id || rewireNode?.id === line.childId;
+
+                  return isActiveConnection ? (
+                    <button
+                      aria-label="Drag Connection"
+                      className="connection-line-grip"
+                      disabled={isBusy}
+                      key={`${line.id}-grip`}
+                      onMouseDown={(event) => {
+                        beginRewireDrag(line.childId, event, {
+                          connectionId: line.id,
+                          parentId: line.parentId
+                        });
+                      }}
+                      style={
+                        {
+                          left: `${line.midX}px`,
+                          top: `${line.midY}px`
+                        } as CSSProperties
+                      }
+                      type="button"
+                    >
+                      <span aria-hidden="true" />
+                    </button>
+                  ) : null;
+                })}
                 {connectionLines.flatMap((line) => [
                   <button
                     aria-label="Adjust Connection"
                     className={`connection-port connection-port-line${
-                      rewireNode?.id === line.childId ? " is-active" : ""
+                      rewireNode?.id === line.childId || hoveredConnectionId === line.id ? " is-active" : ""
                     }`}
                     disabled={isBusy}
                     key={`${line.id}-start`}
                     onMouseDown={(event) => {
-                      beginRewireDrag(line.childId, event);
+                      beginRewireDrag(line.childId, event, {
+                        connectionId: line.id,
+                        parentId: line.parentId
+                      });
                     }}
                     style={
                       {
@@ -5170,12 +5502,15 @@ export function WorkspaceShell() {
                   <button
                     aria-label="Adjust Connection"
                     className={`connection-port connection-port-line${
-                      rewireNode?.id === line.childId ? " is-active" : ""
+                      rewireNode?.id === line.childId || hoveredConnectionId === line.id ? " is-active" : ""
                     }`}
                     disabled={isBusy}
                     key={`${line.id}-end`}
                     onMouseDown={(event) => {
-                      beginRewireDrag(line.childId, event);
+                      beginRewireDrag(line.childId, event, {
+                        connectionId: line.id,
+                        parentId: line.parentId
+                      });
                     }}
                     style={
                       {
@@ -5417,8 +5752,12 @@ export function WorkspaceShell() {
           <button
             className="button-secondary history-control-button history-control-button-undo"
             aria-label={copy.persistence.undo}
-            disabled={!state.history.canUndo || isBusy}
+            disabled={!state.history.canUndo || !canUseCanvasHistory}
             onClick={() => {
+              if (!canUseCanvasHistory) {
+                return;
+              }
+
               void runUndo();
             }}
             type="button"
@@ -5434,8 +5773,12 @@ export function WorkspaceShell() {
           <button
             className="button-secondary history-control-button history-control-button-redo"
             aria-label={copy.persistence.redo}
-            disabled={!state.history.canRedo || isBusy}
+            disabled={!state.history.canRedo || !canUseCanvasHistory}
             onClick={() => {
+              if (!canUseCanvasHistory) {
+                return;
+              }
+
               void runRedo();
             }}
             type="button"
@@ -5505,8 +5848,21 @@ export function WorkspaceShell() {
           <section
             aria-labelledby="delete-node-title"
             aria-modal="true"
+            autoFocus
             className="modal-card"
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+
+              event.preventDefault();
+              void deleteNodeAndAdjustCanvas(deleteTarget.id);
+              setDeleteTargetId(null);
+              setSelectedNodeId(null);
+              setRewireNodeId(null);
+            }}
             role="dialog"
+            tabIndex={-1}
           >
             <span className="eyebrow">Delete Node</span>
             <h3 id="delete-node-title">{getNodeHeadline(deleteTarget)}</h3>
@@ -5542,8 +5898,18 @@ export function WorkspaceShell() {
           <section
             aria-labelledby="delete-episode-title"
             aria-modal="true"
+            autoFocus
             className="modal-card"
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+
+              event.preventDefault();
+              void confirmDeleteEpisode();
+            }}
             role="dialog"
+            tabIndex={-1}
           >
             <span className="eyebrow">Delete Episode</span>
             <h3 id="delete-episode-title">{deleteEpisodeTarget.title}</h3>
@@ -5561,6 +5927,94 @@ export function WorkspaceShell() {
               <button
                 onClick={() => {
                   void confirmDeleteEpisode();
+                }}
+                type="button"
+              >
+                {copy.persistence.delete}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {deleteFolderTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            aria-labelledby="delete-folder-title"
+            aria-modal="true"
+            autoFocus
+            className="modal-card"
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+
+              event.preventDefault();
+              void confirmDeleteFolder();
+            }}
+            role="dialog"
+            tabIndex={-1}
+          >
+            <span className="eyebrow">Delete Folder</span>
+            <h3 id="delete-folder-title">{deleteFolderTarget.name}</h3>
+            <p>This folder will be removed. Stories inside it will remain in Recent Stories.</p>
+            <div className="control-row">
+              <button
+                className="button-secondary"
+                onClick={() => {
+                  setDeleteFolderId(null);
+                }}
+                type="button"
+              >
+                {copy.persistence.cancel}
+              </button>
+              <button
+                onClick={() => {
+                  void confirmDeleteFolder();
+                }}
+                type="button"
+              >
+                {copy.persistence.delete}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {deleteObjectTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            aria-labelledby="delete-object-title"
+            aria-modal="true"
+            autoFocus
+            className="modal-card"
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+
+              event.preventDefault();
+              void confirmDeleteObject();
+            }}
+            role="dialog"
+            tabIndex={-1}
+          >
+            <span className="eyebrow">Delete Object</span>
+            <h3 id="delete-object-title">{deleteObjectTarget.name}</h3>
+            <p>This object will be removed from the library and detached from canvas nodes.</p>
+            <div className="control-row">
+              <button
+                className="button-secondary"
+                onClick={() => {
+                  setDeleteObjectId(null);
+                }}
+                type="button"
+              >
+                {copy.persistence.cancel}
+              </button>
+              <button
+                onClick={() => {
+                  void confirmDeleteObject();
                 }}
                 type="button"
               >

@@ -158,6 +158,23 @@ export type ObjectMentionCreateCandidate = {
   normalizedName: string;
 };
 
+export type InlineObjectTokenRange = {
+  end: number;
+  label: string;
+  markerEnd: number;
+  markerStart: number;
+  objectId: string | null;
+  start: number;
+};
+
+export type InlineKeywordTokenRange = {
+  end: number;
+  label: string;
+  markerEnd: number;
+  markerStart: number;
+  start: number;
+};
+
 const objectMentionCreateNameMaxLength = 80;
 
 // 생성 후보 이름을 inline marker가 없는 표시 이름으로 정규화합니다.
@@ -192,6 +209,250 @@ export function getObjectMentionCreateCandidate(
     name,
     normalizedName
   };
+}
+
+// 이 함수는 인라인 텍스트 안의 오브젝트 토큰 범위를 계산합니다.
+export function getInlineObjectTokenRanges(value: string): InlineObjectTokenRange[] {
+  const tokenPattern = new RegExp(
+    `${escapeRegExp(objectTokenStart)}([^${escapeRegExp(objectTokenEnd)}\\n]+?)${escapeRegExp(objectTokenEnd)}|@([^@\\n]+?)@`,
+    "g"
+  );
+  const ranges: InlineObjectTokenRange[] = [];
+
+  for (const match of value.matchAll(tokenPattern)) {
+    const start = match.index ?? 0;
+    const rawToken = match[0] ?? "";
+    const label = (match[1] ?? match[2] ?? "").trim();
+
+    if (!label || !rawToken) {
+      continue;
+    }
+
+    ranges.push({
+      end: start + rawToken.length,
+      label,
+      markerEnd: start + rawToken.length - 1,
+      markerStart: start,
+      objectId: null,
+      start
+    });
+  }
+
+  return ranges;
+}
+
+// 이 함수는 인라인 텍스트 안의 키워드 토큰 범위를 계산합니다.
+export function getInlineKeywordTokenRanges(value: string): InlineKeywordTokenRange[] {
+  const ranges: InlineKeywordTokenRange[] = [];
+
+  for (const match of value.matchAll(getKeywordTokenPattern())) {
+    const start = match.index ?? 0;
+    const rawToken = match[0] ?? "";
+    const label = (match[1] ?? "").trim();
+
+    if (!label || !rawToken) {
+      continue;
+    }
+
+    ranges.push({
+      end: start + rawToken.length,
+      label,
+      markerEnd: start + rawToken.length - 1,
+      markerStart: start,
+      start
+    });
+  }
+
+  return ranges;
+}
+
+// 이 함수는 오브젝트 토큰 내부 커서를 가까운 경계로 보정합니다.
+export function getSnappedObjectTokenCaret(
+  value: string,
+  caretIndex: number,
+  direction: "backward" | "forward" | "nearest" = "nearest"
+) {
+  const range = getInlineObjectTokenRanges(value).find(
+    (tokenRange) => caretIndex > tokenRange.start && caretIndex < tokenRange.end
+  );
+
+  if (!range) {
+    return null;
+  }
+
+  if (direction === "backward") {
+    return range.start;
+  }
+
+  if (direction === "forward") {
+    return range.end;
+  }
+
+  return caretIndex - range.start <= range.end - caretIndex ? range.start : range.end;
+}
+
+// 이 함수는 선택 영역이 오브젝트 토큰을 일부만 건드리면 전체 토큰 범위로 확장합니다.
+export function expandSelectionToObjectTokenBoundaries(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number
+) {
+  const rangeStart = Math.min(selectionStart, selectionEnd);
+  const rangeEnd = Math.max(selectionStart, selectionEnd);
+
+  if (rangeStart === rangeEnd) {
+    return null;
+  }
+
+  let nextStart = rangeStart;
+  let nextEnd = rangeEnd;
+  let touchedObjectToken = false;
+
+  for (const range of getInlineObjectTokenRanges(value)) {
+    const intersects = nextStart < range.end && nextEnd > range.start;
+
+    if (!intersects) {
+      continue;
+    }
+
+    touchedObjectToken = true;
+    nextStart = Math.min(nextStart, range.start);
+    nextEnd = Math.max(nextEnd, range.end);
+  }
+
+  if (!touchedObjectToken || (nextStart === rangeStart && nextEnd === rangeEnd)) {
+    return null;
+  }
+
+  return {
+    selectionEnd: nextEnd,
+    selectionStart: nextStart
+  };
+}
+
+// 이 함수는 Backspace/Delete 첫 입력 때 선택할 오브젝트 토큰 범위를 찾습니다.
+export function getObjectTokenDeleteSelection(
+  value: string,
+  caretIndex: number,
+  direction: "backward" | "forward"
+) {
+  for (const range of getInlineObjectTokenRanges(value)) {
+    const touchesToken =
+      direction === "backward"
+        ? caretIndex === range.end || (caretIndex > range.start && caretIndex < range.end)
+        : caretIndex === range.start || (caretIndex > range.start && caretIndex < range.end);
+
+    if (!touchesToken) {
+      continue;
+    }
+
+    return {
+      selectionEnd: range.end,
+      selectionStart: range.start
+    };
+  }
+
+  return null;
+}
+
+// 이 함수는 선택된 오브젝트 토큰을 주변 공백과 함께 삭제합니다.
+export function removeSelectedObjectToken(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number
+) {
+  const rangeStart = Math.min(selectionStart, selectionEnd);
+  const rangeEnd = Math.max(selectionStart, selectionEnd);
+  const range = getInlineObjectTokenRanges(value).find(
+    (tokenRange) => tokenRange.start === rangeStart && tokenRange.end === rangeEnd
+  );
+
+  if (!range) {
+    return null;
+  }
+
+  let removeStart = range.start;
+  let removeEnd = range.end;
+
+  if (value[removeEnd] === " ") {
+    removeEnd += 1;
+  } else if (removeStart > 0 && value[removeStart - 1] === " ") {
+    removeStart -= 1;
+  }
+
+  return {
+    nextCaret: removeStart,
+    nextText: `${value.slice(0, removeStart)}${value.slice(removeEnd)}`
+  };
+}
+
+// 이 함수는 기존 오브젝트 토큰의 내부 라벨/마커 손상을 감지합니다.
+export function hasObjectTokenInternalMutation(
+  previousValue: string,
+  nextValue: string
+) {
+  const previousRanges = getInlineObjectTokenRanges(previousValue);
+
+  if (previousRanges.length === 0) {
+    return false;
+  }
+
+  const nextRanges = getInlineObjectTokenRanges(nextValue);
+  const previousLabels = previousRanges.map((range) =>
+    normalizeObjectMentionMatchName(range.label)
+  );
+  const nextLabels = nextRanges.map((range) =>
+    normalizeObjectMentionMatchName(range.label)
+  );
+
+  if (
+    previousLabels.length === nextLabels.length &&
+    previousLabels.some((label, index) => label !== nextLabels[index])
+  ) {
+    return true;
+  }
+
+  return previousRanges.some((range) => {
+    const normalizedLabel = normalizeObjectMentionMatchName(range.label);
+    const stillHasLabelText = nextValue
+      .toLowerCase()
+      .includes(stripInlineFormattingMarkers(range.label).toLowerCase());
+    const stillHasToken = nextLabels.includes(normalizedLabel);
+
+    return stillHasLabelText && !stillHasToken;
+  });
+}
+
+// 이 함수는 키워드 토큰 경계에서만 전체 토큰 삭제를 허용합니다.
+export function removeAdjacentKeywordTokenAtBoundary(
+  value: string,
+  caretIndex: number,
+  direction: "backward" | "forward"
+) {
+  for (const range of getInlineKeywordTokenRanges(value)) {
+    const touchesToken =
+      direction === "backward" ? caretIndex === range.end : caretIndex === range.start;
+
+    if (!touchesToken) {
+      continue;
+    }
+
+    let removeStart = range.start;
+    let removeEnd = range.end;
+
+    if (value[removeEnd] === " ") {
+      removeEnd += 1;
+    } else if (removeStart > 0 && value[removeStart - 1] === " ") {
+      removeStart -= 1;
+    }
+
+    return {
+      nextCaret: removeStart,
+      nextText: `${value.slice(0, removeStart)}${value.slice(removeEnd)}`
+    };
+  }
+
+  return null;
 }
 
 export function normalizeInlineObjectMentions(value: string) {

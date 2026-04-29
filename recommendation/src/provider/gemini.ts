@@ -683,7 +683,10 @@ export function createGeminiRecommendationProvider(
       }
 
       const cacheKey = buildCacheKey(context, model, effectiveMaxSuggestions);
-      const cachedSuggestions = readCacheEntry(cache, cacheKey, Date.now());
+      const shouldBypassCache = context.cacheBypass === true;
+      const cachedSuggestions = shouldBypassCache
+        ? null
+        : readCacheEntry(cache, cacheKey, Date.now());
 
       if (cachedSuggestions) {
         return cachedSuggestions;
@@ -703,7 +706,9 @@ export function createGeminiRecommendationProvider(
           context.selectedKeywords
         );
 
-        writeCacheEntry(cache, cacheKey, suggestions, Date.now(), cacheTtlMs);
+        if (!shouldBypassCache) {
+          writeCacheEntry(cache, cacheKey, suggestions, Date.now(), cacheTtlMs);
+        }
         return suggestions;
       } catch (error) {
         if (fallbackProvider) {

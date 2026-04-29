@@ -132,6 +132,7 @@ function renderEpisodeItem(
   return (
     <li
       className={`sidebar-episode-item${isActive ? " is-active" : ""}${isSortable ? " is-sortable" : ""}`}
+      data-sidebar-episode-id={episode.id}
       draggable={isSortable}
       key={episode.id}
       onDragEnd={() => {
@@ -160,6 +161,7 @@ function renderEpisodeItem(
         onReorderEpisodeWithinFolder(currentFolderId, draggedSidebarEpisodeId, episode.id);
         setDraggedSidebarEpisodeId(null);
       }}
+      tabIndex={isRenaming ? undefined : 0}
     >
       {isRenaming ? (
         <form
@@ -359,7 +361,12 @@ function renderFolderItem(folder: VisibleSidebarFolder, props: WorkspaceSidebarR
   const isActive = activeFolderId === folder.id;
 
   return (
-    <li className={`sidebar-folder-item${isActive ? " is-active" : ""}`} key={folder.id}>
+    <li
+      className={`sidebar-folder-item${isActive ? " is-active" : ""}`}
+      data-sidebar-folder-id={folder.id}
+      key={folder.id}
+      tabIndex={isRenaming ? undefined : 0}
+    >
       {isRenaming ? (
         <form
           className="sidebar-episode-rename"

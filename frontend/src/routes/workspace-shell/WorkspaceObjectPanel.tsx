@@ -1,4 +1,5 @@
 // 이 파일은 오브젝트 상세/생성 패널 렌더링을 담당합니다.
+import type { ClipboardEvent } from "react";
 import type { StoryObject, StoryObjectCategory } from "@scenaairo/shared";
 
 import { copy } from "../../copy";
@@ -7,16 +8,45 @@ import { objectCategoryOptions } from "./workspaceShell.constants";
 import { formatObjectCategory } from "./workspaceShell.common";
 import type { DetailEditorMode } from "./workspaceShell.types";
 
+type ObjectDraftChangeHandler = (
+  field: keyof StoryObjectDraft,
+  value: StoryObjectDraft[keyof StoryObjectDraft]
+) => void;
+
+// 오브젝트 설명 입력을 한 줄 문자열로 정리합니다.
+function normalizeObjectSummaryLine(value: string) {
+  return value.replace(/\s*\r?\n+\s*/g, " ");
+}
+
+// 붙여넣기 텍스트를 현재 선택 영역에 삽입합니다.
+function buildObjectSummaryPasteValue(input: HTMLInputElement, pastedText: string) {
+  const selectionStart = input.selectionStart ?? input.value.length;
+  const selectionEnd = input.selectionEnd ?? selectionStart;
+
+  return normalizeObjectSummaryLine(
+    `${input.value.slice(0, selectionStart)}${pastedText}${input.value.slice(selectionEnd)}`
+  );
+}
+
+// 오브젝트 설명 붙여넣기를 한 줄 값으로 저장합니다.
+function handleObjectSummaryPaste(
+  event: ClipboardEvent<HTMLInputElement>,
+  onDraftChange: ObjectDraftChangeHandler
+) {
+  event.preventDefault();
+  onDraftChange(
+    "summary",
+    buildObjectSummaryPasteValue(event.currentTarget, event.clipboardData.getData("text"))
+  );
+}
+
 type WorkspaceObjectPanelProps = {
   detailError: string | null;
   detailMode: DetailEditorMode | null;
   isCanvasFullscreen: boolean;
   objectEditorDraft: StoryObjectDraft;
   onClose: () => void;
-  onDraftChange: (
-    field: keyof StoryObjectDraft,
-    value: StoryObjectDraft[keyof StoryObjectDraft]
-  ) => void;
+  onDraftChange: ObjectDraftChangeHandler;
   onSave: () => void;
   selectedObject: StoryObject | null;
   selectedObjectEpisodeTitle: string | null;
@@ -98,11 +128,14 @@ export function WorkspaceObjectPanel({
           </label>
           <label className="field-stack">
             <span>{copy.workspace.objectSummary}</span>
-            <textarea
+            <input
               onChange={(event) => {
-                onDraftChange("summary", event.target.value);
+                onDraftChange("summary", normalizeObjectSummaryLine(event.target.value));
               }}
-              rows={4}
+              onPaste={(event) => {
+                handleObjectSummaryPaste(event, onDraftChange);
+              }}
+              type="text"
               value={objectEditorDraft.summary}
             />
           </label>
@@ -147,12 +180,15 @@ export function WorkspaceObjectPanel({
           </label>
           <label className="field-stack">
             <span>{copy.workspace.objectSummary}</span>
-            <textarea
+            <input
               onChange={(event) => {
-                onDraftChange("summary", event.target.value);
+                onDraftChange("summary", normalizeObjectSummaryLine(event.target.value));
+              }}
+              onPaste={(event) => {
+                handleObjectSummaryPaste(event, onDraftChange);
               }}
               placeholder="Relationship pressure, location note, or prop detail."
-              rows={4}
+              type="text"
               value={objectEditorDraft.summary}
             />
           </label>

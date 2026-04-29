@@ -413,6 +413,7 @@ export function createKeywordRecommendationRequest(
   node: StoryNode,
   parentNode: StoryNode | null,
   options: {
+    cacheBypass?: boolean;
     maxSuggestions?: number;
     selectedKeywords?: string[];
   } = {}
@@ -421,6 +422,7 @@ export function createKeywordRecommendationRequest(
   const maxSuggestions = Math.max(0, options.maxSuggestions ?? 9);
 
   return {
+    ...(options.cacheBypass === true ? { cacheBypass: true } : {}),
     maxSuggestions,
     selectedKeywords,
     story: createStorySnapshot(snapshot, node, parentNode),

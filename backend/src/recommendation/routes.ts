@@ -195,6 +195,11 @@ function hasValidStructuredContext(body: KeywordRecommendationRequest | Sentence
   );
 }
 
+// 키워드 추천 요청의 캐시 우회 옵션이 boolean인지 확인합니다.
+function hasValidCacheBypass(body: KeywordRecommendationRequest) {
+  return body.cacheBypass === undefined || typeof body.cacheBypass === "boolean";
+}
+
 // 요청/모델 기준으로 키워드 캐시 키를 생성합니다.
 function buildKeywordCacheKey(
   body: KeywordRecommendationRequest,
@@ -350,6 +355,12 @@ export async function registerRecommendationRoutes(
       });
     }
 
+    if (!hasValidCacheBypass(body)) {
+      return reply.status(400).send({
+        message: "cache_bypass_invalid"
+      });
+    }
+
     if (!hasValidStructuredContext(body)) {
       return reply.status(400).send({
         message: "structured_context_invalid"
@@ -360,8 +371,9 @@ export async function registerRecommendationRoutes(
       body.maxSuggestions,
       options.recommendationConfig.maxSuggestions
     );
+    const shouldBypassCache = body.cacheBypass === true;
     const cacheKey = buildKeywordCacheKey(body, options, maxSuggestions);
-    const cachedResponse = readKeywordCache(cacheKey);
+    const cachedResponse = shouldBypassCache ? null : readKeywordCache(cacheKey);
 
     if (cachedResponse) {
       recommendationRouteMetrics.cacheHit += 1;
@@ -373,7 +385,15 @@ export async function registerRecommendationRoutes(
       return cachedResponse;
     }
 
-    recommendationRouteMetrics.cacheMiss += 1;
+    if (shouldBypassCache) {
+      logRecommendationEvent(recommendationLogger, "keyword_cache_bypass", {
+        durationMs: Date.now() - startedAt,
+        model: options.recommendationConfig.model,
+        provider: options.recommendationConfig.provider
+      });
+    } else {
+      recommendationRouteMetrics.cacheMiss += 1;
+    }
 
     try {
       const service = getRecommendationService();
@@ -383,7 +403,9 @@ export async function registerRecommendationRoutes(
       );
       const trimmedResponse = trimKeywordSuggestions(response, maxSuggestions);
 
-      writeKeywordCache(cacheKey, trimmedResponse, options.recommendationConfig.cacheTtlMs);
+      if (!shouldBypassCache) {
+        writeKeywordCache(cacheKey, trimmedResponse, options.recommendationConfig.cacheTtlMs);
+      }
       logRecommendationEvent(recommendationLogger, "keyword_success", {
         durationMs: Date.now() - startedAt,
         model: options.recommendationConfig.model,
@@ -405,7 +427,9 @@ export async function registerRecommendationRoutes(
           maxSuggestions
         );
 
-        writeKeywordCache(cacheKey, fallbackResponse, options.recommendationConfig.cacheTtlMs);
+        if (!shouldBypassCache) {
+          writeKeywordCache(cacheKey, fallbackResponse, options.recommendationConfig.cacheTtlMs);
+        }
         logRecommendationEvent(recommendationLogger, "keyword_timeout_fallback", {
           durationMs: Date.now() - startedAt,
           model: options.recommendationConfig.model,

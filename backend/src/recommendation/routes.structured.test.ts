@@ -1,5 +1,5 @@
 // 이 파일은 추천 라우트의 structured context 검증을 확인합니다.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../app.js";
 
@@ -51,6 +51,7 @@ describe("recommendation structured route validation", () => {
   afterEach(async () => {
     await Promise.all(appsToClose.map((app) => app.close()));
     appsToClose.length = 0;
+    vi.restoreAllMocks();
   });
 
   it("rejects malformed structured keyword context", async () => {
@@ -93,6 +94,80 @@ describe("recommendation structured route validation", () => {
     expect(response.json()).toEqual({
       message: "structured_context_invalid"
     });
+  });
+
+  it("rejects invalid keyword cache bypass flags", async () => {
+    const app = buildApp();
+    appsToClose.push(app);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      payload: {
+        cacheBypass: "yes",
+        story: createStoryPayload()
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      message: "cache_bypass_invalid"
+    });
+  });
+
+  it("skips keyword route cache hits when cache bypass is true", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const app = buildApp({
+      recommendationConfig: {
+        cacheTtlMs: 60_000,
+        logLevel: "info",
+        provider: "heuristic"
+      }
+    });
+    const story = {
+      ...createStoryPayload(),
+      projectTitle: "Cache Bypass Route Test"
+    };
+    appsToClose.push(app);
+    await app.ready();
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        story
+      },
+      url: "/api/recommendation/keywords"
+    });
+    await app.inject({
+      method: "POST",
+      payload: {
+        story
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_hit"))).toBe(
+      true
+    );
+
+    logSpy.mockClear();
+
+    await app.inject({
+      method: "POST",
+      payload: {
+        cacheBypass: true,
+        story
+      },
+      url: "/api/recommendation/keywords"
+    });
+
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_hit"))).toBe(
+      false
+    );
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("keyword_cache_bypass"))).toBe(
+      true
+    );
   });
 
   it("allows zero keyword suggestions when all cloud slots are filled", async () => {

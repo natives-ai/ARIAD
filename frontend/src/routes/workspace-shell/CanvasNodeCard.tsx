@@ -14,10 +14,14 @@ import { getNodeHeadline } from "../../persistence/drawerPayload";
 import { isInteractiveTarget } from "./workspaceShell.canvas";
 import {
   extractInlineKeywords,
+  expandSelectionToObjectTokenBoundaries,
+  getObjectTokenDeleteSelection,
+  getSnappedObjectTokenCaret,
+  hasObjectTokenInternalMutation,
   keywordCloudSlotCount,
   normalizeInlineObjectMentions,
-  removeAdjacentInlineToken,
-  removeInlineSelectionWithTokenBoundaries,
+  removeAdjacentKeywordTokenAtBoundary,
+  removeSelectedObjectToken,
   renderTextWithObjectMentions,
   type ObjectMentionCreateCandidate
 } from "./workspaceShell.inlineEditor";
@@ -204,6 +208,44 @@ export function CanvasNodeCard({
   const objectMentionOptionCount =
     objectMentionSuggestions.length + (objectMentionCreateCandidate ? 1 : 0);
 
+  // 오브젝트 토큰 내부 커서를 토큰 경계로 이동합니다.
+  function snapObjectTokenCaret(
+    input: HTMLTextAreaElement,
+    direction: "backward" | "forward" | "nearest" = "nearest"
+  ) {
+    const selectionStart = input.selectionStart ?? 0;
+    const selectionEnd = input.selectionEnd ?? selectionStart;
+
+    if (selectionStart !== selectionEnd) {
+      const expandedSelection = expandSelectionToObjectTokenBoundaries(
+        inlineNodeTextDraft,
+        selectionStart,
+        selectionEnd
+      );
+
+      if (expandedSelection) {
+        input.setSelectionRange(
+          expandedSelection.selectionStart,
+          expandedSelection.selectionEnd
+        );
+      }
+
+      return;
+    }
+
+    const snappedCaret = getSnappedObjectTokenCaret(
+      inlineNodeTextDraft,
+      selectionStart,
+      direction
+    );
+
+    if (snappedCaret === null || snappedCaret === selectionStart) {
+      return;
+    }
+
+    input.setSelectionRange(snappedCaret, snappedCaret);
+  }
+
   return (
     <article
       className={`node-card node-card-level-${node.level} node-card-${node.contentMode}${isSelected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}${isRewireSource ? " is-rewire-source" : ""}${isRewireTarget ? " is-rewire-target" : ""}${isHoveredRewireTarget ? " is-rewire-hover-target" : ""}${node.isImportant ? " is-important" : ""}${node.isFixed ? " is-fixed" : ""}${node.isCollapsed ? " is-collapsed" : ""}${isStartMajorNode ? " is-start-node" : ""}${isEndMajorNode ? " is-end-node" : ""}${aiPanelNodeId === node.id && !node.isFixed ? " has-keyword-cloud" : ""}`}
@@ -346,7 +388,13 @@ export function CanvasNodeCard({
                   void persistInlineNodeContent(node, inlineNodeTextDraft, activeKeywords);
                 }}
                 onChange={(event) => {
-                  const nextValue = normalizeInlineObjectMentions(event.target.value);
+                  const normalizedValue = normalizeInlineObjectMentions(event.target.value);
+                  const nextValue = hasObjectTokenInternalMutation(
+                    inlineNodeTextDraft,
+                    normalizedValue
+                  )
+                    ? inlineNodeTextDraft
+                    : normalizedValue;
                   const nextCaret = event.target.selectionStart ?? nextValue.length;
 
                   setInlineNodeTextDraft(nextValue);
@@ -363,6 +411,7 @@ export function CanvasNodeCard({
                 }}
                 onClick={(event) => {
                   event.stopPropagation();
+                  snapObjectTokenCaret(event.currentTarget);
                   updateObjectMentionQueryFromInput(event.currentTarget);
                 }}
                 onKeyDown={(event) => {
@@ -378,61 +427,114 @@ export function CanvasNodeCard({
                   const activeMentionName =
                     activeMentionSuggestion?.name ?? activeMentionCreateCandidate?.name ?? null;
 
-                  if (selectionStart === selectionEnd) {
-                    const removableToken =
-                      event.key === "Backspace"
-                        ? removeAdjacentInlineToken(
-                            inlineNodeTextDraft,
-                            selectionStart,
-                            "backward"
-                          )
-                        : event.key === "Delete"
-                          ? removeAdjacentInlineToken(
-                              inlineNodeTextDraft,
-                              selectionStart,
-                              "forward"
-                            )
-                          : null;
+                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    window.requestAnimationFrame(() => {
+                      if (!selectedNodeInputRef.current) {
+                        return;
+                      }
 
-                    if (removableToken) {
-                      event.preventDefault();
-                      setInlineNodeTextDraft(removableToken.nextText);
-                      setSelectedAiKeywords(extractInlineKeywords(removableToken.nextText));
-                      syncInlineObjectMentions(node.id, removableToken.nextText);
-
-                      window.requestAnimationFrame(() => {
-                        selectedNodeInputRef.current?.focus();
-                        selectedNodeInputRef.current?.setSelectionRange(
-                          removableToken.nextCaret,
-                          removableToken.nextCaret
-                        );
-                        syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
-                      });
-                      return;
-                    }
+                      snapObjectTokenCaret(
+                        selectedNodeInputRef.current,
+                        event.key === "ArrowLeft" ? "backward" : "forward"
+                      );
+                      updateObjectMentionQueryFromInput(selectedNodeInputRef.current);
+                    });
                   }
 
                   if (
                     selectionStart !== selectionEnd &&
                     (event.key === "Backspace" || event.key === "Delete")
                   ) {
-                    const removableSelection = removeInlineSelectionWithTokenBoundaries(
+                    const removableObjectToken = removeSelectedObjectToken(
                       inlineNodeTextDraft,
                       selectionStart,
                       selectionEnd
                     );
 
-                    if (removableSelection) {
+                    if (removableObjectToken) {
                       event.preventDefault();
-                      setInlineNodeTextDraft(removableSelection.nextText);
-                      setSelectedAiKeywords(extractInlineKeywords(removableSelection.nextText));
-                      syncInlineObjectMentions(node.id, removableSelection.nextText);
+                      setInlineNodeTextDraft(removableObjectToken.nextText);
+                      setSelectedAiKeywords(extractInlineKeywords(removableObjectToken.nextText));
+                      syncInlineObjectMentions(node.id, removableObjectToken.nextText);
 
                       window.requestAnimationFrame(() => {
                         selectedNodeInputRef.current?.focus();
                         selectedNodeInputRef.current?.setSelectionRange(
-                          removableSelection.nextCaret,
-                          removableSelection.nextCaret
+                          removableObjectToken.nextCaret,
+                          removableObjectToken.nextCaret
+                        );
+                        syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+                      });
+                      return;
+                    }
+
+                    const expandedObjectSelection = expandSelectionToObjectTokenBoundaries(
+                      inlineNodeTextDraft,
+                      selectionStart,
+                      selectionEnd
+                    );
+
+                    if (expandedObjectSelection) {
+                      event.preventDefault();
+                      event.currentTarget.setSelectionRange(
+                        expandedObjectSelection.selectionStart,
+                        expandedObjectSelection.selectionEnd
+                      );
+                      return;
+                    }
+                  }
+
+                  if (selectionStart === selectionEnd) {
+                    const objectTokenDeleteSelection =
+                      event.key === "Backspace"
+                        ? getObjectTokenDeleteSelection(
+                            inlineNodeTextDraft,
+                            selectionStart,
+                            "backward"
+                          )
+                        : event.key === "Delete"
+                          ? getObjectTokenDeleteSelection(
+                              inlineNodeTextDraft,
+                              selectionStart,
+                              "forward"
+                            )
+                          : null;
+
+                    if (objectTokenDeleteSelection) {
+                      event.preventDefault();
+                      event.currentTarget.setSelectionRange(
+                        objectTokenDeleteSelection.selectionStart,
+                        objectTokenDeleteSelection.selectionEnd
+                      );
+                      return;
+                    }
+
+                    const removableKeywordToken =
+                      event.key === "Backspace"
+                        ? removeAdjacentKeywordTokenAtBoundary(
+                            inlineNodeTextDraft,
+                            selectionStart,
+                            "backward"
+                          )
+                        : event.key === "Delete"
+                          ? removeAdjacentKeywordTokenAtBoundary(
+                              inlineNodeTextDraft,
+                              selectionStart,
+                              "forward"
+                            )
+                          : null;
+
+                    if (removableKeywordToken) {
+                      event.preventDefault();
+                      setInlineNodeTextDraft(removableKeywordToken.nextText);
+                      setSelectedAiKeywords(extractInlineKeywords(removableKeywordToken.nextText));
+                      syncInlineObjectMentions(node.id, removableKeywordToken.nextText);
+
+                      window.requestAnimationFrame(() => {
+                        selectedNodeInputRef.current?.focus();
+                        selectedNodeInputRef.current?.setSelectionRange(
+                          removableKeywordToken.nextCaret,
+                          removableKeywordToken.nextCaret
                         );
                         syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
                       });
@@ -470,8 +572,106 @@ export function CanvasNodeCard({
                     setActiveObjectMentionIndex(0);
                   }
                 }}
+                onBeforeInput={(event) => {
+                  const selectionStart = event.currentTarget.selectionStart ?? 0;
+                  const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
+                  const expandedObjectSelection = expandSelectionToObjectTokenBoundaries(
+                    inlineNodeTextDraft,
+                    selectionStart,
+                    selectionEnd
+                  );
+                  const selectedObjectToken =
+                    selectionStart !== selectionEnd &&
+                    removeSelectedObjectToken(
+                      inlineNodeTextDraft,
+                      selectionStart,
+                      selectionEnd
+                    ) !== null;
+                  const snappedCaret =
+                    selectionStart === selectionEnd
+                      ? getSnappedObjectTokenCaret(
+                          inlineNodeTextDraft,
+                          selectionStart,
+                          "nearest"
+                        )
+                      : null;
+
+                  if (
+                    !selectedObjectToken &&
+                    !expandedObjectSelection &&
+                    snappedCaret === null
+                  ) {
+                    return;
+                  }
+
+                  event.preventDefault();
+
+                  if (selectedObjectToken) {
+                    return;
+                  }
+
+                  if (expandedObjectSelection) {
+                    event.currentTarget.setSelectionRange(
+                      expandedObjectSelection.selectionStart,
+                      expandedObjectSelection.selectionEnd
+                    );
+                    return;
+                  }
+
+                  event.currentTarget.setSelectionRange(snappedCaret, snappedCaret);
+                }}
                 onKeyUp={(event) => {
+                  snapObjectTokenCaret(event.currentTarget);
                   updateObjectMentionQueryFromInput(event.currentTarget);
+                }}
+                onPaste={(event) => {
+                  const selectionStart = event.currentTarget.selectionStart ?? 0;
+                  const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
+                  const expandedObjectSelection = expandSelectionToObjectTokenBoundaries(
+                    inlineNodeTextDraft,
+                    selectionStart,
+                    selectionEnd
+                  );
+                  const selectedObjectToken =
+                    selectionStart !== selectionEnd &&
+                    removeSelectedObjectToken(
+                      inlineNodeTextDraft,
+                      selectionStart,
+                      selectionEnd
+                    ) !== null;
+                  const snappedCaret =
+                    selectionStart === selectionEnd
+                      ? getSnappedObjectTokenCaret(
+                          inlineNodeTextDraft,
+                          selectionStart,
+                          "nearest"
+                        )
+                      : null;
+
+                  if (
+                    !selectedObjectToken &&
+                    !expandedObjectSelection &&
+                    snappedCaret === null
+                  ) {
+                    return;
+                  }
+
+                  event.preventDefault();
+
+                  if (expandedObjectSelection) {
+                    event.currentTarget.setSelectionRange(
+                      expandedObjectSelection.selectionStart,
+                      expandedObjectSelection.selectionEnd
+                    );
+                    return;
+                  }
+
+                  if (snappedCaret !== null) {
+                    event.currentTarget.setSelectionRange(snappedCaret, snappedCaret);
+                  }
+                }}
+                onSelect={(event) => {
+                  snapObjectTokenCaret(event.currentTarget);
                 }}
                 placeholder={activeKeywords.length > 0 ? undefined : "Type the beat"}
                 ref={selectedNodeInputRef}

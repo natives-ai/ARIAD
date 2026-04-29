@@ -539,6 +539,38 @@ describe("gemini provider", () => {
     expect(generateContent).toHaveBeenCalledTimes(1);
   });
 
+  it("skips Gemini keyword cache when cache bypass is requested", async () => {
+    const generateContent = vi
+      .fn()
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          suggestions: [{ label: "cache first", reason: "First provider response." }]
+        })
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          suggestions: [{ label: "cache bypassed", reason: "Fresh provider response." }]
+        })
+      });
+    const provider = createGeminiRecommendationProvider({
+      apiKey: "gemini-key",
+      cacheTtlMs: 1000,
+      client: {
+        models: {
+          generateContent
+        }
+      }
+    });
+
+    await expect(provider.requestKeywords(createContext())).resolves.toEqual([
+      { label: "cache first", reason: "First provider response." }
+    ]);
+    await expect(provider.requestKeywords(createContext({ cacheBypass: true }))).resolves.toEqual([
+      { label: "cache bypassed", reason: "Fresh provider response." }
+    ]);
+    expect(generateContent).toHaveBeenCalledTimes(2);
+  });
+
   it("refreshes cache after TTL expires", async () => {
     const generateContent = vi
       .fn()

@@ -34,6 +34,7 @@ export interface StorySnapshot {
 
 export interface RecommendationContext {
   anchors: string[];
+  cacheBypass?: boolean;
   constraints: string[];
   focus: string;
   lockedFacts?: string[];
@@ -114,6 +115,7 @@ export interface StructuredRecommendationContext {
 }
 
 export interface KeywordRecommendationRequest {
+  cacheBypass?: boolean;
   maxSuggestions?: number;
   selectedKeywords?: string[];
   story: StorySnapshot;

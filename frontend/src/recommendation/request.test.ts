@@ -180,4 +180,17 @@ describe("recommendation request structured context", () => {
       })
     ]);
   });
+
+  it("marks refresh keyword requests as cache bypass", () => {
+    const snapshot = createSnapshot();
+    const currentNode = snapshot.nodes.find((node) => node.id === "minor-current")!;
+    const parentNode = snapshot.nodes.find((node) => node.id === "major-top")!;
+    const normalRequest = createKeywordRecommendationRequest(snapshot, currentNode, parentNode);
+    const refreshRequest = createKeywordRecommendationRequest(snapshot, currentNode, parentNode, {
+      cacheBypass: true
+    });
+
+    expect(normalRequest.cacheBypass).toBeUndefined();
+    expect(refreshRequest.cacheBypass).toBe(true);
+  });
 });

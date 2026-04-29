@@ -565,7 +565,12 @@ export function buildConnectionLines(
         childId: node.id,
         endX: line.endX,
         endY: line.endY,
+        hitPath: line.path,
         id: `${parentNode.id}-${node.id}`,
+        isSameLevel: parentNode.level === node.level,
+        midX: (line.startX + line.endX) / 2,
+        midY: (line.startY + line.endY) / 2,
+        parentId: parentNode.id,
         path: line.path,
         startX: line.startX,
         startY: line.startY

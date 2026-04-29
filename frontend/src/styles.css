@@ -974,7 +974,7 @@ textarea {
   margin-left: auto;
   overflow: visible;
   position: relative;
-  z-index: 2;
+  z-index: 8;
 }
 
 .object-row-actions button {
@@ -1217,6 +1217,7 @@ textarea {
   pointer-events: none;
   position: absolute;
   width: 100%;
+  z-index: 6;
 }
 
 .connection-layer path {
@@ -1231,8 +1232,38 @@ textarea {
   fill: rgba(16, 19, 22, 0.94);
 }
 
+.connection-layer .connection-active-arrowhead {
+  fill: #2d77d6;
+}
+
 .connection-layer .connection-preview-arrowhead {
   fill: #2d77d6;
+}
+
+.connection-line-group .connection-parent-line {
+  transition:
+    opacity 120ms ease,
+    stroke 120ms ease,
+    stroke-width 120ms ease;
+}
+
+.connection-line-group.is-active .connection-parent-line {
+  opacity: 0.98;
+  stroke: #2d77d6;
+  stroke-width: 2.6px;
+}
+
+.connection-hit-line {
+  cursor: grab;
+  pointer-events: stroke;
+  stroke: transparent;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 22px;
+}
+
+.connection-hit-line:active {
+  cursor: grabbing;
 }
 
 .lane-grid {
@@ -2041,6 +2072,36 @@ textarea {
 .connection-port-line.is-active span {
   background: #2d77d6;
   box-shadow: 0 0 0 4px rgba(45, 119, 214, 0.14);
+}
+
+.connection-line-grip {
+  align-items: center;
+  background: rgba(255, 254, 251, 0.94);
+  border: 1px solid rgba(45, 119, 214, 0.42);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(13, 31, 44, 0.16);
+  cursor: grab;
+  display: inline-flex;
+  height: 1.22rem;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  pointer-events: auto;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 1.22rem;
+}
+
+.connection-line-grip span {
+  background: #2d77d6;
+  border-radius: 999px;
+  display: block;
+  height: 0.42rem;
+  width: 0.42rem;
+}
+
+.connection-line-grip:active {
+  cursor: grabbing;
 }
 
 .connection-preview-line {

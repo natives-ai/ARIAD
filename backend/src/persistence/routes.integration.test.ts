@@ -129,6 +129,99 @@ describe("persistence routes integration", () => {
     await app.close();
   });
 
+  it("preserves episode updatedAt through import, node sync, episode sync, and get", async () => {
+    const app = buildApp({ cloudDataDir });
+    await app.ready();
+
+    const initialEpisodeUpdatedAt = "2026-04-13T08:15:00.000Z";
+    const touchedEpisodeUpdatedAt = "2026-04-15T00:20:00.000Z";
+    const baseSnapshot = createSnapshot("2026-04-15T00:00:00.000Z");
+    const initialSnapshot: StoryWorkspaceSnapshot = {
+      ...baseSnapshot,
+      episodes: [
+        {
+          ...baseSnapshot.episodes[0]!,
+          updatedAt: initialEpisodeUpdatedAt
+        }
+      ]
+    };
+
+    const importResponse = await app.inject({
+      method: "POST",
+      payload: {
+        linkage: null,
+        snapshot: initialSnapshot
+      } satisfies ImportProjectRequest,
+      url: "/api/persistence/accounts/demo-account/import"
+    });
+    const importedSnapshot = importResponse.json().snapshot as StoryWorkspaceSnapshot;
+
+    expect(importResponse.statusCode).toBe(200);
+    expect(importedSnapshot.episodes[0]?.updatedAt).toBe(initialEpisodeUpdatedAt);
+
+    const nodeOnlySyncResponse = await app.inject({
+      method: "POST",
+      payload: {
+        operations: [
+          {
+            action: "upsert",
+            kind: "node",
+            payload: {
+              contentMode: "text",
+              createdAt: "2026-04-15T00:10:00.000Z",
+              episodeId: "episode_alpha",
+              id: "node_beta",
+              keywords: [],
+              level: "minor",
+              objectIds: [],
+              orderIndex: 2,
+              parentId: "node_alpha",
+              projectId: "project_alpha",
+              text: "A node-only sync must not invent an episode modified timestamp.",
+              updatedAt: "2026-04-15T00:10:00.000Z"
+            }
+          }
+        ] satisfies CloudSyncOperation[]
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+    const nodeOnlySnapshot = nodeOnlySyncResponse.json().snapshot as StoryWorkspaceSnapshot;
+
+    expect(nodeOnlySyncResponse.statusCode).toBe(200);
+    expect(nodeOnlySnapshot.episodes[0]?.updatedAt).toBe(initialEpisodeUpdatedAt);
+
+    const episodeSyncResponse = await app.inject({
+      method: "POST",
+      payload: {
+        operations: [
+          {
+            action: "upsert",
+            kind: "episode",
+            payload: {
+              ...nodeOnlySnapshot.episodes[0]!,
+              title: "Episode 12 revised",
+              updatedAt: touchedEpisodeUpdatedAt
+            }
+          }
+        ] satisfies CloudSyncOperation[]
+      } satisfies SyncProjectRequest,
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha/sync"
+    });
+    const getResponse = await app.inject({
+      method: "GET",
+      url: "/api/persistence/accounts/demo-account/projects/project_alpha"
+    });
+    const episodeSyncedSnapshot = episodeSyncResponse.json().snapshot as StoryWorkspaceSnapshot;
+    const persistedSnapshot = getResponse.json().snapshot as StoryWorkspaceSnapshot;
+
+    expect(episodeSyncResponse.statusCode).toBe(200);
+    expect(getResponse.statusCode).toBe(200);
+    expect(episodeSyncedSnapshot.episodes[0]?.updatedAt).toBe(touchedEpisodeUpdatedAt);
+    expect(persistedSnapshot.episodes[0]?.updatedAt).toBe(touchedEpisodeUpdatedAt);
+
+    await app.close();
+  });
+
   it("applies ordered sync operations and returns canonical project state", async () => {
     const app = buildApp({ cloudDataDir });
     await app.ready();

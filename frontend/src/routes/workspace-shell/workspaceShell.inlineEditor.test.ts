@@ -3,11 +3,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildDisplayedKeywordSuggestions,
+  expandSelectionToObjectTokenBoundaries,
+  getInlineObjectTokenRanges,
   getObjectMentionCreateCandidate,
   getInlineKeywordToken,
   getObjectToken,
+  getObjectTokenDeleteSelection,
+  getSnappedObjectTokenCaret,
+  hasObjectTokenInternalMutation,
   keywordCloudSlotCount,
   removeAdjacentInlineToken,
+  removeAdjacentKeywordTokenAtBoundary,
   removeInlineSelectionWithTokenBoundaries
 } from "./workspaceShell.inlineEditor";
 
@@ -144,5 +150,87 @@ describe("workspaceShell.inlineEditor getObjectMentionCreateCandidate", () => {
       { name: "heroine's mother" }
     ])).toBeNull();
     expect(getObjectMentionCreateCandidate("x".repeat(81), [])).toBeNull();
+  });
+});
+
+describe("workspaceShell.inlineEditor object token atomic editing", () => {
+  it("parses object token ranges separately from keyword tokens", () => {
+    const objectToken = getObjectToken("Heroine's Mother");
+    const keywordToken = getInlineKeywordToken("pressure");
+    const value = `${keywordToken} meets ${objectToken}`;
+
+    expect(getInlineObjectTokenRanges(value)).toEqual([
+      {
+        end: value.length,
+        label: "Heroine's Mother",
+        markerEnd: value.length - 1,
+        markerStart: value.indexOf(objectToken),
+        objectId: null,
+        start: value.indexOf(objectToken)
+      }
+    ]);
+  });
+
+  it("snaps an object-token caret to the requested boundary", () => {
+    const objectToken = getObjectToken("Heroine's Mother");
+    const value = `beat ${objectToken} closes`;
+    const tokenStart = value.indexOf(objectToken);
+    const caretInsideToken = tokenStart + 4;
+
+    expect(getSnappedObjectTokenCaret(value, caretInsideToken, "backward")).toBe(
+      tokenStart
+    );
+    expect(getSnappedObjectTokenCaret(value, caretInsideToken, "forward")).toBe(
+      tokenStart + objectToken.length
+    );
+  });
+
+  it("selects an object token first and deletes it only after the full token is selected", () => {
+    const objectToken = getObjectToken("Heroine's Mother");
+    const value = `beat ${objectToken} closes`;
+    const tokenStart = value.indexOf(objectToken);
+    const tokenEnd = tokenStart + objectToken.length;
+    const firstDelete = getObjectTokenDeleteSelection(value, tokenEnd, "backward");
+
+    expect(firstDelete).toEqual({
+      selectionEnd: tokenEnd,
+      selectionStart: tokenStart
+    });
+
+    const expandedSelection = expandSelectionToObjectTokenBoundaries(
+      value,
+      tokenStart + 2,
+      tokenStart + 8
+    );
+
+    expect(expandedSelection).toEqual({
+      selectionEnd: tokenEnd,
+      selectionStart: tokenStart
+    });
+  });
+
+  it("detects object token label or marker damage but allows keyword label edits", () => {
+    const objectToken = getObjectToken("Heroine's Mother");
+    const keywordToken = getInlineKeywordToken("pressure");
+
+    expect(
+      hasObjectTokenInternalMutation(
+        `beat ${objectToken}`,
+        `beat ${getObjectToken("Heroine's Motheer")}`
+      )
+    ).toBe(true);
+    expect(
+      hasObjectTokenInternalMutation(
+        `beat ${objectToken}`,
+        "beat Heroine's Mother"
+      )
+    ).toBe(true);
+    expect(
+      removeAdjacentKeywordTokenAtBoundary(
+        `beat ${keywordToken}`,
+        `beat ${keywordToken}`.length - 1,
+        "backward"
+      )
+    ).toBeNull();
   });
 });
