@@ -1,0 +1,374 @@
+.marketing-page {
+  --marketing-blue: #17324a;
+  --marketing-blue-soft: #224b63;
+  --marketing-teal: #126965;
+  --marketing-gold: #9c5718;
+  --ink: #16232b;
+  background: #f7f4ec;
+  color: var(--ink);
+  display: grid;
+  gap: 2.5rem;
+  min-height: 100vh;
+  padding: 1.35rem 1rem 4rem;
+}
+
+.marketing-page a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.marketing-nav,
+.marketing-hero,
+.compact-section,
+.final-cta {
+  margin: 0 auto;
+  max-width: 72rem;
+  width: 100%;
+}
+
+.marketing-nav {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 0.1rem 0;
+}
+
+.marketing-brand {
+  align-items: center;
+  color: var(--marketing-blue);
+  display: inline-flex;
+  font-size: 1.12rem;
+  font-weight: 900;
+  gap: 0.48rem;
+}
+
+.marketing-brand svg {
+  display: block;
+  height: 1.75rem;
+  width: 1.75rem;
+}
+
+.marketing-nav-cta,
+.button-link {
+  align-items: center;
+  border: 1px solid rgba(36, 59, 83, 0.16);
+  border-radius: 999px;
+  display: inline-flex;
+  font-weight: 850;
+  justify-content: center;
+  line-height: 1.2;
+  min-height: 2.75rem;
+  padding: 0.78rem 1.05rem;
+  text-align: center;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+  white-space: normal;
+}
+
+.marketing-nav-cta {
+  background: #eaf2ee;
+  border-color: #b7cbc4;
+}
+
+.marketing-page .marketing-nav-cta {
+  color: #163f3d;
+}
+
+.marketing-page .button-link:hover,
+.marketing-page .marketing-nav-cta:hover {
+  transform: translateY(-1px);
+}
+
+.marketing-page .button-link-primary {
+  background: var(--marketing-blue-soft);
+  border-color: var(--marketing-blue-soft);
+  color: #fffdf8;
+}
+
+.marketing-hero {
+  align-items: center;
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: minmax(30rem, 1fr) minmax(25rem, 0.86fr);
+  padding: 3rem 0 0.25rem;
+}
+
+.marketing-hero-copy {
+  display: grid;
+  gap: 1.05rem;
+  min-width: 0;
+}
+
+.eyebrow {
+  color: var(--marketing-teal);
+  font-size: 0.78rem;
+  font-weight: 900;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.marketing-hero h1 {
+  color: var(--marketing-blue);
+  font-size: clamp(2rem, 2.2vw, 2.3rem);
+  line-height: 1.08;
+  margin: 0;
+  max-width: none;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.keyword-cloud-word {
+  color: #25a5ee;
+  display: inline-block;
+  font-weight: 900;
+  text-shadow: 0 0 1.1rem rgba(37, 165, 238, 0.26);
+}
+
+.hero-lede,
+.compact-card p,
+.usage-row p {
+  color: rgba(22, 35, 43, 0.74);
+  font-size: 1.04rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.hero-lede {
+  max-width: 34rem;
+}
+
+.marketing-actions {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding-top: 0.4rem;
+}
+
+.canvas-preview {
+  background: transparent;
+  border: 0;
+  border-radius: 1.35rem;
+  box-shadow: none;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.canvas-preview-graphic {
+  display: block;
+  filter: drop-shadow(0 1.2rem 2.4rem rgba(22, 35, 43, 0.06));
+  height: auto;
+  width: 100%;
+}
+
+.canvas-preview-viewport {
+  fill: #fffaf0;
+  stroke: rgba(22, 35, 43, 0.08);
+  stroke-width: 2;
+}
+
+.canvas-preview-lane-divider {
+  stroke: rgba(16, 19, 22, 0.72);
+  stroke-dasharray: 9 9;
+  stroke-width: 2;
+}
+
+.canvas-preview-lane-pill {
+  fill: rgba(255, 255, 251, 0.92);
+  stroke: rgba(22, 35, 43, 0.1);
+  stroke-width: 2;
+}
+
+.canvas-preview-lane-text {
+  fill: #16232b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.canvas-preview-divider-dot,
+.canvas-preview-timeline-dot,
+.canvas-preview-timeline-arrow {
+  fill: #101214;
+}
+
+.canvas-preview-timeline {
+  stroke: #101214;
+  stroke-linecap: round;
+  stroke-width: 15;
+}
+
+.canvas-preview-timeline-end {
+  stroke: #101214;
+  stroke-linecap: round;
+  stroke-width: 14;
+}
+
+.canvas-preview-link {
+  fill: none;
+  stroke: rgba(16, 19, 22, 0.94);
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+#preview-arrowhead path,
+.canvas-preview-graphic marker path {
+  fill: rgba(16, 19, 22, 0.94);
+}
+
+.canvas-preview-node {
+  fill: #ffffff;
+  stroke: #16323b;
+  stroke-width: 2;
+}
+
+.compact-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.section-heading {
+  display: grid;
+  gap: 0.45rem;
+  max-width: 36rem;
+}
+
+.section-heading h2,
+.compact-card h3,
+.usage-row h3,
+.final-cta h2 {
+  color: var(--marketing-blue);
+  line-height: 1.18;
+  margin: 0;
+}
+
+.section-heading h2 {
+  font-size: 1.85rem;
+}
+
+.compact-card-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.compact-card {
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(36, 59, 83, 0.1);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.05rem;
+}
+
+.compact-card h3 {
+  font-size: 1.08rem;
+}
+
+.usage-list {
+  border-top: 1px solid rgba(36, 59, 83, 0.14);
+  display: grid;
+}
+
+.usage-row {
+  align-items: start;
+  border-bottom: 1px solid rgba(36, 59, 83, 0.14);
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  padding: 1.05rem 0;
+}
+
+.usage-row > span {
+  color: var(--marketing-gold);
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.usage-row div {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.usage-row h3 {
+  font-size: 1.08rem;
+}
+
+.final-cta {
+  align-items: center;
+  background: #1d4053;
+  border: 1px solid rgba(36, 59, 83, 0.12);
+  border-radius: 8px;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 1.2rem;
+}
+
+.final-cta h2 {
+  color: #fffdf8;
+  font-size: 1.45rem;
+  max-width: none;
+}
+
+.marketing-page .final-cta .button-link {
+  background: #fffdf8;
+  border-color: #fffdf8;
+  color: var(--marketing-blue);
+  justify-self: end;
+}
+
+@media (max-width: 900px) {
+  .marketing-page {
+    gap: 2rem;
+    padding: 1rem 0.9rem 3rem;
+  }
+
+  .marketing-hero {
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 2rem;
+  }
+
+  .marketing-hero h1 {
+    font-size: 2.7rem;
+    max-width: none;
+    white-space: normal;
+  }
+
+  .compact-card-grid,
+  .final-cta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .final-cta .button-link {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 640px) {
+  .marketing-nav {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .marketing-actions {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .button-link {
+    flex: 1 1 100%;
+  }
+
+  .marketing-hero h1 {
+    font-size: 2.2rem;
+  }
+
+  .usage-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

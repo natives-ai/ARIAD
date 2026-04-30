@@ -1259,3 +1259,103 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Same-folder episodes now share object-library visibility and can reuse shared objects in inline node mentions without creating duplicate same-name episode-local objects. Typecheck, targeted WorkspaceShell tests, full frontend tests, production build, standalone generation, and diff whitespace checks passed.
 - Warnings / blockers: `corepack yarn lint` still fails on the known repository baseline: React effect-state findings in `WorkspaceShell.tsx` and Node globals not configured for root `scripts/*.mjs`.
 - Approval needed: `none`
+
+### 2026-04-29 / loop-194
+- Active milestone: Marketing entry routes
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/AppRoutes.tsx`, `frontend/src/AppRoutes.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Connected the existing ARIAD landing and explanation pages into the frontend route table. `/` and `/service.html` now render the landing page, `/explanation` renders the product explanation page, and `/workspace` opens the existing workspace shell. Added responsive marketing-page styles for the landing, explanation, preview board, proof cards, workflow cards, structure table, and CTAs.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); `corepack yarn --cwd frontend run -T vitest run src/AppRoutes.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); changed-file frontend ESLint for `AppRoutes` files (pass); `git diff --check` (pass, line-ending warnings only).
+- Result: The current local app has a visible landing page, an explanation page, and a separate workspace route without changing backend behavior.
+- Warnings / blockers: Windows sandbox still blocks Vite/Vitest config loading with `spawn EPERM`; approved outside-sandbox reruns were required. Marketing copy remains the existing English page copy and can be refined separately.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-195
+- Active milestone: Marketing readability pass
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/LandingPage.tsx`, `frontend/src/routes/ExplanationPage.tsx`, `frontend/src/AppRoutes.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Reworked the landing and explanation pages for higher readability and lower information density. The landing page now focuses on one clear value statement, two actions, a compact canvas preview, and three short value rows. The explanation page now uses a concise header, three workflow steps, a short node-type table, and one CTA. Removed the earlier verbose marketing sections from the rendered pages and cleaned the duplicate marketing CSS block.
+- Tests run: `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for route/page files (pass); `corepack yarn --cwd frontend run -T vitest run src/AppRoutes.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); `git diff --check` (pass, line-ending warnings only); local HTTP smoke for `/`, `/explanation`, and `/workspace` (all 200).
+- Result: Marketing entry pages are shorter, quieter, and easier to scan while preserving the workspace route and product meaning.
+- Warnings / blockers: Windows sandbox still blocks Vitest/Vite config loading with `spawn EPERM`; approved outside-sandbox reruns were required.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-196
+- Active milestone: Marketing color accessibility pass
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/styles.css`, `PLANS.md`
+- What changed: Visually inspected the landing and explanation pages in the in-app browser and corrected the low-contrast CTA issue caused by `.marketing-page a { color: inherit; }` overriding button link colors. Added higher-specificity marketing CTA color rules, softened the primary navy button background, made primary button text explicitly white, and separated nav CTA colors with a pale background plus dark teal text.
+- Tests run: browser visual smoke for `/` and `/explanation` (pass); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for route/page files (pass); `corepack yarn --cwd frontend run -T vitest run src/AppRoutes.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `git diff --check` (pass, line-ending warnings only); local HTTP smoke for `/` and `/explanation` (both 200).
+- Result: Dark CTA areas now use visible light text, and pale CTA areas use stronger dark teal/navy text for safer readability.
+- Warnings / blockers: Windows sandbox still blocks Vitest/Vite config loading with `spawn EPERM`; approved outside-sandbox reruns were required.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-197
+- Active milestone: Single-page marketing merge
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/LandingPage.tsx`, `frontend/src/routes/ExplanationPage.tsx`, `frontend/src/AppRoutes.tsx`, `frontend/src/AppRoutes.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Merged the explanation content into the landing page and removed the separate explanation page component. The landing page now contains the selected three strengths, three sentence-style usage notes for lanes, keyword clouds, and objects, plus a text-free SVG canvas preview that shows lane structure, timeline, blank nodes, and relationship lines. `/explanation` remains a legacy alias to the merged landing page so old links do not render a blank route.
+- Tests run: browser visual smoke for `/` (pass); local HTTP smoke for `/explanation` (200); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for route/page files (pass); `corepack yarn --cwd frontend run -T vitest run src/AppRoutes.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: The product entry experience is now one compact page with direct workspace access and no separate explanation screen.
+- Warnings / blockers: Windows sandbox still blocks Vitest/Vite config loading with `spawn EPERM`; approved outside-sandbox reruns were required.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-198
+- Active milestone: Brand and real-canvas preview alignment
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/assets/ariad-logo.svg`, `frontend/src/routes/LandingPage.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Replaced the generic landing canvas illustration with a preview that follows the actual workspace canvas language: cream canvas surface, pill lane labels, dashed lane dividers, black major timeline with end arrow, blank rounded node cards, black connection lines, arrowheads, and connection ports. Added a vector ARIAD logo asset inspired by the user's Ariadne-thread direction: a fountain pen nib with a thread-shaped negative-space cutout, then placed it in the landing header.
+- Tests run: local Playwright visual smoke for `/` (pass); `corepack yarn --cwd frontend run -T tsc -p tsconfig.app.json --noEmit` (pass); changed-file frontend ESLint for route/page files (pass); `corepack yarn --cwd frontend run -T vitest run src/AppRoutes.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: The landing preview now reads as a miniature version of the real ARIAD workspace, and the page has an initial pen-nib/thread logo direction.
+- Warnings / blockers: The in-app browser screenshot API timed out during visual capture, so local Playwright was used for visual verification. Windows sandbox still blocks Vitest/Vite config loading with `spawn EPERM`; approved outside-sandbox reruns were required.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-199
+- Active milestone: Landing brand refinement
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/assets/ariad-logo.svg`, `frontend/src/routes/LandingPage.tsx`, `frontend/src/AppRoutes.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Refined the landing page after visual review. The hero now uses `Your story is just one clue away`, with `clue` styled in the blue keyword-cloud treatment. The canvas preview was adjusted closer to the actual workspace canvas chrome, lane labels, dashed dividers, timeline, blank node cards, ports, and connection lines, with detail nodes lowered so lane labels stay readable. The logo silhouette was made more angular and pen-nib/bishop-like, with the diagonal thread cutout preserved. Long headings and CTA copy were shortened so desktop rendering keeps the intended one-line phrases.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend test src/AppRoutes.test.tsx` (outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); changed-file ESLint for `LandingPage`, `AppRoutes`, and `AppRoutes.test` (pass); `git diff --check` (pass, line-ending warnings only); local Playwright visual verification for `/` at 1440x900 (pass: hero, usage title, and CTA title render as one line, `clue` renders in keyword-cloud blue).
+- Result: The landing page now presents the accepted clue-based brand line, a more recognizable pen-nib/thread mark, and a canvas example that reads closer to the live ARIAD workspace.
+- Warnings / blockers: Full `@scenaairo/frontend` Vitest still fails in existing `src/persistence/controller.reorder.test.ts` assumptions unrelated to this landing change; targeted route tests pass. Full frontend ESLint still fails in existing `AuthCallbackPage.tsx` `react-hooks/set-state-in-effect`, while changed-file ESLint passes. Windows sandbox continues to block Vite/Vitest/Playwright child processes with `spawn EPERM`, so affected checks were rerun outside sandbox.
+- Approval needed: `none`
+
+### 2026-04-29 / loop-200
+- Active milestone: Final landing preview correction
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/assets/ariad-logo.svg`, `frontend/src/routes/LandingPage.tsx`, `PLANS.md`
+- What changed: Corrected the brand mark cutout so the bishop-like wavy slit stops around the middle of the pen-nib silhouette instead of crossing toward the opposite edge. Rebuilt the landing canvas preview coordinates from the real workspace canvas constants: major nodes are centered on the major-lane timeline, the timeline is centered within the major lane, lane labels have clear vertical separation from nodes, and connection port dots were removed from the example image.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend test src/AppRoutes.test.tsx` (outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); changed-file ESLint for `LandingPage`, `AppRoutes`, and `AppRoutes.test` (pass); `git diff --check` (pass, line-ending warnings only); local Playwright visual verification for `/` (pass: major node centers equal timeline X, lane label/node overlaps 0, connection port count 0).
+- Result: The landing example now works as a faithful usage reference instead of a loose diagram, and the logo cutout follows the requested mid-depth bishop-slit direction.
+- Warnings / blockers: Windows sandbox still blocks Vite/Vitest/Playwright child processes with `spawn EPERM`, so affected checks were rerun outside sandbox.
+- Approval needed: `none`
+
+### 2026-04-30 / loop-201
+- Active milestone: Landing final polish
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/assets/ariad-logo.svg`, `frontend/src/routes/LandingPage.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Refined the logo by widening the pen-nib silhouette and making the wavy thread cutout more visible while stopping near the nib center. Rebuilt the landing canvas preview to show only the canvas interior, removing external canvas chrome such as the `CANVAS` label and zoom controls. Balanced the minor-detail lane spacing so the first detail node has near-equal left/right gaps from lane lines, and pulled the timeline arrow further inside the canvas bounds.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend test src/AppRoutes.test.tsx` (outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); changed-file ESLint for `LandingPage`, `AppRoutes`, and `AppRoutes.test` (pass); `git diff --check` (pass, line-ending warnings only); local Playwright visual verification for `/` (pass: external canvas chrome absent, major nodes centered on timeline, detail left/right gaps 32px/31px, arrow inside viewport).
+- Result: The landing hero now uses a cleaner canvas-only usage image and a broader, more legible ARIAD mark.
+- Warnings / blockers: Windows sandbox still blocks Vite/Vitest/Playwright child processes with `spawn EPERM`, so affected checks were rerun outside sandbox.
+- Approval needed: `none`
+
+### 2026-04-30 / loop-202
+- Active milestone: Single-file landing handoff
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/LandingPage.tsx`, `frontend/src/styles.css`, `frontend/src/assets/ariad-logo.svg`, `PLANS.md`
+- What changed: Converted the landing implementation into a self-contained `LandingPage.tsx` handoff unit by moving the ARIAD logo SVG and landing-specific CSS into the component file. Removed the separate logo asset dependency and restored the global stylesheet to avoid requiring a second file for landing styles. Adjusted the canvas preview timeline ratio by reducing the oversized start/end dots and using a taller, more service-like arrow shape inside the canvas bounds.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend test src/AppRoutes.test.tsx` (outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (outside sandbox pass); changed-file ESLint for `LandingPage`, `AppRoutes`, and `AppRoutes.test` (pass); `git diff --check` (pass, line-ending warnings only); local Playwright visual verification for `/` (pass: inline logo present, external canvas chrome absent, major nodes centered on timeline, detail gaps 32px/31px, start dot radius 7, arrow path inside viewport).
+- Result: A developer can now apply the landing implementation by replacing `frontend/src/routes/LandingPage.tsx` as the single landing source file, while route wiring remains a separate integration concern.
+- Warnings / blockers: Windows sandbox still blocks Vite/Vitest/Playwright child processes with `spawn EPERM`, so affected checks were rerun outside sandbox.
+- Approval needed: `none`
+
+### 2026-04-30 / loop-203
+- Active milestone: Landing folder handoff
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/LandingPage.tsx`, `frontend/src/routes/landing/LandingPage.tsx`, `frontend/src/routes/landing/LandingPage.css`, `frontend/src/routes/landing/components/AriadLogoMark.tsx`, `frontend/src/routes/landing/components/CanvasPreviewGraphic.tsx`, `frontend/src/routes/landing/index.ts`, `PLANS.md`
+- What changed: Reorganized the landing implementation into a folder-level handoff package under `frontend/src/routes/landing/`. The route-facing `frontend/src/routes/LandingPage.tsx` is now a thin compatibility export, while the page component, landing CSS, logo mark, and canvas preview live together in the new folder.
+- Tests run: `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file ESLint for the route wrapper, landing folder, `AppRoutes`, and route tests (pass); `corepack yarn workspace @scenaairo/frontend test src/AppRoutes.test.tsx` (sandbox `spawn EPERM`, rerun outside sandbox pass, 5 tests); `corepack yarn workspace @scenaairo/frontend build` (sandbox `spawn EPERM`, rerun outside sandbox pass); `git diff --check` (pass, line-ending warnings only).
+- Result: The landing work can now be shared as a self-contained `routes/landing/` folder while preserving existing route imports.
+- Warnings / blockers: Windows sandbox still blocks Vite/Vitest child processes with `spawn EPERM`; affected checks were rerun outside sandbox. Existing unrelated dirty files and `artifacts/` remain in the working tree.
+- Approval needed: `none`

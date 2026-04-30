@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AppRoutes } from "./AppRoutes";
 
@@ -9,7 +9,11 @@ describe("frontend routes baseline", () => {
     window.localStorage.clear();
   });
 
-  it("renders the ARIAD landing page", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders the landing page at the root route", () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppRoutes />
@@ -18,20 +22,32 @@ describe("frontend routes baseline", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Lock the next episode structure before the deadline locks you."
+        name: "Your story is just one clue away"
       })
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "See how ARIAD works" })).toHaveAttribute(
-      "href",
-      "/explanation"
-    );
-    expect(screen.getByRole("link", { name: "Start structuring an episode" })).toHaveAttribute(
+    expect(screen.getAllByRole("link", { name: "Open workspace" })[0]).toHaveAttribute(
       "href",
       "/workspace"
     );
+    expect(screen.getByRole("heading", { name: "Why use ARIAD before drafting scenes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Three things before the canvas" })).toBeInTheDocument();
   });
 
-  it("renders the explanation page", () => {
+  it("renders the landing page at the service entry route", () => {
+    render(
+      <MemoryRouter initialEntries={["/service.html"]}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Your story is just one clue away"
+      })
+    ).toBeInTheDocument();
+  });
+
+  it("renders the merged landing page at the legacy explanation route", () => {
     render(
       <MemoryRouter initialEntries={["/explanation"]}>
         <AppRoutes />
@@ -40,10 +56,14 @@ describe("frontend routes baseline", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "ARIAD is a canvas-based structure editor for the episode you need to finish next."
+        name: "Your story is just one clue away"
       })
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Why ARIAD is not just a chat box" })).toBeInTheDocument();
+    expect(screen.getByText("Ask AI through keyword clouds")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Open workspace" })[0]).toHaveAttribute(
+      "href",
+      "/workspace"
+    );
   });
 
   it("renders the workspace shell", async () => {
