@@ -31,6 +31,7 @@ export interface BackendEnv {
   authCallbackPath: string;
   cloudDataDir: string;
   frontendOrigin: string;
+  host: string;
   logLevel: BackendLogLevel;
   logRequests: boolean;
   mysql: MySqlConfig;
@@ -194,6 +195,7 @@ export function loadBackendEnv(): BackendEnv {
     authCallbackPath: process.env.AUTH_CALLBACK_PATH ?? "/auth/callback",
     cloudDataDir: process.env.CLOUD_DATA_DIR ?? ".data",
     frontendOrigin: process.env.FRONTEND_ORIGIN ?? "http://127.0.0.1:5173",
+    host: process.env.BACKEND_HOST ?? "127.0.0.1",
     logLevel: parseBackendLogLevel(process.env.BACKEND_LOG_LEVEL),
     logRequests: parseBoolean(process.env.BACKEND_LOG_REQUESTS, true),
     mysql: parseMySqlConfig(),

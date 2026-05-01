@@ -1,0 +1,101 @@
+# 이 파일은 EC2 단일 호스트에서 ARIAD를 Docker Compose로 실행합니다.
+
+name: ariad
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ariad}
+      MYSQL_USER: ${MYSQL_USER:-ariad}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+    volumes:
+      - ariad_mysql_data:/var/lib/mysql
+      - ./backend/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: staging-like
+      BACKEND_HOST: 0.0.0.0
+      PORT: 3001
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}
+      AUTH_SESSION_COOKIE_NAME: ${AUTH_SESSION_COOKIE_NAME:-scenaairo_session}
+      AUTH_SESSION_TTL_SECONDS: ${AUTH_SESSION_TTL_SECONDS:-2592000}
+      AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-lax}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      CLOUD_DATA_DIR: /app/.data
+      BACKEND_LOG_LEVEL: ${BACKEND_LOG_LEVEL:-info}
+      BACKEND_LOG_REQUESTS: ${BACKEND_LOG_REQUESTS:-true}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      PERSISTENCE_DRIVER: mysql
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ariad}
+      MYSQL_USER: ${MYSQL_USER:-ariad}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_READINESS_TIMEOUT_MS: ${MYSQL_READINESS_TIMEOUT_MS:-3000}
+      RECOMMENDATION_PROVIDER: ${RECOMMENDATION_PROVIDER:-heuristic}
+      RECOMMENDATION_MODEL: ${RECOMMENDATION_MODEL:-gpt-4.1-mini}
+      RECOMMENDATION_FALLBACK_TO_HEURISTIC_ON_ERROR: ${RECOMMENDATION_FALLBACK_TO_HEURISTIC_ON_ERROR:-false}
+      RECOMMENDATION_TIMEOUT_MS: ${RECOMMENDATION_TIMEOUT_MS:-4000}
+      RECOMMENDATION_CACHE_TTL_MS: ${RECOMMENDATION_CACHE_TTL_MS:-30000}
+      RECOMMENDATION_MAX_SUGGESTIONS: ${RECOMMENDATION_MAX_SUGGESTIONS:-18}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RECOMMENDATION_API_KEY: ${RECOMMENDATION_API_KEY:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - "3001"
+    volumes:
+      - ariad_backend_data:/app/.data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_APP_ENV: staging-like
+        VITE_API_BASE_URL: /api
+        VITE_AUTH_CALLBACK_PATH: /auth/callback
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+        VITE_STORAGE_PREFIX: ${VITE_STORAGE_PREFIX:-ARIAD}
+    restart: unless-stopped
+    environment:
+      ARIAD_FRONTEND_HOST: 0.0.0.0
+      ARIAD_FRONTEND_PORT: 5173
+      ARIAD_BACKEND_HOST: backend
+      ARIAD_BACKEND_PORT: 3001
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${ARIAD_HTTP_PORT:-80}:5173"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173/service.html').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  ariad_backend_data:
+  ariad_mysql_data:

@@ -1,4 +1,4 @@
-// 이 파일은 백엔드 서버 프로세스를 시작하고 시작/실패 로그를 출력합니다.
+// 이 파일은 백엔드 서버 프로세스를 시작하고 실행 로그를 남깁니다.
 
 import { pathToFileURL } from "node:url";
 
@@ -18,7 +18,7 @@ async function startServer() {
 
   logger.info("backend_starting", {
     googleAuthConfigured: env.auth.googleClientId !== null,
-    host: "127.0.0.1",
+    host: env.host,
     logLevel: env.logLevel,
     persistenceDriver: env.persistenceDriver,
     port: env.port,
@@ -34,12 +34,12 @@ async function startServer() {
 
   try {
     await app.listen({
-      host: "127.0.0.1",
+      host: env.host,
       port: env.port
     });
     logger.info("backend_listening", {
       persistenceDriver: env.persistenceDriver,
-      url: `http://127.0.0.1:${env.port}`
+      url: `http://${env.host}:${env.port}`
     });
   } catch (error) {
     if (error instanceof Error) {
@@ -58,9 +58,7 @@ async function startServer() {
 }
 
 const entryPath = process.argv[1];
-const isMain = entryPath
-  ? import.meta.url === pathToFileURL(entryPath).href
-  : false;
+const isMain = entryPath ? import.meta.url === pathToFileURL(entryPath).href : false;
 
 if (isMain) {
   void startServer();
