@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 
-const forceCompat = process.env.SCENAAIRO_FORCE_COMPAT === "1";
+const forceCompat = process.env.ARIAD_FORCE_COMPAT === "1";
 const startupWindowMs = 4000;
 
 // 자식 프로세스 출력을 현재 프로세스로 복사합니다.
@@ -163,13 +163,13 @@ function getCompatEnv(frontendArgs) {
     const next = frontendArgs[index + 1];
 
     if ((current === "--host" || current === "-H") && next) {
-      env.SCENAAIRO_FRONTEND_HOST = next;
+      env.ARIAD_FRONTEND_HOST = next;
       index += 1;
       continue;
     }
 
     if ((current === "--port" || current === "-p") && next) {
-      env.SCENAAIRO_FRONTEND_PORT = next;
+      env.ARIAD_FRONTEND_PORT = next;
       index += 1;
     }
   }
@@ -211,7 +211,7 @@ async function runCompatFrontend(compatEnv) {
 
   if (existsSync(distEntry)) {
     process.stderr.write(
-      "[SCENAAIRO] Frontend dev server hit a spawn restriction. Serving built dist in-process.\n"
+      "[ARIAD] Frontend dev server hit a spawn restriction. Falling back to the built dist server.\n"
     );
 
     const { startDistServer } = await import("../frontend/scripts/serve-dist.mjs");
@@ -220,7 +220,7 @@ async function runCompatFrontend(compatEnv) {
   }
 
   process.stderr.write(
-    "[SCENAAIRO] Frontend dev server hit a spawn restriction. Serving standalone bundle in-process.\n"
+    "[ARIAD] Frontend dev server hit a spawn restriction. Falling back to the standalone bundle server.\n"
   );
 
   const { startStandaloneServer } = await import("./serve-standalone.mjs");

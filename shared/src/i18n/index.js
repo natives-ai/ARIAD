@@ -14,7 +14,7 @@ export const englishCopy = {
         drawer: "Temporary Drawer",
         navigation: "Story / Episode List",
         objects: "Object Library",
-        title: "SCENAAIRO Workspace"
+        title: "ARIAD Workspace"
     }
 };
 //# sourceMappingURL=index.js.map

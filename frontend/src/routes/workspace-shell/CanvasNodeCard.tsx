@@ -18,6 +18,8 @@ import {
   extractInlineKeywords,
   expandSelectionToObjectTokenBoundaries,
   getInlineKeywordTokenRanges,
+  getKeywordLineBreakInsertion,
+  getKeywordTokenDeleteSelection,
   getKeywordTokenUnwrapCandidate,
   getObjectTokenDeleteSelection,
   getProtectedKeywordMarkerCaret,
@@ -26,6 +28,7 @@ import {
   keywordCloudSlotCount,
   normalizeInlineKeywordTokens,
   normalizeInlineObjectMentions,
+  removeSelectedKeywordToken,
   removeSelectedObjectToken,
   renderTextWithObjectMentions,
   type ObjectMentionCreateCandidate
@@ -223,8 +226,13 @@ export function CanvasNodeCard({
   const [activeKeywordTokenStart, setActiveKeywordTokenStart] = useState<number | null>(
     null
   );
+  const [pendingKeywordDeleteTokenStart, setPendingKeywordDeleteTokenStart] =
+    useState<number | null>(null);
   const [pendingKeywordUnwrapTokenStart, setPendingKeywordUnwrapTokenStart] =
     useState<number | null>(null);
+  const [pendingObjectDeleteTokenStart, setPendingObjectDeleteTokenStart] =
+    useState<number | null>(null);
+  const keyboardKeywordEditTokenStartRef = useRef<number | null>(null);
 
   // 키워드 라벨 안의 커서/선택 상태를 편집 표시로 동기화합니다.
   function syncKeywordEditModeFromInput(
@@ -240,19 +248,66 @@ export function CanvasNodeCard({
       const labelEnd = range.markerEnd;
 
       if (rangeStart === rangeEnd) {
-        return rangeStart >= labelStart && rangeStart <= labelEnd;
+        const isInsideLabel = rangeStart > labelStart && rangeStart < labelEnd;
+        const isKeyboardBoundaryEntry =
+          keyboardKeywordEditTokenStartRef.current === range.start &&
+          (rangeStart === labelStart || rangeStart === labelEnd);
+
+        return isInsideLabel || isKeyboardBoundaryEntry;
       }
 
       return rangeStart <= labelEnd && rangeEnd >= labelStart;
     });
+
+    if (
+      rangeStart !== rangeEnd ||
+      !activeRange ||
+      (rangeStart !== activeRange.markerStart + 1 && rangeStart !== activeRange.markerEnd)
+    ) {
+      keyboardKeywordEditTokenStartRef.current = null;
+    }
 
     setActiveKeywordTokenStart(activeRange?.start ?? null);
   }
 
   // 키워드 unwrap 대기 상태를 해제합니다.
   function resetPendingKeywordUnwrap() {
+    keyboardKeywordEditTokenStartRef.current = null;
     pendingKeywordUnwrapRef.current = null;
+    setPendingKeywordDeleteTokenStart(null);
     setPendingKeywordUnwrapTokenStart(null);
+    setPendingObjectDeleteTokenStart(null);
+  }
+
+  // 방향키로 키워드 편집에 들어갈 때 보이는 캐럿 위치를 유지합니다.
+  function getKeywordArrowEditEntry(
+    caretIndex: number,
+    direction: "backward" | "forward"
+  ) {
+    for (const range of getInlineKeywordTokenRanges(inlineNodeTextDraft)) {
+      const labelStart = range.markerStart + 1;
+      const labelEnd = range.markerEnd;
+      const shouldEnterFromFront =
+        direction === "forward" &&
+        (caretIndex === range.start || caretIndex === labelStart);
+      const shouldEnterFromBack =
+        direction === "backward" &&
+        (caretIndex === range.end || caretIndex === labelEnd);
+
+      if (
+        activeKeywordTokenStart === range.start ||
+        (!shouldEnterFromFront && !shouldEnterFromBack)
+      ) {
+        continue;
+      }
+
+      return {
+        nextCaret: shouldEnterFromFront ? labelStart : labelEnd,
+        tokenStart: range.start
+      };
+    }
+
+    return null;
   }
 
   // 키워드 토큰 효과만 제거하고 label은 일반 텍스트로 유지합니다.
@@ -271,6 +326,30 @@ export function CanvasNodeCard({
         candidate.nextCaret
       );
       syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+    });
+  }
+
+  // 키워드 안쪽 Enter 줄바꿈을 토큰 바깥에 삽입합니다.
+  function insertKeywordLineBreak(
+    candidate: NonNullable<ReturnType<typeof getKeywordLineBreakInsertion>>
+  ) {
+    resetPendingKeywordUnwrap();
+    markInlineNodeDraftDirty();
+    setInlineNodeTextDraft(candidate.nextText);
+    setSelectedAiKeywords(extractInlineKeywords(candidate.nextText));
+    syncInlineObjectMentions(node.id, candidate.nextText);
+
+    window.requestAnimationFrame(() => {
+      const input = selectedNodeInputRef.current;
+
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.setSelectionRange(candidate.nextCaret, candidate.nextCaret);
+      syncSelectedNodeInputHeight(node.id, input);
+      syncKeywordEditModeFromInput(input, candidate.nextText);
     });
   }
 
@@ -311,6 +390,9 @@ export function CanvasNodeCard({
 
     input.setSelectionRange(snappedCaret, snappedCaret);
   }
+
+  const hasPendingTokenDelete =
+    pendingKeywordDeleteTokenStart !== null || pendingObjectDeleteTokenStart !== null;
 
   return (
     <article
@@ -435,7 +517,7 @@ export function CanvasNodeCard({
             }}
           >
             <div
-              className={`node-inline-input-shell${isInlineEditing ? " is-editing" : ""}`}
+              className={`node-inline-input-shell${isInlineEditing ? " is-editing" : ""}${hasPendingTokenDelete ? " is-token-delete-pending" : ""}`}
             >
               <div
                 aria-hidden="true"
@@ -446,7 +528,9 @@ export function CanvasNodeCard({
                 {displayText
                   ? renderTextWithObjectMentions(displayText, {
                       activeKeywordTokenStart,
-                      pendingKeywordUnwrapTokenStart
+                      pendingKeywordDeleteTokenStart,
+                      pendingKeywordUnwrapTokenStart,
+                      pendingObjectDeleteTokenStart
                     })
                   : activeKeywords.length === 0
                     ? "Type the beat"
@@ -521,6 +605,28 @@ export function CanvasNodeCard({
                     activeMentionSuggestion?.name ?? activeMentionCreateCandidate?.name ?? null;
 
                   if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    const keywordArrowEditEntry =
+                      selectionStart === selectionEnd
+                        ? getKeywordArrowEditEntry(
+                            selectionStart,
+                            event.key === "ArrowLeft" ? "backward" : "forward"
+                          )
+                        : null;
+
+                    if (keywordArrowEditEntry) {
+                      event.preventDefault();
+                      resetPendingKeywordUnwrap();
+                      keyboardKeywordEditTokenStartRef.current =
+                        keywordArrowEditEntry.tokenStart;
+                      setActiveKeywordTokenStart(keywordArrowEditEntry.tokenStart);
+                      event.currentTarget.setSelectionRange(
+                        keywordArrowEditEntry.nextCaret,
+                        keywordArrowEditEntry.nextCaret
+                      );
+                      updateObjectMentionQueryFromInput(event.currentTarget);
+                      return;
+                    }
+
                     resetPendingKeywordUnwrap();
                     window.requestAnimationFrame(() => {
                       if (!selectedNodeInputRef.current) {
@@ -565,6 +671,32 @@ export function CanvasNodeCard({
                       return;
                     }
 
+                    const removableKeywordToken = removeSelectedKeywordToken(
+                      inlineNodeTextDraft,
+                      selectionStart,
+                      selectionEnd
+                    );
+
+                    if (removableKeywordToken) {
+                      event.preventDefault();
+                      markInlineNodeDraftDirty();
+                      resetPendingKeywordUnwrap();
+                      setActiveKeywordTokenStart(null);
+                      setInlineNodeTextDraft(removableKeywordToken.nextText);
+                      setSelectedAiKeywords(extractInlineKeywords(removableKeywordToken.nextText));
+                      syncInlineObjectMentions(node.id, removableKeywordToken.nextText);
+
+                      window.requestAnimationFrame(() => {
+                        selectedNodeInputRef.current?.focus();
+                        selectedNodeInputRef.current?.setSelectionRange(
+                          removableKeywordToken.nextCaret,
+                          removableKeywordToken.nextCaret
+                        );
+                        syncSelectedNodeInputHeight(node.id, selectedNodeInputRef.current);
+                      });
+                      return;
+                    }
+
                     const expandedObjectSelection = expandSelectionToObjectTokenBoundaries(
                       inlineNodeTextDraft,
                       selectionStart,
@@ -599,10 +731,45 @@ export function CanvasNodeCard({
 
                     if (objectTokenDeleteSelection) {
                       event.preventDefault();
+                      resetPendingKeywordUnwrap();
+                      setActiveKeywordTokenStart(null);
+                      setPendingObjectDeleteTokenStart(
+                        objectTokenDeleteSelection.selectionStart
+                      );
                       event.currentTarget.setSelectionRange(
                         objectTokenDeleteSelection.selectionStart,
                         objectTokenDeleteSelection.selectionEnd
                       );
+                      return;
+                    }
+
+                    const keywordTokenDeleteSelection =
+                      event.key === "Delete"
+                        ? getKeywordTokenDeleteSelection(inlineNodeTextDraft, selectionStart)
+                        : null;
+
+                    if (keywordTokenDeleteSelection) {
+                      event.preventDefault();
+                      resetPendingKeywordUnwrap();
+                      setActiveKeywordTokenStart(null);
+                      setPendingKeywordDeleteTokenStart(
+                        keywordTokenDeleteSelection.selectionStart
+                      );
+                      event.currentTarget.setSelectionRange(
+                        keywordTokenDeleteSelection.selectionStart,
+                        keywordTokenDeleteSelection.selectionEnd
+                      );
+                      return;
+                    }
+
+                    const keywordLineBreakInsertion =
+                      event.key === "Enter"
+                        ? getKeywordLineBreakInsertion(inlineNodeTextDraft, selectionStart)
+                        : null;
+
+                    if (keywordLineBreakInsertion) {
+                      event.preventDefault();
+                      insertKeywordLineBreak(keywordLineBreakInsertion);
                       return;
                     }
 

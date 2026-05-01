@@ -5,11 +5,11 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const frontendHost = process.env.SCENAAIRO_FRONTEND_HOST ?? "127.0.0.1";
-const frontendPort = Number(process.env.SCENAAIRO_FRONTEND_PORT ?? "5173");
+const frontendHost = process.env.ARIAD_FRONTEND_HOST ?? "127.0.0.1";
+const frontendPort = Number(process.env.ARIAD_FRONTEND_PORT ?? "5173");
 const rootDir = process.cwd();
 const standalonePath = join(rootDir, "ARIAD.html");
-const helperPath = join(rootDir, "OPEN-SCENAAIRO.html");
+const helperPath = join(rootDir, "OPEN-ARIAD.html");
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -29,12 +29,10 @@ function sendFile(response, filePath) {
   createReadStream(filePath).pipe(response);
 }
 
-// standalone 서버를 현재 프로세스에서 시작합니다.
-export function startStandaloneServer() {
-  if (!existsSync(standalonePath)) {
-    console.error("[SCENAAIRO] ARIAD.html is missing.");
-    process.exit(1);
-  }
+if (!existsSync(standalonePath)) {
+  console.error("[ARIAD] ARIAD.html is missing.");
+  process.exit(1);
+}
 
   const server = createServer((request, response) => {
     const pathname = new URL(
@@ -71,9 +69,9 @@ export function startStandaloneServer() {
     console.log("[SCENAAIRO] Compatibility mode is serving ARIAD.html.");
   });
 
-  return server;
-}
-
-if (normalize(process.argv[1] ?? "") === normalize(fileURLToPath(import.meta.url))) {
-  startStandaloneServer();
-}
+server.listen(frontendPort, frontendHost, () => {
+  console.log(
+    `[ARIAD] Standalone compatibility server listening on http://${frontendHost}:${frontendPort}`
+  );
+  console.log("[ARIAD] Compatibility mode is serving ARIAD.html.");
+});

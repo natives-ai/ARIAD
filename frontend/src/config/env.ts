@@ -33,6 +33,6 @@ export function loadFrontendEnv(): FrontendEnv {
     googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() || null,
     isGoogleClientIdConfigured: Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim()),
     runtimeMode,
-    storagePrefix: import.meta.env.VITE_STORAGE_PREFIX ?? "scenaairo"
+    storagePrefix: import.meta.env.VITE_STORAGE_PREFIX ?? "ARIAD"
   };
 }

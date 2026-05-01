@@ -43,11 +43,14 @@ export const maxCanvasContentBottom = 2800;
 export const timelineRailWidth = 15;
 export const timelineStartY = 58;
 export const initialTimelineEndY = 450;
+export const timelineMinimumRailSpan = 120;
 export const timelineHandleHeight = 30;
 export const timelineNodeSnapThreshold = 28;
 export const nodeCardWidth = 268;
 export const nodeCardHeight = 102;
 export const nodeVerticalSpacing = 148;
+// 첫 major 노드만 다음 생성 공간을 남기기 위한 타임라인 여유값입니다.
+export const singleMajorTimelineExtraSpace = nodeVerticalSpacing;
 export const laneContentStartY = 56;
 export const canvasBottomPadding = 8;
 export const minimumCanvasHeight = 220;

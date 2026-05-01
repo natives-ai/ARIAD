@@ -2,7 +2,7 @@
 
 ## 0. Meta
 
-- Product: **SCENAAIRO**
+- Product: **ARIAD**
 - Spec stage: **Initial product specification ready for implementation planning**
 - Default product language: **English**
 - Planned future localizations: **Korean, Japanese**
@@ -13,7 +13,7 @@
 
 ## 1. Product goal
 
-SCENAAIRO helps a solo serial webtoon creator reach a usable structure draft for the current episode faster without feeling that the product has taken over authorship.
+ARIAD helps a solo serial webtoon creator reach a usable structure draft for the current episode faster without feeling that the product has taken over authorship.
 
 The product is **not** a full auto-writing system. It is a **canvas-based structure editor with AI-assisted node content support**.
 

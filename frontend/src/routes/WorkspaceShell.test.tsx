@@ -11,6 +11,7 @@ import {
   getInlineKeywordToken,
   getObjectToken
 } from "./workspace-shell/workspaceShell.inlineEditor";
+import { singleMajorTimelineExtraSpace } from "./workspace-shell/workspaceShell.constants";
 
 describe("workspace shell recommendation flow", () => {
   const originalFetch = globalThis.fetch;
@@ -457,6 +458,29 @@ describe("workspace shell recommendation flow", () => {
     const keywordToken = getInlineKeywordToken("pressure spike");
     const tokenStart = inlineInput.value.indexOf(keywordToken);
 
+    inlineInput.setSelectionRange(tokenStart + 1, tokenStart + 1);
+    fireEvent.select(inlineInput);
+
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("pressure spike", {
+          selector: ".node-inline-keyword"
+        })
+      ).not.toHaveClass("is-keyword-editing");
+    });
+
+    fireEvent.keyDown(inlineInput, { key: "ArrowRight" });
+    fireEvent.keyUp(inlineInput, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      const keywordPreview = within(selectedNodeCard).getByText("pressure spike", {
+        selector: ".node-inline-keyword"
+      });
+
+      expect(inlineInput.selectionStart).toBe(tokenStart + 1);
+      expect(keywordPreview).toHaveClass("is-keyword-editing");
+    });
+
     inlineInput.setSelectionRange(tokenStart + 2, tokenStart + 2);
     fireEvent.select(inlineInput);
 
@@ -468,6 +492,127 @@ describe("workspace shell recommendation flow", () => {
       expect(keywordPreview).toHaveClass("is-keyword-editing");
       expect(keywordPreview).not.toHaveClass("is-keyword-unwrap-pending");
     });
+  });
+
+  it("keeps keyword styling when Enter is pressed at the keyword front boundary", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "pressure spike", reason: "Sharpens the turn." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "pressure spike" }));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+    const keywordToken = getInlineKeywordToken("pressure spike");
+    const tokenStart = inlineInput.value.indexOf(keywordToken);
+
+    inlineInput.setSelectionRange(tokenStart + 1, tokenStart + 1);
+    fireEvent.keyDown(inlineInput, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(inlineInput.value).toBe(`\n${keywordToken}`);
+    });
+    expect(
+      within(selectedNodeCard).getByText("pressure spike", {
+        selector: ".node-inline-keyword"
+      })
+    ).toBeInTheDocument();
+  });
+
+  it("selects then deletes the whole keyword when Delete is pressed at the front boundary", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.endsWith("/recommendation/keywords")) {
+        return new Response(
+          JSON.stringify({
+            suggestions: [{ label: "pressure spike", reason: "Sharpens the turn." }]
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json"
+            },
+            status: 200
+          }
+        );
+      }
+
+      return new Response(JSON.stringify({ message: "not_found" }), {
+        headers: {
+          "Content-Type": "application/json"
+        },
+        status: 404
+      });
+    }) as typeof fetch;
+
+    const user = userEvent.setup();
+
+    render(<WorkspaceShell />);
+
+    await createEmptyMajorNode(user);
+    await openSelectedNodeMenu(user);
+    await user.click(await screen.findByRole("button", { name: "Keyword Suggestions" }));
+    await user.click(await screen.findByRole("button", { name: "pressure spike" }));
+
+    const selectedNodeCard = await getSelectedNodeCard();
+    const inlineInput = within(selectedNodeCard).getByRole("textbox") as HTMLTextAreaElement;
+    const keywordToken = getInlineKeywordToken("pressure spike");
+    const tokenStart = inlineInput.value.indexOf(keywordToken);
+    const tokenEnd = tokenStart + keywordToken.length;
+
+    inlineInput.setSelectionRange(tokenStart + 1, tokenStart + 1);
+    fireEvent.keyDown(inlineInput, { key: "Delete" });
+
+    expect(inlineInput.selectionStart).toBe(tokenStart);
+    expect(inlineInput.selectionEnd).toBe(tokenEnd);
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("pressure spike", {
+          selector: ".node-inline-keyword"
+        })
+      ).toHaveClass("is-keyword-delete-pending");
+    });
+
+    fireEvent.keyDown(inlineInput, { key: "Delete" });
+
+    await waitFor(() => {
+      expect(inlineInput.value).not.toContain(keywordToken);
+    });
+    expect(
+      within(selectedNodeCard).queryByText("pressure spike", {
+        selector: ".node-inline-keyword"
+      })
+    ).not.toBeInTheDocument();
   });
 
   it("keeps object detail editing available while the canvas is fullscreen", async () => {
@@ -1647,6 +1792,13 @@ describe("workspace shell recommendation flow", () => {
     expect(inlineInput).toHaveValue(stableValue);
     expect(inlineInput.selectionStart).toBe(tokenStart);
     expect(inlineInput.selectionEnd).toBe(tokenEnd);
+    await waitFor(() => {
+      expect(
+        within(selectedNodeCard).getByText("Heroine's Mother", {
+          selector: ".node-object-mention"
+        })
+      ).toHaveClass("is-object-delete-pending");
+    });
 
     fireEvent.keyDown(inlineInput, {
       key: "Backspace"
@@ -2696,7 +2848,11 @@ describe("workspace shell recommendation flow", () => {
       const restoredTargetNode = screen.getByTestId(targetTestId);
       const restoredTargetMetrics = getNodeCardMetrics(restoredTargetNode);
 
-      expect(restoredTimelineEndY).toBeCloseTo(customCanvasUiState.timelineEndY, 2);
+      expect(restoredTimelineEndY).toBeCloseTo(
+        restoredTargetMetrics.top + restoredTargetMetrics.height,
+        2
+      );
+      expect(restoredTimelineEndY).toBeLessThan(customCanvasUiState.timelineEndY);
       expect(
         Math.abs(restoredSecondDividerLeft - customCanvasUiState.laneDividerXs.second)
       ).toBeLessThanOrEqual(40);
@@ -3056,7 +3212,7 @@ describe("workspace shell recommendation flow", () => {
     expect(restoredAfterRedoNode.style.width).toBe("316px");
   });
 
-  it("keeps the first recreated major node at default size and preserves timeline minimum", async () => {
+  it("keeps the first recreated major node default-sized with only a first-node timeline buffer", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ message: "not_found" }), {
         headers: {
@@ -3103,8 +3259,8 @@ describe("workspace shell recommendation flow", () => {
       expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 0");
     });
 
-    const minimumTimeline = getTimelineSpan();
-    expect(minimumTimeline.endTop).toBeCloseTo(initialTimeline.endTop, 1);
+    const emptyTimeline = getTimelineSpan();
+    expect(emptyTimeline.endTop).toBeLessThan(initialTimeline.endTop);
 
     await user.click(screen.getByRole("button", { name: "Create Node" }));
     await user.click(screen.getByTestId("lane-major"));
@@ -3117,10 +3273,34 @@ describe("workspace shell recommendation flow", () => {
       ".node-card"
     ) as HTMLElement;
     const recreatedTimeline = getTimelineSpan();
+    const recreatedMetrics = getNodeCardMetrics(recreatedMajorNode);
 
     expect(recreatedMajorNode.style.height).toBe("102px");
-    expect(recreatedTimeline.span).toBeGreaterThan(parseCssPixels(recreatedMajorNode.style.height));
-    expect(recreatedTimeline.endTop).toBeCloseTo(minimumTimeline.endTop, 1);
+    expect(recreatedTimeline.span).toBeGreaterThan(recreatedMetrics.height);
+    expect(recreatedTimeline.endTop).toBeCloseTo(
+      recreatedMetrics.top + recreatedMetrics.height + singleMajorTimelineExtraSpace,
+      1
+    );
+
+    await createEmptyMajorNode(user);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("node-count")).toHaveTextContent("Nodes: 2");
+    });
+
+    const endMajorNode = document.querySelector(".node-card-level-major.is-end-node");
+
+    if (!(endMajorNode instanceof HTMLElement)) {
+      throw new Error("second_major_end_node_not_found");
+    }
+
+    const endMajorMetrics = getNodeCardMetrics(endMajorNode);
+    const secondTimeline = getTimelineSpan();
+
+    expect(secondTimeline.endTop).toBeCloseTo(
+      endMajorMetrics.top + endMajorMetrics.height,
+      1
+    );
   });
 
   it("disables timeline-end drag when start and end are the same major node", async () => {

@@ -6,10 +6,10 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const frontendHost = process.env.SCENAAIRO_FRONTEND_HOST ?? "127.0.0.1";
-const frontendPort = Number(process.env.SCENAAIRO_FRONTEND_PORT ?? "5173");
-const backendHost = process.env.SCENAAIRO_BACKEND_HOST ?? "127.0.0.1";
-const backendPort = Number(process.env.SCENAAIRO_BACKEND_PORT ?? "3001");
+const frontendHost = process.env.ARIAD_FRONTEND_HOST ?? "127.0.0.1";
+const frontendPort = Number(process.env.ARIAD_FRONTEND_PORT ?? "5173");
+const backendHost = process.env.ARIAD_BACKEND_HOST ?? "127.0.0.1";
+const backendPort = Number(process.env.ARIAD_BACKEND_PORT ?? "3001");
 
 const frontendRoot = fileURLToPath(new URL("..", import.meta.url));
 const distRoot = join(frontendRoot, "dist");
@@ -110,6 +110,16 @@ function serveStaticFile(clientRequest, clientResponse) {
   createReadStream(filePath).pipe(clientResponse);
 }
 
+if (!existsSync(join(distRoot, "service.html"))) {
+  console.error("[ARIAD] frontend/dist/service.html is missing.");
+  console.error("[ARIAD] Run `yarn build` before starting the dist server.");
+  process.exit(1);
+}
+
+const server = createServer((clientRequest, clientResponse) => {
+  if ((clientRequest.url ?? "").startsWith("/api")) {
+    proxyApiRequest(clientRequest, clientResponse);
+    return;
 // dist 서버를 현재 프로세스에서 시작합니다.
 export function startDistServer() {
   if (!existsSync(join(distRoot, "service.html"))) {
@@ -127,6 +137,14 @@ export function startDistServer() {
     serveStaticFile(clientRequest, clientResponse);
   });
 
+server.listen(frontendPort, frontendHost, () => {
+  console.log(
+    `[ARIAD] Dist server listening on http://${frontendHost}:${frontendPort}`
+  );
+  console.log(
+    `[ARIAD] Proxying /api to http://${backendHost}:${backendPort}`
+  );
+});
   server.listen(frontendPort, frontendHost, () => {
     console.log(
       `[SCENAAIRO] Dist server listening on http://${frontendHost}:${frontendPort}`

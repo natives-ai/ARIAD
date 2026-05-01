@@ -56,10 +56,10 @@ $LauncherLogPath = Join-Path $RuntimeDir "launcher.log"
 $BackendPidPath = Join-Path $RuntimeDir "backend-process.pid"
 $FrontendPidPath = Join-Path $RuntimeDir "frontend-process.pid"
 
-$BackendHost = if ($env:SCENAAIRO_BACKEND_HOST) { $env:SCENAAIRO_BACKEND_HOST } else { "127.0.0.1" }
-$BackendPort = if ($env:SCENAAIRO_BACKEND_PORT) { $env:SCENAAIRO_BACKEND_PORT } else { "3001" }
-$FrontendHost = if ($env:SCENAAIRO_FRONTEND_HOST) { $env:SCENAAIRO_FRONTEND_HOST } else { "127.0.0.1" }
-$FrontendPort = if ($env:SCENAAIRO_FRONTEND_PORT) { $env:SCENAAIRO_FRONTEND_PORT } else { "5173" }
+$BackendHost = if ($env:ARIAD_BACKEND_HOST) { $env:ARIAD_BACKEND_HOST } else { "127.0.0.1" }
+$BackendPort = if ($env:ARIAD_BACKEND_PORT) { $env:ARIAD_BACKEND_PORT } else { "3001" }
+$FrontendHost = if ($env:ARIAD_FRONTEND_HOST) { $env:ARIAD_FRONTEND_HOST } else { "127.0.0.1" }
+$FrontendPort = if ($env:ARIAD_FRONTEND_PORT) { $env:ARIAD_FRONTEND_PORT } else { "5173" }
 $BackendHealthUrl = "http://${BackendHost}:${BackendPort}/api/health"
 $ServiceUrl = "http://${FrontendHost}:${FrontendPort}/service.html"
 $FrontendOrigin = "http://${FrontendHost}:${FrontendPort}"
@@ -124,16 +124,16 @@ function Show-LogTail {
 function Ensure-Build {
   $DistServicePath = Join-Path $Root "frontend\dist\service.html"
 
-  if ((Test-Path $DistServicePath) -and $env:SCENAAIRO_FORCE_BUILD -ne "1") {
+  if ((Test-Path $DistServicePath) -and $env:ARIAD_FORCE_BUILD -ne "1") {
     Write-LauncherLog "Reusing the existing frontend build."
     return
   }
 
-  if ($env:SCENAAIRO_SKIP_BUILD -eq "1") {
-    throw "SCENAAIRO_SKIP_BUILD=1 but frontend/dist/service.html is missing."
+  if ($env:ARIAD_SKIP_BUILD -eq "1") {
+    throw "ARIAD_SKIP_BUILD=1 but frontend/dist/service.html is missing."
   }
 
-  Write-LauncherLog "Building SCENAAIRO..."
+  Write-LauncherLog "Building ARIAD..."
   & yarn.cmd build 2>&1 | Tee-Object -FilePath $BuildLogPath
 
   if ($LASTEXITCODE -ne 0) {
@@ -161,7 +161,7 @@ function Start-LoggedCommand {
   return $Process
 }
 
-Write-LauncherLog "SCENAAIRO local launcher starting..."
+Write-LauncherLog "ARIAD local launcher starting..."
 Write-LauncherLog "Root: $Root"
 Write-LauncherLog "Backend health: $BackendHealthUrl"
 Write-LauncherLog "Service URL: $ServiceUrl"
@@ -188,7 +188,7 @@ if (-not (Wait-ForUrl -Url $BackendHealthUrl -Label "backend")) {
 if (Test-UrlReady $ServiceUrl) {
   Write-LauncherLog "Frontend service is already running."
 } else {
-  $FrontendCommand = 'cd /d "{0}" && set "SCENAAIRO_BACKEND_HOST={1}" && set "SCENAAIRO_BACKEND_PORT={2}" && set "SCENAAIRO_FRONTEND_HOST={3}" && set "SCENAAIRO_FRONTEND_PORT={4}" && yarn.cmd node frontend/scripts/serve-dist.mjs >> "{5}" 2>&1' -f $Root, $BackendHost, $BackendPort, $FrontendHost, $FrontendPort, $FrontendLogPath
+  $FrontendCommand = 'cd /d "{0}" && set "ARIAD_BACKEND_HOST={1}" && set "ARIAD_BACKEND_PORT={2}" && set "ARIAD_FRONTEND_HOST={3}" && set "ARIAD_FRONTEND_PORT={4}" && yarn.cmd node frontend/scripts/serve-dist.mjs >> "{5}" 2>&1' -f $Root, $BackendHost, $BackendPort, $FrontendHost, $FrontendPort, $FrontendLogPath
   Start-LoggedCommand -Name "frontend" -CommandLine $FrontendCommand -PidPath $FrontendPidPath | Out-Null
   $StartedFrontend = $true
 }
@@ -198,17 +198,17 @@ if (-not (Wait-ForUrl -Url $ServiceUrl -Label "frontend service")) {
   throw "Frontend service did not become ready. Check $FrontendLogPath"
 }
 
-Write-LauncherLog "SCENAAIRO is ready."
+Write-LauncherLog "ARIAD is ready."
 Write-LauncherLog "Open this URL: $ServiceUrl"
 
-if ($env:SCENAAIRO_NO_BROWSER -eq "1") {
-  Write-LauncherLog "Browser launch skipped because SCENAAIRO_NO_BROWSER=1"
+if ($env:ARIAD_NO_BROWSER -eq "1") {
+  Write-LauncherLog "Browser launch skipped because ARIAD_NO_BROWSER=1"
 } else {
   Write-LauncherLog "Opening the live service in the default browser..."
   Start-Process $ServiceUrl | Out-Null
 }
 
-if ($env:SCENAAIRO_EXIT_ON_READY -eq "1") {
+if ($env:ARIAD_EXIT_ON_READY -eq "1") {
   Write-LauncherLog "Exit-on-ready requested. Launcher will exit now."
   exit 0
 }

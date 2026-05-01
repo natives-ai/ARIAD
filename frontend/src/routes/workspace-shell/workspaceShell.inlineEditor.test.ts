@@ -8,6 +8,8 @@ import {
   getInlineObjectTokenRanges,
   getObjectMentionCreateCandidate,
   getInlineKeywordToken,
+  getKeywordLineBreakInsertion,
+  getKeywordTokenDeleteSelection,
   getKeywordTokenUnwrapCandidate,
   getObjectToken,
   getObjectTokenDeleteSelection,
@@ -18,6 +20,7 @@ import {
   normalizeInlineKeywordTokens,
   removeAdjacentInlineToken,
   removeInlineSelectionWithTokenBoundaries,
+  removeSelectedKeywordToken,
   toggleInlineKeywordToken
 } from "./workspaceShell.inlineEditor";
 
@@ -276,6 +279,40 @@ describe("workspaceShell.inlineEditor keyword token editing", () => {
         "forward"
       )
     ).toBe(tokenStart + keywordToken.length - 1);
+  });
+
+  it("moves Enter line breaks outside keyword token markers", () => {
+    const keywordToken = getInlineKeywordToken("pressure");
+    const value = `beat ${keywordToken} closes`;
+    const tokenStart = value.indexOf(keywordToken);
+    const tokenEnd = tokenStart + keywordToken.length;
+    const beforeKeyword = getKeywordLineBreakInsertion(value, tokenStart + 1);
+    const afterKeyword = getKeywordLineBreakInsertion(value, tokenEnd - 1);
+
+    expect(beforeKeyword).toMatchObject({
+      nextCaret: tokenStart + 1,
+      nextText: `beat \n${keywordToken} closes`
+    });
+    expect(afterKeyword).toMatchObject({
+      nextCaret: tokenEnd + 1,
+      nextText: `beat ${keywordToken}\n closes`
+    });
+  });
+
+  it("selects then removes a whole keyword token from the front boundary", () => {
+    const keywordToken = getInlineKeywordToken("pressure");
+    const value = `beat ${keywordToken} closes`;
+    const tokenStart = value.indexOf(keywordToken);
+    const tokenEnd = tokenStart + keywordToken.length;
+
+    expect(getKeywordTokenDeleteSelection(value, tokenStart + 1)).toEqual({
+      selectionEnd: tokenEnd,
+      selectionStart: tokenStart
+    });
+    expect(removeSelectedKeywordToken(value, tokenStart, tokenEnd)).toEqual({
+      nextCaret: tokenStart,
+      nextText: "beat closes"
+    });
   });
 
   it("removes empty keyword tokens and de-duplicates edited labels case-insensitively", () => {
