@@ -1,6 +1,9 @@
+// 이 파일은 standalone HTML 호환 서버를 제공합니다.
+/* global URL, console, process */
 import { createReadStream, existsSync } from "node:fs";
 import { createServer } from "node:http";
-import { extname, join } from "node:path";
+import { extname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const frontendHost = process.env.ARIAD_FRONTEND_HOST ?? "127.0.0.1";
 const frontendPort = Number(process.env.ARIAD_FRONTEND_PORT ?? "5173");
@@ -16,6 +19,7 @@ const contentTypes = new Map([
   [".txt", "text/plain; charset=utf-8"]
 ]);
 
+// 정적 파일을 응답으로 전송합니다.
 function sendFile(response, filePath) {
   response.writeHead(200, {
     "Cache-Control": "no-store",
@@ -30,33 +34,40 @@ if (!existsSync(standalonePath)) {
   process.exit(1);
 }
 
-const server = createServer((request, response) => {
-  const pathname = new URL(
-    request.url ?? "/",
-    `http://${frontendHost}:${frontendPort}`
-  ).pathname;
+  const server = createServer((request, response) => {
+    const pathname = new URL(
+      request.url ?? "/",
+      `http://${frontendHost}:${frontendPort}`
+    ).pathname;
 
-  if (pathname === "/open" || pathname === "/open.html") {
-    if (existsSync(helperPath)) {
-      sendFile(response, helperPath);
+    if (pathname === "/open" || pathname === "/open.html") {
+      if (existsSync(helperPath)) {
+        sendFile(response, helperPath);
+        return;
+      }
+    }
+
+    if (
+      pathname === "/" ||
+      pathname === "/index.html" ||
+      pathname === "/service.html"
+    ) {
+      sendFile(response, standalonePath);
       return;
     }
-  }
 
-  if (
-    pathname === "/" ||
-    pathname === "/index.html" ||
-    pathname === "/service.html"
-  ) {
-    sendFile(response, standalonePath);
-    return;
-  }
-
-  response.writeHead(404, {
-    "Content-Type": "text/plain; charset=utf-8"
+    response.writeHead(404, {
+      "Content-Type": "text/plain; charset=utf-8"
+    });
+    response.end("not_found");
   });
-  response.end("not_found");
-});
+
+  server.listen(frontendPort, frontendHost, () => {
+    console.log(
+      `[SCENAAIRO] Standalone compatibility server listening on http://${frontendHost}:${frontendPort}`
+    );
+    console.log("[SCENAAIRO] Compatibility mode is serving ARIAD.html.");
+  });
 
 server.listen(frontendPort, frontendHost, () => {
   console.log(
