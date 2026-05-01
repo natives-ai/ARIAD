@@ -2,11 +2,11 @@ import { createReadStream, existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join } from "node:path";
 
-const frontendHost = process.env.SCENAAIRO_FRONTEND_HOST ?? "127.0.0.1";
-const frontendPort = Number(process.env.SCENAAIRO_FRONTEND_PORT ?? "5173");
+const frontendHost = process.env.ARIAD_FRONTEND_HOST ?? "127.0.0.1";
+const frontendPort = Number(process.env.ARIAD_FRONTEND_PORT ?? "5173");
 const rootDir = process.cwd();
 const standalonePath = join(rootDir, "ARIAD.html");
-const helperPath = join(rootDir, "OPEN-SCENAAIRO.html");
+const helperPath = join(rootDir, "OPEN-ARIAD.html");
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -26,7 +26,7 @@ function sendFile(response, filePath) {
 }
 
 if (!existsSync(standalonePath)) {
-  console.error("[SCENAAIRO] ARIAD.html is missing.");
+  console.error("[ARIAD] ARIAD.html is missing.");
   process.exit(1);
 }
 
@@ -60,7 +60,7 @@ const server = createServer((request, response) => {
 
 server.listen(frontendPort, frontendHost, () => {
   console.log(
-    `[SCENAAIRO] Standalone compatibility server listening on http://${frontendHost}:${frontendPort}`
+    `[ARIAD] Standalone compatibility server listening on http://${frontendHost}:${frontendPort}`
   );
-  console.log("[SCENAAIRO] Compatibility mode is serving ARIAD.html.");
+  console.log("[ARIAD] Compatibility mode is serving ARIAD.html.");
 });

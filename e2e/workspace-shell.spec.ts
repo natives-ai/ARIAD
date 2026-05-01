@@ -7,8 +7,23 @@ async function openSelectedNodeMenu(page: Page) {
   await selectedNode.getByRole("button", { name: /More/i }).click();
 }
 
-test("supports the core canvas v1 structure flows", async ({ page }) => {
+test("renders the ARIAD landing entry", async ({ page }) => {
   await page.goto("/");
+
+  await expect(page).toHaveTitle("ARIAD");
+  await expect(
+    page.getByRole("heading", {
+      name: "Your story is just one clue away"
+    })
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open workspace" }).first()).toHaveAttribute(
+    "href",
+    "/workspace"
+  );
+});
+
+test("supports the core canvas v1 structure flows", async ({ page }) => {
+  await page.goto("/workspace");
 
   await expect(page).toHaveTitle("ARIAD");
   await expect(page.getByRole("heading", { name: "ARIAD" })).toBeVisible();
@@ -174,7 +189,7 @@ test("supports the core canvas v1 structure flows", async ({ page }) => {
 });
 
 test("supports the explicit keyword-first recommendation flow", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   const selectedTitle = page.getByTestId("selected-node-title");
 
@@ -232,7 +247,7 @@ test("supports the explicit keyword-first recommendation flow", async ({ page })
 test("prevents minor-lane nodes from overlapping when placed in the same area", async ({
   page
 }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await page.getByRole("button", { name: "Create Node" }).click();
   await page.getByTestId("lane-minor").click({
@@ -270,7 +285,7 @@ test("prevents minor-lane nodes from overlapping when placed in the same area", 
 });
 
 test("supports reference-object creation and detail editing", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await page.getByRole("button", { name: "New Object" }).first().click();
 
@@ -320,7 +335,7 @@ test("supports reference-object creation and detail editing", async ({ page }) =
 });
 
 test("supports @mention object reuse and creation inside node text", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await page.getByRole("button", { name: "Create Node" }).click();
   await page.getByTestId("lane-major").click({
@@ -379,7 +394,7 @@ test("supports @mention object reuse and creation inside node text", async ({ pa
 test("supports keyboard copy, paste, undo, redo, and escape safeguards", async ({
   page
 }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
 
   await expect(page.getByTestId("node-count")).toHaveText("Nodes: 1");
 

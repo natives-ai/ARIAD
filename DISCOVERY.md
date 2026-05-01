@@ -1,7 +1,7 @@
 # DISCOVERY.md
 
 ## 0. Meta
-- Product: **SCENAAIRO**
+- Product: **ARIAD**
 - Stage: **Discovery baseline locked**
 - Primary format: **Webtoon**
 - Primary user: **Solo creator currently serializing on a recurring schedule**
@@ -9,7 +9,7 @@
 - Planned future localizations: **Korean, Japanese**
 
 ## 1. One-line summary
-SCENAAIRO is an AI-assisted storytelling support product for solo serial webtoon creators who need to reach a usable structure draft for the current episode faster without losing creative ownership.
+ARIAD is an AI-assisted storytelling support product for solo serial webtoon creators who need to reach a usable structure draft for the current episode faster without losing creative ownership.
 
 ## 2. Core problem
 ### 2.1 Primary problem

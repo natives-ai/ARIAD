@@ -45,7 +45,7 @@ $Css
   <body>
     <div id="root"></div>
     <script>
-      window.__SCENAAIRO_STANDALONE__ = true;
+      window.__ARIAD_STANDALONE__ = true;
     </script>
     <script type="module">
 $Js

@@ -14,7 +14,7 @@ export declare const englishCopy: {
         readonly drawer: "Temporary Drawer";
         readonly navigation: "Story / Episode List";
         readonly objects: "Object Library";
-        readonly title: "SCENAAIRO Workspace";
+        readonly title: "ARIAD Workspace";
     };
 };
 //# sourceMappingURL=index.d.ts.map

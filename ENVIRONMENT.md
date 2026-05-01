@@ -1,6 +1,6 @@
 # Environment Discipline
 
-SCENAAIRO uses environment variables for environment-specific configuration.
+ARIAD uses environment variables for environment-specific configuration.
 
 Environment depth:
 - `local`
