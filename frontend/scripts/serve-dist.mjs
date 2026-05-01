@@ -1,3 +1,4 @@
+// 이 파일은 빌드된 프론트엔드 dist 서버를 제공합니다.
 /* global URL, console, process */
 
 import { createServer, request as httpRequest } from "node:http";
@@ -24,10 +25,12 @@ const contentTypes = new Map([
   [".txt", "text/plain; charset=utf-8"]
 ]);
 
+// 파일 확장자에 맞는 응답 타입을 반환합니다.
 function getContentType(filePath) {
   return contentTypes.get(extname(filePath).toLowerCase()) ?? "application/octet-stream";
 }
 
+// 요청 경로를 dist 내부 파일 경로로 변환합니다.
 function resolveDistPath(urlPath) {
   if (urlPath === "/" || urlPath === "") {
     return join(distRoot, "index.html");
@@ -55,6 +58,7 @@ function resolveDistPath(urlPath) {
   return absolutePath;
 }
 
+// API 요청을 백엔드 개발 서버로 전달합니다.
 function proxyApiRequest(clientRequest, clientResponse) {
   const proxyRequest = httpRequest(
     {
@@ -85,6 +89,7 @@ function proxyApiRequest(clientRequest, clientResponse) {
   clientRequest.pipe(proxyRequest);
 }
 
+// dist 정적 파일을 응답으로 전송합니다.
 function serveStaticFile(clientRequest, clientResponse) {
   const requestUrl = new URL(clientRequest.url ?? "/", `http://${frontendHost}:${frontendPort}`);
   const filePath = resolveDistPath(requestUrl.pathname);
@@ -105,26 +110,35 @@ function serveStaticFile(clientRequest, clientResponse) {
   createReadStream(filePath).pipe(clientResponse);
 }
 
-if (!existsSync(join(distRoot, "service.html"))) {
-  console.error("[SCENAAIRO] frontend/dist/service.html is missing.");
-  console.error("[SCENAAIRO] Run `yarn build` before starting the dist server.");
-  process.exit(1);
-}
-
-const server = createServer((clientRequest, clientResponse) => {
-  if ((clientRequest.url ?? "").startsWith("/api")) {
-    proxyApiRequest(clientRequest, clientResponse);
-    return;
+// dist 서버를 현재 프로세스에서 시작합니다.
+export function startDistServer() {
+  if (!existsSync(join(distRoot, "service.html"))) {
+    console.error("[SCENAAIRO] frontend/dist/service.html is missing.");
+    console.error("[SCENAAIRO] Run `yarn build` before starting the dist server.");
+    process.exit(1);
   }
 
-  serveStaticFile(clientRequest, clientResponse);
-});
+  const server = createServer((clientRequest, clientResponse) => {
+    if ((clientRequest.url ?? "").startsWith("/api")) {
+      proxyApiRequest(clientRequest, clientResponse);
+      return;
+    }
 
-server.listen(frontendPort, frontendHost, () => {
-  console.log(
-    `[SCENAAIRO] Dist server listening on http://${frontendHost}:${frontendPort}`
-  );
-  console.log(
-    `[SCENAAIRO] Proxying /api to http://${backendHost}:${backendPort}`
-  );
-});
+    serveStaticFile(clientRequest, clientResponse);
+  });
+
+  server.listen(frontendPort, frontendHost, () => {
+    console.log(
+      `[SCENAAIRO] Dist server listening on http://${frontendHost}:${frontendPort}`
+    );
+    console.log(
+      `[SCENAAIRO] Proxying /api to http://${backendHost}:${backendPort}`
+    );
+  });
+
+  return server;
+}
+
+if (normalize(process.argv[1] ?? "") === normalize(fileURLToPath(import.meta.url))) {
+  startDistServer();
+}

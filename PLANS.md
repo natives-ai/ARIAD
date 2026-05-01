@@ -3248,3 +3248,13 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Users can visually tell when they are editing a keyword label versus preparing to convert that keyword to plain text, without removing the keyword-specific typography.
 - Warnings / blockers: Full frontend lint still has the unrelated pre-existing `frontend/src/routes/AuthCallbackPage.tsx` hook lint failure if run across all `src`. Browser visual smoke is still useful because the editor remains a transparent textarea over a styled preview.
 - Approval needed: `none`
+
+### 2026-05-01 / loop-227
+- Active milestone: Local frontend dev support
+- Agents engaged: Frontend
+- Touched zones: `scripts/dev-frontend.mjs`, `frontend/scripts/serve-dist.mjs`, `scripts/serve-standalone.mjs`, `PLANS.md`
+- What changed: Diagnosed `yarn dev:frontend` failing after the Vite path hit Windows `spawn EPERM`. The fallback server worked when launched directly, but `dev-frontend.mjs` tried to launch fallback through another `yarn.cmd`/`cmd.exe` child process, which can hit the same spawn restriction. The fallback now imports and starts the built dist server or standalone server in the current Node process, and both server scripts export explicit start functions while still supporting direct CLI execution.
+- Tests run: `corepack yarn dev:frontend` (now reaches `Dist server listening on http://127.0.0.1:5173`; command timed out intentionally because the server stays running); `node --check scripts/dev-frontend.mjs` (pass); `node --check scripts/serve-standalone.mjs` (pass); `node --check frontend/scripts/serve-dist.mjs` (pass); changed-file ESLint for the three scripts (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: In spawn-restricted environments, `yarn dev:frontend` can now fall back to serving the built frontend in-process instead of exiting immediately after printing the fallback message.
+- Warnings / blockers: This fallback serves the latest built `frontend/dist` output, not true Vite hot-reload dev mode, when the environment blocks child-process spawn. Run `corepack yarn workspace @scenaairo/frontend build` before relying on the fallback if dist is stale.
+- Approval needed: `none`
