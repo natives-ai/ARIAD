@@ -27,6 +27,7 @@ import { copy } from "../copy";
 import { loadFrontendEnv } from "../config/env";
 import { CloudPersistenceClient } from "../persistence/cloudClient";
 import { getDrawerItemPreview, getNodeHeadline } from "../persistence/drawerPayload";
+import { createClientId } from "../persistence/stableId";
 import {
   WorkspacePersistenceController,
   type StoryObjectDraft,
@@ -4858,7 +4859,7 @@ export function WorkspaceShell() {
       {
         createdAt: timestamp,
         episodeIds: [],
-        id: `folder_${crypto.randomUUID()}`,
+        id: createClientId("folder"),
         isCollapsed: false,
         isPinned: false,
         name,

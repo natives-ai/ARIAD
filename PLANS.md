@@ -3358,3 +3358,13 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: The repo now has a concrete Docker Compose path for a single EC2 host with MySQL persistence, frontend-to-backend internal proxying, documented env setup, and a verified local Docker smoke path.
 - Warnings / blockers: The smoke stack used the placeholder `deploy/ec2.env.example` values and was cleaned up with `docker compose -p ariad-smoke ... down -v`; real EC2 deployment still requires copying the example to `.env` and replacing public origin, Google client ID, MySQL passwords, and provider keys.
 - Approval needed: `none`
+
+### 2026-05-01 / loop-238
+- Active milestone: EC2 Docker deployment support
+- Agents engaged: Frontend, Backend
+- Touched zones: `frontend/src/persistence/stableId.ts`, `frontend/src/persistence/stableId.test.ts`, `frontend/src/routes/WorkspaceShell.tsx`, `PLANS.md`
+- What changed: Replaced direct browser `crypto.randomUUID()` use with a frontend ID helper that falls back to `crypto.getRandomValues()` and finally timestamp/random text. This prevents the workspace empty-state bootstrap from hanging on public `http://` EC2 IP origins where `randomUUID()` can be unavailable outside a secure context. Sidebar folder IDs now use the same helper.
+- Tests run: `corepack yarn --cwd frontend run -T vitest run src/persistence/stableId.test.ts` (pass, rerun outside sandbox after Windows spawn EPERM); `corepack yarn workspace @scenaairo/frontend build` (pass)
+- Result: Frontend workspace bootstrap is no longer blocked by `crypto.randomUUID()` availability on non-HTTPS EC2 access.
+- Warnings / blockers: Backend containers and `/api/auth/session` were already healthy; `/api/health/readiness` remains degraded until `GOOGLE_CLIENT_ID` is set, but that does not block guest workspace load.
+- Approval needed: `none`
