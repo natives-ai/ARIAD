@@ -1774,9 +1774,26 @@ textarea {
   color: #713a1a;
 }
 
+.node-inline-keyword.is-token-delete-pending,
+.node-object-mention.is-token-delete-pending {
+  animation: keyword-unwrap-signal 0.92s ease-in-out infinite;
+  background: rgba(181, 88, 32, 0.13);
+  box-shadow:
+    inset 0 -0.12rem 0 rgba(181, 88, 32, 0.72),
+    0 0 0 0.08rem rgba(181, 88, 32, 0.24);
+  color: #713a1a;
+}
+
 .node-object-mention {
+  border-radius: 0.16rem;
+  box-decoration-break: clone;
   color: #18496a;
   font-weight: 800;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease;
+  -webkit-box-decoration-break: clone;
 }
 
 @keyframes keyword-edit-signal {
@@ -1815,7 +1832,9 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .node-inline-keyword.is-keyword-editing,
-  .node-inline-keyword.is-keyword-unwrap-pending {
+  .node-inline-keyword.is-keyword-unwrap-pending,
+  .node-inline-keyword.is-token-delete-pending,
+  .node-object-mention.is-token-delete-pending {
     animation: none;
   }
 }
@@ -1871,6 +1890,12 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
   z-index: 1;
+  -webkit-text-fill-color: transparent;
+}
+
+.node-inline-input-shell.is-token-delete-pending .node-inline-input::selection {
+  background: transparent;
+  color: transparent;
   -webkit-text-fill-color: transparent;
 }
 

@@ -524,6 +524,87 @@ export function getProtectedKeywordMarkerCaret(
   return null;
 }
 
+// 키워드 앞쪽 Delete에서 전체 토큰 선택 범위를 찾습니다.
+export function getKeywordTokenDeleteSelection(value: string, caretIndex: number) {
+  for (const range of getInlineKeywordTokenRanges(value)) {
+    const labelStart = range.markerStart + 1;
+
+    if (caretIndex !== range.start && caretIndex !== labelStart) {
+      continue;
+    }
+
+    return {
+      selectionEnd: range.end,
+      selectionStart: range.start
+    };
+  }
+
+  return null;
+}
+
+// 선택된 키워드 토큰을 주변 공백과 함께 삭제합니다.
+export function removeSelectedKeywordToken(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number
+) {
+  const rangeStart = Math.min(selectionStart, selectionEnd);
+  const rangeEnd = Math.max(selectionStart, selectionEnd);
+  const range = getInlineKeywordTokenRanges(value).find(
+    (tokenRange) => tokenRange.start === rangeStart && tokenRange.end === rangeEnd
+  );
+
+  if (!range) {
+    return null;
+  }
+
+  let removeStart = range.start;
+  let removeEnd = range.end;
+
+  if (value[removeEnd] === " ") {
+    removeEnd += 1;
+  } else if (removeStart > 0 && value[removeStart - 1] === " ") {
+    removeStart -= 1;
+  }
+
+  return {
+    nextCaret: removeStart,
+    nextText: `${value.slice(0, removeStart)}${value.slice(removeEnd)}`
+  };
+}
+
+export type KeywordLineBreakInsertion = {
+  nextCaret: number;
+  nextText: string;
+  tokenEnd: number;
+  tokenStart: number;
+};
+
+// 키워드 내부 Enter는 줄바꿈을 토큰 바깥으로 보정합니다.
+export function getKeywordLineBreakInsertion(value: string, caretIndex: number) {
+  for (const range of getInlineKeywordTokenRanges(value)) {
+    if (caretIndex <= range.start || caretIndex >= range.end) {
+      continue;
+    }
+
+    const labelStart = range.markerStart + 1;
+    const labelEnd = range.markerEnd;
+    const insertBeforeToken =
+      caretIndex <= labelStart || caretIndex - labelStart < labelEnd - caretIndex;
+    const insertionIndex = insertBeforeToken ? range.start : range.end;
+    const nextText = `${value.slice(0, insertionIndex)}\n${value.slice(insertionIndex)}`;
+
+    return {
+      nextCaret: insertionIndex + 1,
+      nextText,
+      tokenEnd: range.end,
+      tokenStart: range.start
+    } satisfies KeywordLineBreakInsertion;
+  }
+
+  return null;
+}
+
 export function normalizeInlineObjectMentions(value: string) {
   return value.replace(/@([^@\n]+?)@/g, (_, name: string) => getObjectToken(name.trim()));
 }
@@ -575,7 +656,9 @@ export function getClosedObjectWordQuery(
 
 type InlineTokenRenderOptions = {
   activeKeywordTokenStart?: number | null;
+  pendingKeywordDeleteTokenStart?: number | null;
   pendingKeywordUnwrapTokenStart?: number | null;
+  pendingObjectDeleteTokenStart?: number | null;
 };
 
 // 이 함수는 인라인 토큰 표시 상태에 맞는 class 이름을 만듭니다.
@@ -591,6 +674,24 @@ function getInlineKeywordClassName(
 
   if (options.pendingKeywordUnwrapTokenStart === tokenStart) {
     classNames.push("is-keyword-unwrap-pending");
+  }
+
+  if (options.pendingKeywordDeleteTokenStart === tokenStart) {
+    classNames.push("is-keyword-delete-pending", "is-token-delete-pending");
+  }
+
+  return classNames.join(" ");
+}
+
+// 이 함수는 오브젝트 토큰 표시 상태에 맞는 class 이름을 만듭니다.
+function getInlineObjectClassName(
+  tokenStart: number,
+  options: InlineTokenRenderOptions
+) {
+  const classNames = ["node-object-mention"];
+
+  if (options.pendingObjectDeleteTokenStart === tokenStart) {
+    classNames.push("is-object-delete-pending", "is-token-delete-pending");
   }
 
   return classNames.join(" ");
@@ -627,7 +728,10 @@ export function renderTextWithObjectMentions(
       );
     } else if (match[2] || match[3]) {
       segments.push(
-        <span className="node-object-mention" key={`mention-${matchIndex}`}>
+        <span
+          className={getInlineObjectClassName(matchIndex, options)}
+          key={`mention-${matchIndex}`}
+        >
           {match[2] ?? match[3]}
         </span>
       );

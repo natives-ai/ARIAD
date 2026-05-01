@@ -10,6 +10,7 @@ export function toMessage(error: unknown) {
   return error instanceof Error ? error.message : "recommendation_failed";
 }
 
+// 동기화 상태를 사용자에게 보여줄 짧은 문구로 바꿉니다.
 export function describeCloudStatus(state: WorkspacePersistenceState) {
   switch (state.syncStatus) {
     case "booting":
@@ -25,7 +26,7 @@ export function describeCloudStatus(state: WorkspacePersistenceState) {
     case "syncing":
       return "Syncing local work to the account-backed cloud workspace.";
     case "synced":
-      return `Synced to ${state.linkage?.linkedAccountId ?? state.session.accountId} through DB-backed storage. Local cache remains active for recovery.`;
+      return "Local cache remains active for recovery.";
     case "error": {
       const lastErrorCode = state.lastError?.split(":")[0];
       const friendlyError =

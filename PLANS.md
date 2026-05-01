@@ -3248,3 +3248,103 @@ If `Approval needed` is `proposal_change`, record the event in the loop log and 
 - Result: Users can visually tell when they are editing a keyword label versus preparing to convert that keyword to plain text, without removing the keyword-specific typography.
 - Warnings / blockers: Full frontend lint still has the unrelated pre-existing `frontend/src/routes/AuthCallbackPage.tsx` hook lint failure if run across all `src`. Browser visual smoke is still useful because the editor remains a transparent textarea over a styled preview.
 - Approval needed: `none`
+
+### 2026-05-01 / loop-227
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Fixed the keyword front-boundary Enter bug. When the caret is visually just before or just after a keyword label but technically inside the hidden marker pair, Enter now inserts the line break outside the keyword token instead of putting `\n` inside the marker range and degrading the keyword into plain text. The same guard also protects Enter inside the keyword token by choosing the nearest token boundary.
+- Tests run: focused inline editor Vitest for keyword line-break insertion (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); focused WorkspaceShell Vitest for keyword front-boundary Enter (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); full `workspaceShell.inlineEditor.test.ts` (outside sandbox pass, 20 tests); full `WorkspaceShell.test.tsx` (outside sandbox pass, 84 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); changed-file frontend ESLint for CanvasNodeCard, inline editor, inline editor test, and WorkspaceShell test files (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Pressing Enter at the keyword front boundary keeps the keyword styled and selected as a keyword while still allowing the line break.
+- Warnings / blockers: Browser visual smoke is still useful for caret feel because the inline editor is still a transparent textarea over a styled preview.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-228
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Narrowed keyword edit-mode detection so a collapsed caret exactly at the keyword label start/end boundary no longer counts as editing the keyword. Clicking the visual front edge of a keyword therefore does not trigger the special keyword edit affordance, while moving the caret into the label body still does.
+- Tests run: focused `WorkspaceShell.test.tsx -t "keyword edit mode"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); changed-file ESLint for CanvasNodeCard and WorkspaceShell test files (pass); full `WorkspaceShell.test.tsx` (outside sandbox pass, 84 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Keyword front-boundary clicks stay visually neutral instead of entering keyword edit mode, without removing edit feedback for true in-label caret positions.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-229
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.test.ts`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Changed Delete at a keyword front boundary to a two-step whole-token delete. The first Delete now selects the full keyword token and marks it with a delete-pending preview state instead of moving into the label and deleting the first character. The second Delete removes the whole keyword token, including adjacent spacing cleanup.
+- Tests run: focused inline editor Vitest for keyword delete selection/removal (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); focused WorkspaceShell Vitest for front-boundary Delete (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); changed-file frontend ESLint for CanvasNodeCard, inline editor, inline editor test, and WorkspaceShell test files (pass); full `workspaceShell.inlineEditor.test.ts` (outside sandbox pass, 21 tests); full `WorkspaceShell.test.tsx` (outside sandbox pass, 85 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Delete at the keyword front boundary no longer deletes the first visible character; it enters a clear whole-token delete mode first, then deletes the token on the next Delete.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-230
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Added an object-token delete-pending affordance that mirrors the keyword whole-delete mode. When Backspace/Delete first selects an atomic object mention token, the styled preview now receives `is-object-delete-pending` instead of relying only on the raw textarea selection highlight.
+- Tests run: focused `WorkspaceShell.test.tsx -t "inline object tokens atomic"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); changed-file frontend ESLint for CanvasNodeCard, inline editor, and WorkspaceShell test files (pass); full `WorkspaceShell.test.tsx` (outside sandbox pass, 85 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Object mentions now show a clear whole-token delete mode before the second delete removes them, matching the keyword delete affordance without allowing object text editing.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-231
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.inlineEditor.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Unified the keyword/object whole-delete entry effect under a shared `is-token-delete-pending` styling class while retaining the token-specific state classes. Delete-entry visuals now use the same effect path for keyword and object tokens.
+- Tests run: User requested no additional tests; ran changed-file ESLint for `workspaceShell.inlineEditor.tsx` (pass), `corepack yarn workspace @scenaairo/frontend typecheck` (pass), `corepack yarn workspace @scenaairo/frontend build` (pass), and `git diff --check` (pass, line-ending warnings only)
+- Result: Whole-delete mode visuals are now shared consistently across token types without changing the existing two-step delete behavior.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-232
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `PLANS.md`
+- What changed: Adjusted keyboard arrow entry into keyword edit mode. ArrowLeft/ArrowRight at a keyword boundary now moves only across the hidden marker boundary, activates the keyword edit affordance, and keeps the visible caret position unchanged. Mouse clicks at the front boundary still remain visually neutral until the user explicitly enters with the keyboard.
+- Tests run: focused `WorkspaceShell.test.tsx -t "keyword edit mode"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 1 test); changed-file ESLint for CanvasNodeCard and WorkspaceShell test files (pass); full `WorkspaceShell.test.tsx` (outside sandbox pass, 85 tests); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Direction-key entry can show keyword edit mode without causing a visible caret jump over the first/last keyword character.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-233
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/styles.css`, `PLANS.md`
+- What changed: Corrected the whole-delete entry affordance to use the same translucent yellow/orange wrapping effect as the keyword one-Backspace unwrap state. The shared `is-token-delete-pending` style now reuses `keyword-unwrap-signal` instead of the red delete warning color.
+- Tests run: No Vitest per the user's prior preference for this visual-only correction; `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: Keyword and object whole-delete entry states now visually match the existing one-Backspace keyword pending effect the user referenced.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-234
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/CanvasNodeCard.tsx`, `frontend/src/styles.css`, `PLANS.md`
+- What changed: Hid the native textarea blue selection highlight while token whole-delete mode is active. The inline shell now receives `is-token-delete-pending`, and the textarea `::selection` is transparent only in that state, allowing the styled preview's translucent yellow/orange token wrapping effect to be visible while preserving the selected range for the second delete action.
+- Tests run: Visual-only correction; changed-file ESLint for `CanvasNodeCard.tsx` (pass), `corepack yarn workspace @scenaairo/frontend build` (pass), `git diff --check` (pass, line-ending warnings only)
+- Result: Delete-entry mode should no longer look like a normal blue drag selection; the intended token wrapping affordance can show through.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-235
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/WorkspaceShell.tsx`, `frontend/src/routes/WorkspaceShell.test.tsx`, `frontend/src/routes/workspace-shell/workspaceShell.constants.ts`, `PLANS.md`
+- What changed: Replaced the global major-lane timeline minimum with a first-major-only buffer. A single major node now keeps its default node size while the timeline end renders at `node bottom + singleMajorTimelineExtraSpace`; once a second major node exists, the timeline end is derived from the visual end major node bottom again instead of preserved `timelineEndY` storage. Stale stored `timelineEndY` no longer forces the arrow past restored node geometry.
+- Tests run: focused `WorkspaceShell.test.tsx -t "first recreated major node|restores episode canvas UI state|moves the end major node together|recomputes timeline end"` (sandbox `spawn EPERM`, rerun outside sandbox pass, 4 tests); full `corepack yarn --cwd frontend run -T vitest run src/routes/WorkspaceShell.test.tsx` (outside sandbox pass, 85 tests); changed-file ESLint for WorkspaceShell/timeline constants/test files (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `git diff --check` (pass, line-ending warnings only)
+- Result: The first major node gets a small creation-space timeline tail, and two-or-more-major timelines follow the actual end node again.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
+
+### 2026-05-01 / loop-236
+- Active milestone: Post-baseline support task
+- Agents engaged: Frontend
+- Touched zones: `frontend/src/routes/workspace-shell/workspaceShell.common.tsx`, `PLANS.md`
+- What changed: Simplified the authenticated synced status copy shown in the account recovery panel. The detailed `Synced to ... through DB-backed storage.` account/storage sentence was removed, leaving only the shorter local recovery note.
+- Tests run: changed-file ESLint for `workspaceShell.common.tsx` (pass); `corepack yarn workspace @scenaairo/frontend typecheck` (pass); `corepack yarn workspace @scenaairo/frontend build` (pass); `rg "Synced to|through DB-backed storage" frontend/src` (no matches)
+- Result: The account panel no longer exposes the noisy account id / DB-backed storage sync detail after login.
+- Warnings / blockers: Existing `.tmp/merge-test-master-feature-jaesung-20260425` deletion remains unrelated and was not touched.
+- Approval needed: `none`
